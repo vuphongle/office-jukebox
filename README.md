@@ -13,7 +13,7 @@ hợp với từng dịp, bất kể đó là dịp gì.
 [![Không cần khóa API](https://img.shields.io/badge/YouTube%20API%20key-not%20needed-red)](#cách-hoạt-động)
 [![Tự lưu trữ](https://img.shields.io/badge/self--hosted-Docker-blue?logo=docker&logoColor=white)](#chạy-trên-máy-chủ-gia-đình-docker--proxy-ngược)
 
-<img src="docs/host.png" alt="Màn hình máy chiếu — bài đang phát, mã QR và hàng đợi trực tiếp" width="100%" />
+<img src="docs/host-vi.png" alt="Màn hình máy chiếu — bài đang phát, mã QR và hàng đợi trực tiếp" width="100%" />
 
 <em>Màn hình chính được chiếu: trình phát, mã QR để quét và hàng đợi trực tiếp kèm tên người yêu cầu.</em>
 
@@ -60,7 +60,7 @@ dùng cho mọi sự kiện.
   thoại đồng bộ; khách nhìn thấy huy hiệu "Bạn" trên các bài hát của mình.
 
 <div align="center">
-<img src="docs/guest.png" alt="Trang khách trên điện thoại — khám phá, tìm kiếm và xếp hàng" width="330" />
+<img src="docs/guest-vi.png" alt="Trang khách trên điện thoại — khám phá, tìm kiếm và xếp hàng" width="330" />
 
 <em>Trang khách trên điện thoại: tên, tìm kiếm, chip ca sĩ và yêu cầu chỉ bằng một chạm.</em>
 </div>
