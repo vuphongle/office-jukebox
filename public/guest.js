@@ -17,10 +17,17 @@ const youtubeLinkThumb = document.getElementById("youtube-link-thumb");
 const youtubeLinkTitle = document.getElementById("youtube-link-title");
 const youtubeLinkSub = document.getElementById("youtube-link-sub");
 const youtubeLinkAdd = document.getElementById("youtube-link-add");
+const feedbackSection = document.getElementById("feedback-section");
+const feedbackForm = document.getElementById("feedback-form");
+const feedbackName = document.getElementById("feedback-name");
+const feedbackContent = document.getElementById("feedback-content");
+const feedbackSubmit = document.getElementById("feedback-submit");
+const feedbackStatus = document.getElementById("feedback-status");
 let resolvedYouTubeSong = null;
 let queueLimitOn = false;
 let queueLimit = 10;
 let requireName = false;
+let feedbackOn = true;
 let queueWs = null;
 const pendingRemovals = new Set();
 
@@ -405,8 +412,10 @@ const clientId =
 
 // ---- Tên khách (lưu lại, không bắt buộc) -------------------------------
 nameEl.value = localStorage.getItem("guestName") || "";
+feedbackName.value = nameEl.value;
 nameEl.addEventListener("change", () => {
   localStorage.setItem("guestName", nameEl.value.trim());
+  if (!feedbackName.value.trim()) feedbackName.value = nameEl.value.trim();
 });
 
 function renderRequestSettings() {
@@ -416,6 +425,35 @@ function renderRequestSettings() {
     ? "Bắt buộc · hiển thị bên cạnh bài hát bạn chọn"
     : "Không bắt buộc · hiển thị bên cạnh bài hát bạn chọn";
 }
+
+function renderFeedback() {
+  feedbackSection.classList.toggle("hidden", !feedbackOn);
+}
+
+feedbackForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  if (!feedbackName.value.trim() || !feedbackContent.value.trim()) return;
+  feedbackSubmit.disabled = true;
+  feedbackStatus.className = "feedback-status";
+  feedbackStatus.textContent = "Đang gửi…";
+  try {
+    const res = await fetch("/api/feedback", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: feedbackName.value.trim(), content: feedbackContent.value.trim() }),
+    });
+    const data = await res.json();
+    if (!res.ok || !data.ok) throw new Error(data.reason || "Không thể gửi góp ý.");
+    feedbackContent.value = "";
+    feedbackStatus.className = "feedback-status ok";
+    feedbackStatus.textContent = "Cảm ơn bạn! Góp ý đã được gửi.";
+  } catch (error) {
+    feedbackStatus.className = "feedback-status bad";
+    feedbackStatus.textContent = error.message || "Không thể gửi góp ý.";
+  } finally {
+    feedbackSubmit.disabled = false;
+  }
+});
 
 // ---- Yêu cầu của mình (cho nhãn "Bạn" trong hàng đợi) -------------------
 function loadMyRequestIds() {
@@ -550,7 +588,9 @@ function connectWs() {
       if (typeof msg.queueLimitOn === "boolean") queueLimitOn = msg.queueLimitOn;
       if (typeof msg.queueLimit === "number") queueLimit = msg.queueLimit;
       if (typeof msg.requireName === "boolean") requireName = msg.requireName;
+      if (typeof msg.feedbackOn === "boolean") feedbackOn = msg.feedbackOn;
       renderRequestSettings();
+      renderFeedback();
       renderQueue(msg.state);
     } else if (msg.type === "removeOwnResult") {
       pendingRemovals.delete(msg.id);
@@ -637,6 +677,7 @@ function formatEstimatedStart(timestamp) {
 renderSingers();
 selectGenre("All"); // hiển thị tab và tải bài hát thật khi mở trang
 renderRequestSettings();
+renderFeedback();
 connectWs();
 setInterval(() => {
   if (lastQueueState) renderQueue(lastQueueState);

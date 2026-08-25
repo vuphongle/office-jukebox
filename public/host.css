@@ -187,34 +187,20 @@ html, body {
 #controls #cooldown-toggle.pill.on:hover { background: var(--fill-hover); }
 .filter-hint { font-size: 0.8rem; color: var(--red); }
 
-.vol { display: flex; align-items: center; gap: 10px; margin-left: auto; color: oklch(60% 0.02 320); }
-.vol input {
-  -webkit-appearance: none;
-  appearance: none;
-  width: 140px;
-  height: 4px;
-  border-radius: 2px;
-  background: linear-gradient(to right, var(--red) 0%, var(--red) var(--vol, 100%), oklch(100% 0 0 / 0.12) var(--vol, 100%));
-  outline: none;
+.feedback-link {
+  width: auto;
+  height: 44px;
+  margin-left: auto;
+  padding: 0 18px;
+  border: 1px solid var(--line);
+  border-radius: 22px;
+  background: var(--fill);
+  color: var(--warm-soft);
+  font: 700 15px/44px var(--sans);
+  text-decoration: none;
+  white-space: nowrap;
 }
-.vol input::-webkit-slider-thumb {
-  -webkit-appearance: none;
-  width: 14px;
-  height: 14px;
-  border-radius: 50%;
-  background: oklch(97% 0.01 40);
-  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.4);
-  cursor: pointer;
-}
-.vol input::-moz-range-thumb {
-  width: 14px;
-  height: 14px;
-  border: none;
-  border-radius: 50%;
-  background: oklch(97% 0.01 40);
-  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.4);
-  cursor: pointer;
-}
+.feedback-link:hover { background: var(--fill-hover); }
 
 /* Trình chỉnh sửa bối cảnh sự kiện (hiện ra khi nhấn nút Bối cảnh) */
 .context-row { display: flex; gap: 10px; }

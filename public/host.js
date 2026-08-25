@@ -347,13 +347,6 @@ function wireControls() {
   document.getElementById("require-name-toggle").onclick = () => {
     send({ type: "setRequireName", on: !requireName });
   };
-  const volEl = document.getElementById("volume");
-  const paintVol = () => volEl.style.setProperty("--vol", `${volEl.value}%`);
-  paintVol();
-  volEl.oninput = () => {
-    paintVol();
-    if (playerReady) player.setVolume(parseInt(volEl.value, 10));
-  };
   // Trình chỉnh sửa bối cảnh sự kiện: nút Bối cảnh hiện ô nhập; nút Lưu gửi nội dung.
   const ctxRow = document.getElementById("context-row");
   const ctxInput = document.getElementById("context-input");

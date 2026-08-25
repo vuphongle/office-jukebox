@@ -56,6 +56,7 @@ const GUEST_URL = PUBLIC_BASE ? `${PUBLIC_BASE}/guest` : `http://${LAN_IP}:${POR
 // khởi tạo cho lần chạy đầu tiên.
 const DATA_DIR = path.join(__dirname, "data");
 const SETTINGS_PATH = path.join(DATA_DIR, "settings.json");
+const FEEDBACK_PATH = path.join(DATA_DIR, "feedback.json");
 let savedSettings = {};
 try {
   savedSettings = JSON.parse(readFileSync(SETTINGS_PATH, "utf8"));
@@ -83,6 +84,15 @@ let queueLimitOn = savedSettings.queueLimitOn ?? false;
 let queueLimit = QUEUE_LIMIT_STEPS.includes(savedSettings.queueLimit) ? savedSettings.queueLimit : 10;
 // Một host có thể không muốn hiện tên người yêu cầu; khi bật, guest phải nhập tên.
 let requireName = savedSettings.requireName ?? false;
+let feedbackOn = savedSettings.feedbackOn ?? true;
+
+let feedbackItems = [];
+try {
+  const storedFeedback = JSON.parse(readFileSync(FEEDBACK_PATH, "utf8"));
+  feedbackItems = Array.isArray(storedFeedback) ? storedFeedback : [];
+} catch {
+  /* lần chạy đầu tiên — chưa có góp ý */
+}
 
 function saveSettings() {
   try {
@@ -90,7 +100,7 @@ function saveSettings() {
     writeFileSync(
       SETTINGS_PATH,
       JSON.stringify(
-        { filterOn, moderationMode, eventContext, cooldownSeconds, queueLimitOn, queueLimit, requireName },
+        { filterOn, moderationMode, eventContext, cooldownSeconds, queueLimitOn, queueLimit, requireName, feedbackOn },
         null,
         2
       )
@@ -98,6 +108,25 @@ function saveSettings() {
   } catch (err) {
     console.warn(`[settings] không thể lưu: ${err.message}`);
   }
+}
+
+function saveFeedback() {
+  try {
+    mkdirSync(DATA_DIR, { recursive: true });
+    writeFileSync(FEEDBACK_PATH, JSON.stringify(feedbackItems, null, 2));
+  } catch (err) {
+    console.warn(`[feedback] không thể lưu: ${err.message}`);
+  }
+}
+
+function feedbackStats() {
+  const now = Date.now();
+  const day = 24 * 60 * 60 * 1000;
+  return {
+    total: feedbackItems.length,
+    today: feedbackItems.filter((item) => now - Date.parse(item.createdAt) < day).length,
+    last7Days: feedbackItems.filter((item) => now - Date.parse(item.createdAt) < 7 * day).length,
+  };
 }
 
 const app = express();
@@ -120,6 +149,7 @@ function requireHostAuth(req, res, next) {
   res.set("WWW-Authenticate", 'Basic realm="Event Music Host"').status(401).send("Yêu cầu mật khẩu.");
 }
 app.use("/host.html", requireHostAuth); // bản tĩnh không được bỏ qua bảo vệ của "/"
+app.use("/feedback.html", requireHostAuth);
 
 app.use(
   express.static(path.join(__dirname, "public"), {
@@ -146,6 +176,7 @@ app.get("/api/info", async (_req, res) => {
       queueLimitOn,
       queueLimit,
       requireName,
+      feedbackOn,
     });
   } catch {
     res.status(500).json({ error: "Không thể tạo mã QR." });
@@ -326,18 +357,58 @@ app.post("/api/request", async (req, res) => {
   res.json({ ok: true, reason: "Đã thêm!", position, id: item.id });
 });
 
+// --- Góp ý ---------------------------------------------------------------
+const feedbackLastSubmittedAt = new Map();
+app.post("/api/feedback", (req, res) => {
+  if (!feedbackOn) return res.status(403).json({ ok: false, reason: "Tính năng góp ý hiện đang tắt." });
+  const name = typeof req.body?.name === "string" ? req.body.name.trim().slice(0, 40) : "";
+  const content = typeof req.body?.content === "string" ? req.body.content.trim().slice(0, 1000) : "";
+  if (!name || !content) return res.status(400).json({ ok: false, reason: "Vui lòng nhập tên và nội dung góp ý." });
+  const last = feedbackLastSubmittedAt.get(req.ip) || 0;
+  if (Date.now() - last < 30_000) {
+    return res.status(429).json({ ok: false, reason: "Bạn vừa gửi góp ý. Vui lòng thử lại sau ít phút." });
+  }
+  const item = { id: randomUUID(), name, content, createdAt: new Date().toISOString() };
+  feedbackItems.unshift(item);
+  if (feedbackItems.length > 1000) feedbackItems.length = 1000;
+  feedbackLastSubmittedAt.set(req.ip, Date.now());
+  saveFeedback();
+  res.json({ ok: true });
+});
+
+app.get("/api/feedback", requireHostAuth, (_req, res) => {
+  res.json({ feedbackOn, stats: feedbackStats(), items: feedbackItems });
+});
+
+app.patch("/api/feedback/settings", requireHostAuth, (req, res) => {
+  if (typeof req.body?.on !== "boolean") return res.status(400).json({ ok: false, reason: "Giá trị không hợp lệ." });
+  feedbackOn = req.body.on;
+  saveSettings();
+  broadcastState();
+  res.json({ ok: true, feedbackOn });
+});
+
+app.delete("/api/feedback/:id", requireHostAuth, (req, res) => {
+  const before = feedbackItems.length;
+  feedbackItems = feedbackItems.filter((item) => item.id !== req.params.id);
+  if (feedbackItems.length === before) return res.status(404).json({ ok: false, reason: "Không tìm thấy góp ý." });
+  saveFeedback();
+  res.json({ ok: true });
+});
+
 // Cloudflare ghi đè no-cache bằng TTL trình duyệt 4 giờ cho .js/.css, khiến các
 // trang đang mở chạy script cũ sau khi triển khai. Gắn phiên bản vào URL asset
 // để phá cache: mỗi lần khởi động (= mỗi lần triển khai) HTML trỏ tới URL mới.
 const BOOT_ID = Date.now().toString(36);
 function versionedPage(name) {
   return readFileSync(path.join(__dirname, "public", name), "utf8").replace(
-    /(href|src)="\/((?:guest|host)\.(?:css|js))"/g,
+    /(href|src)="\/((?:guest|host|feedback)\.(?:css|js))"/g,
     `$1="/$2?v=${BOOT_ID}"`
   );
 }
 const HOST_PAGE = versionedPage("host.html");
 const GUEST_PAGE = versionedPage("guest.html");
+const FEEDBACK_PAGE = versionedPage("feedback.html");
 
 // Trang host nằm tại "/".
 app.get("/", requireHostAuth, (_req, res) => {
@@ -347,6 +418,10 @@ app.get("/", requireHostAuth, (_req, res) => {
 // Trang khách — mã QR trỏ tới đây (không có phần mở rộng nên static không phục vụ).
 app.get("/guest", (_req, res) => {
   res.set("Cache-Control", "no-cache").type("html").send(GUEST_PAGE);
+});
+
+app.get("/feedback", requireHostAuth, (_req, res) => {
+  res.set("Cache-Control", "no-cache").type("html").send(FEEDBACK_PAGE);
 });
 
 // --- WebSocket: đồng bộ hàng đợi thời gian thực + điều khiển host ------------
@@ -364,6 +439,7 @@ function stateMessage() {
     queueLimitOn,
     queueLimit,
     requireName,
+    feedbackOn,
   });
 }
 function broadcastState() {
