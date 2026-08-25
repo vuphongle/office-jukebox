@@ -38,8 +38,8 @@ dùng cho mọi sự kiện.
   cần đăng nhập.
 - 🔑 **Không cần khóa API YouTube** — tìm kiếm đọc dữ liệu từ trang kết quả công
   khai; phát nhạc dùng trình phát nhúng tiêu chuẩn.
-- 🎤 **Khám phá kiểu KTV** — các tab thể loại (K-pop, Cantopop, Mandopop, nhạc
-  phương Tây, nhạc tiệc, nhạc kinh điển Hồng Kông) và các chip ca sĩ với kết
+- 🎤 **Khám phá kiểu KTV** — các tab thể loại (K-pop, V-pop, nhạc trữ tình / bolero,
+  nhạc phương Tây, nhạc tiệc, nhạc kinh điển Việt Nam) và các chip ca sĩ với kết
   quả thực tế, cập nhật theo thời gian thực — khách không biết chọn gì chỉ cần
   chạm.
 - 🤖 **Bộ lọc nội dung AI (tùy chọn)** — mọi LLM tương thích với OpenAI sẽ đánh

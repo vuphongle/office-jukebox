@@ -55,10 +55,10 @@ trang yêu cầu đồng ý của EU. Nếu tìm kiếm hỏng, hãy nghi ngờ 
 schema của InnerTube. `/api/browse` (các tab thể loại/chip ca sĩ trên trang
 khách) dùng cùng cơ chế tìm kiếm nhưng được lưu bộ nhớ đệm 30 phút cho mỗi truy
 vấn và lọc chỉ các đĩa đơn (≤10 phút) để dự phòng các bản phát trực tiếp hoặc
-bản tuyển tập quá dài. Truy vấn sentinel `__hk_hits` (lần tải đầu tiên của tab
-Tất cả) trả về danh sách phát biểu đồ "Daily Top Music Videos - Hong Kong" của
-YouTube thay vì tìm kiếm văn bản, vì tìm kiếm văn bản xếp hạng theo mức khớp
-tiêu đề chứ không theo độ phổ biến tại địa phương.
+bản tuyển tập quá dài. Truy vấn sentinel `__vn_hits` (lần tải đầu tiên của tab
+Tất cả) trả về bảng xếp hạng âm nhạc Việt Nam hiện tại của YouTube thay vì tìm
+kiếm văn bản, vì tìm kiếm văn bản xếp hạng theo mức khớp tiêu đề chứ không theo
+độ phổ biến tại địa phương.
 
 **Kiểm duyệt: cho phép tiếp tục hay từ chối khi lỗi** (`src/moderation.js`) —
 đây là sự phân biệt có chủ ý, phải giữ nguyên:

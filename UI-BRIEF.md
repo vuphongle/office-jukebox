@@ -54,7 +54,7 @@ thái đang tải nào ngoài các trạng thái nêu trên.
 Trên thực tế chỉ dùng trên thiết bị di động. Khách sử dụng trong khoảng 30 giây
 mỗi lần, thường ở nơi tối và có thể đã hơi chếnh choáng. Vùng chạm phải lớn.
 Giao diện dùng tiếng Việt; tên bài hát và tên ca sĩ được giữ nguyên ngôn ngữ gốc
-(ví dụ 陳奕迅 / BLACKPINK) để không làm sai dữ liệu âm nhạc.
+(ví dụ Sơn Tùng M-TP / BLACKPINK) để không làm sai dữ liệu âm nhạc.
 
 **Đầu trang** — tiêu đề và phần giải thích trong một dòng.
 
@@ -69,8 +69,8 @@ trang:
   hình tròn (ký tự đầu tiên của tên, màu theo thể loại) và tên. Chạm vào để
   tải các bài hát của ca sĩ đó. Hàng chip được lọc theo tab thể loại đang hoạt
   động.
-- **Các tab thể loại** — 🔥 Tất cả · 💜 K-pop · 🎤 Cantopop · 🎵 Mandopop · 🎧
-  Nhạc phương Tây · 🪩 Nhạc tiệc · 📼 Nhạc kinh điển. Luôn có một tab đang hoạt
+- **Các tab thể loại** — 🔥 Tất cả · 💜 K-pop · 🎤 V-pop · 🎵 Nhạc trữ tình / bolero · 🎧
+  Nhạc phương Tây · 🪩 Nhạc tiệc · 📼 Nhạc kinh điển Việt Nam. Luôn có một tab đang hoạt
   động (được tô sáng).
 - **Nút 🔀 Xáo trộn** — xáo trộn lại các bài hát trong lựa chọn hiện tại.
 - Các bài hát hiển thị là kết quả YouTube thực tế, hiện tại (được tải trực

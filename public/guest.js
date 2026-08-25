@@ -192,7 +192,7 @@ function selectSinger(s) {
   activeKey = `singer:${s.n}`;
   renderGenreTabs();
   renderSingers();
-  startBrowse([s.q, `${s.q} 熱門歌曲`, `${s.q} hits`]);
+  startBrowse([s.q, `${s.q} bài hát nổi bật`, `${s.q} hits`]);
 }
 
 async function startBrowse(queries) {

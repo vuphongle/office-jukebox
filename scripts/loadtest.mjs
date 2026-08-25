@@ -37,16 +37,16 @@ const REQUEST_PER_MIN = parseFloat(args["request-per-min"] || "20");
 
 // Các query tab/chip định sẵn của trang khách — thân thiện với cache.
 const BROWSE_QUERIES = [
-  "__hk_hits",
-  "廣東歌 2024",
-  "廣東歌 90年代",
-  "英文流行曲",
+  "__vn_hits",
+  "V-pop 2026",
+  "nhạc trữ tình Việt Nam",
+  "nhạc tiếng Anh",
   "K-pop hits",
-  "畢業歌",
+  "nhạc tốt nghiệp",
 ];
 const SEARCH_QUERIES = [
-  "周杰倫", "陳奕生 富士山下", "Taylor Swift", "MIRROR", "張學友",
-  "aespa", "Ed Sheeran", "五月天", "林家謙", "IU",
+  "Sơn Tùng M-TP", "HIEUTHUHAI", "Taylor Swift", "Vũ.", "Đen",
+  "aespa", "Ed Sheeran", "Mỹ Tâm", "Bích Phương", "IU",
 ];
 
 // --- chỉ số -----------------------------------------------------------------
