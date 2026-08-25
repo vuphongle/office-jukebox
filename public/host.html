@@ -1,23 +1,23 @@
 <!DOCTYPE html>
-<html lang="zh-Hant">
+<html lang="vi">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Event Music — Now Playing</title>
+  <title>Nhạc sự kiện — Đang phát</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Noto+Serif+TC:wght@600;700&family=Noto+Sans+TC:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Serif:wght@600;700&family=Noto+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="/host.css" />
 </head>
 <body>
-  <!-- One click here unlocks browser autoplay so audio reaches the AV system. -->
+  <!-- Nhấp một lần để bật tính năng tự động phát của trình duyệt, giúp âm thanh truyền đến hệ thống âm thanh. -->
   <div id="start-overlay">
     <div class="start-card">
       <div class="start-logo">🎶</div>
-      <h1>Event Music System</h1>
-      <p>Click to start the jukebox.</p>
-      <button id="start-btn">▶  Start</button>
-      <small>Make sure this window's audio goes to the venue's AV system.</small>
+      <h1>Hệ thống nhạc sự kiện</h1>
+      <p>Nhấp để bắt đầu trình phát nhạc.</p>
+      <button id="start-btn">▶  Bắt đầu</button>
+      <small>Đảm bảo âm thanh của cửa sổ này được phát qua hệ thống âm thanh.</small>
     </div>
   </div>
 
@@ -27,32 +27,32 @@
         <div id="player"></div>
         <div id="idle" class="hidden">
           <div class="idle-emoji">🎧</div>
-          <p>暫時未有歌曲</p>
-          <p class="idle-sub">掃描 QR code，點播第一首歌！Scan the QR code to add the first one!</p>
+          <p>Chưa có bài hát</p>
+          <p class="idle-sub">Quét mã QR để thêm bài hát đầu tiên!</p>
         </div>
       </div>
       <div id="now-meta">
         <div id="now-label" class="now-label hidden">
           <span class="eq"><span></span><span></span><span></span></span>
-          <span class="np-zh">現正播放</span>
-          <span class="np-en">Now Playing</span>
+          <span class="np-zh">Đang phát</span>
+          <span class="np-en"></span>
         </div>
         <div id="now-title">—</div>
         <div id="now-channel"></div>
       </div>
       <div id="controls">
-        <button id="playpause" title="Play / Pause (space)">
+        <button id="playpause" title="Phát / Tạm dừng (phím cách)">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="5" width="4.5" height="14" rx="1.5"></rect><rect x="13.5" y="5" width="4.5" height="14" rx="1.5"></rect></svg>
         </button>
-        <button id="skip" title="Skip (n)">
+        <button id="skip" title="Bỏ qua (n)">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><path d="M6 5v14l10-7z"></path><rect x="17" y="5" width="2.6" height="14" rx="1"></rect></svg>
         </button>
-        <button id="filter-toggle" class="pill" title="內容過濾 — 點按循環：關 → 開 → 嚴格（只限老少咸宜）">過濾</button>
-        <span id="filter-hint" class="filter-hint hidden">no LLM key — accepts all</span>
-        <button id="cooldown-toggle" class="pill" title="Per-guest request cooldown — click to change">冷卻</button>
-        <button id="context-toggle" class="pill" title="活動場景 — tell the AI filter what kind of event this is">
+        <button id="filter-toggle" class="pill" title="Bộ lọc nội dung — nhấp để chuyển: tắt → bật → nghiêm ngặt (chỉ nội dung phù hợp với gia đình)">Bộ lọc</button>
+        <span id="filter-hint" class="filter-hint hidden">Chưa có khóa LLM — chấp nhận tất cả</span>
+        <button id="cooldown-toggle" class="pill" title="Thời gian chờ giữa các yêu cầu của từng khách — nhấp để thay đổi">Thời gian chờ</button>
+        <button id="context-toggle" class="pill" title="Bối cảnh sự kiện — cho bộ lọc AI biết đây là loại sự kiện nào">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 21s-6.5-4.3-6.5-10a6.5 6.5 0 0113 0c0 5.7-6.5 10-6.5 10z"></path><circle cx="12" cy="10.5" r="2.4"></circle></svg>
-          <span>場景</span>
+          <span>Bối cảnh</span>
         </button>
         <div class="vol">
           <svg width="18" height="18" viewBox="0 0 24 24"><path d="M4 9.5v5h3.6l4.9 4V5.5l-4.9 4H4z" fill="currentColor"></path><path d="M16.2 9.3a4.3 4.3 0 010 5.9" stroke="currentColor" stroke-width="1.6" fill="none" stroke-linecap="round"></path><path d="M18.6 6.8a8 8 0 010 10.9" stroke="currentColor" stroke-width="1.6" fill="none" stroke-linecap="round"></path></svg>
@@ -61,21 +61,21 @@
       </div>
       <div id="context-row" class="context-row hidden">
         <input id="context-input" type="text" maxlength="300"
-               placeholder="這是什麼活動？例：a secondary school graduation dinner in Hong Kong / a wedding banquet…" />
-        <button id="context-save">儲存</button>
+               placeholder="Đây là sự kiện gì? Ví dụ: tiệc tốt nghiệp trung học / tiệc cưới…" />
+        <button id="context-save">Lưu</button>
       </div>
     </section>
 
     <aside class="sidebar">
       <div class="qr-card">
-        <div class="qr-title">掃碼點歌</div>
-        <div class="qr-sub">Scan to add a song</div>
-        <div class="qr-frame"><img id="qr" alt="QR code" /></div>
+        <div class="qr-title">Quét mã để chọn bài</div>
+        <div class="qr-sub">Quét để thêm bài hát</div>
+        <div class="qr-frame"><img id="qr" alt="Mã QR" /></div>
         <div id="guest-url" class="guest-url"></div>
       </div>
       <div class="queue-card">
         <div class="queue-head">
-          接下來 <small>Up Next</small> <span id="queue-count" class="count">0</span>
+          Hàng đợi <small>Sắp phát</small> <span id="queue-count" class="count">0</span>
         </div>
         <ul id="queue"></ul>
       </div>

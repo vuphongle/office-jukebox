@@ -1,5 +1,5 @@
-// Host (projector) page: drives the YouTube player from the server's queue and
-// reports playback events back so the server can advance the queue.
+// Trang host (máy chiếu): điều khiển trình phát YouTube theo hàng đợi từ máy chủ
+// và gửi sự kiện phát lại để máy chủ chuyển sang bài tiếp theo.
 
 let player = null;
 let playerReady = false;
@@ -7,20 +7,20 @@ let started = false;
 let currentVideoId = null;
 let latestState = { nowPlaying: null, queue: [] };
 let filterOn = false;
-let moderationMode = "default"; // "default" | "strict"
+let moderationMode = "default"; // "default" | "strict" (các giá trị giao thức)
 let moderationConfigured = false;
 let cooldownSeconds = 15;
 let eventContext = "";
-let hostToken = null; // WS control token (only issued to the authenticated host page)
+let hostToken = null; // mã điều khiển WS (chỉ cấp cho trang host đã xác thực)
 let ws = null;
 
-// ---- WebSocket --------------------------------------------------------
+// ---- Kết nối WebSocket ------------------------------------------------
 function sendAuth() {
   if (hostToken && ws && ws.readyState === 1) ws.send(JSON.stringify({ type: "auth", token: hostToken }));
 }
 
-// If the track finished while the WS was down, the "ended" message was lost
-// and the server still thinks it's playing — resync on reconnect.
+// Nếu bài hát kết thúc khi WS bị ngắt, thông điệp "ended" có thể bị mất
+// và máy chủ vẫn nghĩ bài đang phát — đồng bộ lại khi kết nối lại.
 function reportIfEnded() {
   if (playerReady && currentVideoId && player.getPlayerState && player.getPlayerState() === YT.PlayerState.ENDED) {
     send({ type: "ended", videoId: currentVideoId });
@@ -31,7 +31,7 @@ function connectWs() {
   const proto = location.protocol === "https:" ? "wss" : "ws";
   ws = new WebSocket(`${proto}://${location.host}`);
   ws.onopen = () => {
-    sendAuth(); // re-auth on every (re)connect
+    sendAuth(); // xác thực lại sau mỗi lần kết nối/kết nối lại
     reportIfEnded();
   };
   ws.onmessage = (e) => {
@@ -49,13 +49,13 @@ function connectWs() {
       syncPlayer();
     }
   };
-  ws.onclose = () => setTimeout(connectWs, 1500); // auto-reconnect
+  ws.onclose = () => setTimeout(connectWs, 1500); // tự động kết nối lại
 }
 function send(obj) {
   if (ws && ws.readyState === 1) ws.send(JSON.stringify(obj));
 }
 
-// ---- YouTube IFrame API ----------------------------------------------
+// ---- API IFrame YouTube ----------------------------------------------
 window.onYouTubeIframeAPIReady = function () {
   player = new YT.Player("player", {
     height: "100%",
@@ -73,15 +73,15 @@ window.onYouTubeIframeAPIReady = function () {
         updatePlayPauseIcon();
       },
       onError: (e) => {
-        // 101/150 = embedding disabled by owner; 100 = removed; 2 = bad id.
-        console.warn("Player error", e.data, "on", currentVideoId);
+        // 101/150 = chủ sở hữu không cho phép nhúng; 100 = đã gỡ; 2 = mã không hợp lệ.
+        console.warn("Lỗi trình phát", e.data, "ở", currentVideoId);
         send({ type: "error", videoId: currentVideoId, code: e.data });
       },
     },
   });
 };
 
-// Make the player match whatever the server says is now playing.
+// Đồng bộ trình phát theo bài mà máy chủ đang báo là đang phát.
 function syncPlayer() {
   if (!started || !playerReady) return;
   const np = latestState.nowPlaying;
@@ -102,9 +102,9 @@ function syncPlayer() {
   }
 }
 
-// Some broken embeds render a black frame without ever firing onError. If a
-// freshly loaded video hasn't produced any playback after 20s (and isn't
-// simply paused), report it as an error so the server skips to the next song.
+// Một số video nhúng lỗi chỉ hiển thị khung đen mà không phát sinh onError. Nếu
+// video vừa tải không bắt đầu phát sau 20 giây (và không chỉ đang tạm dừng),
+// báo lỗi để máy chủ bỏ qua và chuyển sang bài tiếp theo.
 let playbackWatchdog = null;
 function armPlaybackWatchdog(videoId) {
   clearTimeout(playbackWatchdog);
@@ -113,23 +113,22 @@ function armPlaybackWatchdog(videoId) {
     const t = player.getCurrentTime ? player.getCurrentTime() : 0;
     const s = player.getPlayerState ? player.getPlayerState() : -1;
     if (t >= 1 || s === YT.PlayerState.PLAYING || s === YT.PlayerState.PAUSED) return;
-    // A hidden tab can't be the projector — browsers block its autoplay, so
-    // its player sits UNSTARTED forever. Reporting that as an error would skip
-    // the song for everyone. Likewise BUFFERING just means a slow network.
-    // Either way, wait another round instead of skipping.
+    // Tab bị ẩn không thể là màn hình máy chiếu — trình duyệt chặn tự động phát,
+    // nên trình phát sẽ ở trạng thái UNSTARTED mãi. Báo lỗi khi đó sẽ khiến mọi
+    // người bỏ qua bài hát. Tương tự, BUFFERING chỉ có nghĩa là mạng chậm.
+    // Trong cả hai trường hợp, chờ thêm một vòng thay vì bỏ qua.
     if (document.hidden || s === YT.PlayerState.BUFFERING) {
       armPlaybackWatchdog(videoId);
       return;
     }
-    console.warn(`[watchdog] ${videoId} never started (state ${s}) — skipping`);
+    console.warn(`[giám sát] ${videoId} chưa bắt đầu (trạng thái ${s}) — bỏ qua`);
     send({ type: "error", videoId, code: "watchdog" });
   }, 20000);
 }
 
-// A page restored from the back-forward cache has lost its autoplay
-// permission: playVideo() fails silently, the player never starts, and the
-// watchdog would skip every song for everyone. Stop driving the player and
-// require a fresh Start click instead.
+// Trang được khôi phục từ bộ nhớ đệm back-forward đã mất quyền tự động phát:
+// playVideo() âm thầm thất bại, trình phát không bao giờ bắt đầu và bộ giám sát
+// sẽ bỏ qua mọi bài hát. Dừng điều khiển trình phát và yêu cầu nhấp Bắt đầu lại.
 window.addEventListener("pageshow", (e) => {
   if (!e.persisted) return;
   clearTimeout(playbackWatchdog);
@@ -139,13 +138,13 @@ window.addEventListener("pageshow", (e) => {
   document.getElementById("stage").classList.add("hidden");
 });
 
-// ---- Rendering --------------------------------------------------------
+// ---- Hiển thị ---------------------------------------------------------
 function render() {
   const np = latestState.nowPlaying;
   document.getElementById("now-label").classList.toggle("hidden", !np);
   document.getElementById("now-title").textContent = np ? np.title : "—";
   document.getElementById("now-channel").textContent = np
-    ? np.channel + (np.addedBy ? ` · 點唱: ${np.addedBy}` : "")
+    ? np.channel + (np.addedBy ? ` · Yêu cầu: ${np.addedBy}` : "")
     : "";
 
   const queue = latestState.queue || [];
@@ -153,7 +152,7 @@ function render() {
   const ul = document.getElementById("queue");
   ul.innerHTML = "";
   if (queue.length === 0) {
-    ul.innerHTML = '<li class="q-empty">Queue is empty — scan the QR to add a song.</li>';
+    ul.innerHTML = '<li class="q-empty">Hàng đợi đang trống — quét mã QR để thêm bài hát.</li>';
     return;
   }
   for (const item of queue) {
@@ -167,9 +166,9 @@ function render() {
         <div class="q-title"></div>
         <div class="q-sub"></div>
       </div>
-      <button class="q-remove" title="Remove">✕</button>`;
+      <button class="q-remove" title="Xóa">✕</button>`;
     li.querySelector(".q-title").textContent = item.title;
-    li.querySelector(".q-sub").textContent = item.addedBy ? `點唱: ${item.addedBy}` : item.channel;
+    li.querySelector(".q-sub").textContent = item.addedBy ? `Yêu cầu: ${item.addedBy}` : item.channel;
     li.querySelector(".q-remove").onclick = () => send({ type: "remove", id: item.id });
     ul.appendChild(li);
   }
@@ -183,23 +182,23 @@ const CLOCK_SVG =
 function renderFilter() {
   const btn = document.getElementById("filter-toggle");
   const strict = filterOn && moderationMode === "strict";
-  const label = !filterOn ? "關" : strict ? "嚴格" : "開";
-  btn.innerHTML = `${SHIELD_SVG}<span>過濾：${label}</span>`;
+  const label = !filterOn ? "Tắt" : strict ? "Nghiêm ngặt" : "Bật";
+  btn.innerHTML = `${SHIELD_SVG}<span>Bộ lọc: ${label}</span>`;
   btn.classList.toggle("on", filterOn && !strict);
   btn.classList.toggle("strict", strict);
-  // Warn if the filter is on but no LLM key is configured (it'll accept all).
+  // Cảnh báo khi bộ lọc bật nhưng chưa cấu hình khóa LLM (bộ lọc sẽ chấp nhận tất cả).
   document.getElementById("filter-hint").classList.toggle("hidden", !(filterOn && !moderationConfigured));
 }
 
 function renderCooldown() {
   const btn = document.getElementById("cooldown-toggle");
-  btn.innerHTML = `${CLOCK_SVG}<span>冷卻：${cooldownSeconds ? cooldownSeconds + "s" : "關"}</span>`;
+  btn.innerHTML = `${CLOCK_SVG}<span>Thời gian chờ: ${cooldownSeconds ? cooldownSeconds + " giây" : "Tắt"}</span>`;
   btn.classList.toggle("on", cooldownSeconds > 0);
 }
 
 function renderContext() {
   const input = document.getElementById("context-input");
-  // Don't clobber the host's typing with a broadcast echo.
+  // Không ghi đè nội dung host đang nhập bằng dữ liệu phát lại từ máy chủ.
   if (document.activeElement !== input) input.value = eventContext;
 }
 
@@ -214,7 +213,7 @@ function updatePlayPauseIcon() {
   document.getElementById("playpause").innerHTML = playing ? PAUSE_SVG : PLAY_SVG;
 }
 
-// ---- Controls ---------------------------------------------------------
+// ---- Điều khiển -------------------------------------------------------
 function wireControls() {
   document.getElementById("playpause").onclick = () => {
     if (!playerReady) return;
@@ -223,13 +222,13 @@ function wireControls() {
     else player.playVideo();
   };
   document.getElementById("skip").onclick = () => send({ type: "skip" });
-  // Filter pill cycles: 關 → 開 (normal) → 嚴格 (family-friendly only) → 關.
+  // Nút bộ lọc chuyển vòng: Tắt → Bật (bình thường) → Nghiêm ngặt (chỉ nội dung phù hợp với gia đình) → Tắt.
   document.getElementById("filter-toggle").onclick = () => {
     if (!filterOn) send({ type: "setFilter", on: true, mode: "default" });
     else if (moderationMode !== "strict") send({ type: "setFilter", on: true, mode: "strict" });
     else send({ type: "setFilter", on: false, mode: "default" });
   };
-  // Cycle through preset cooldowns; the server echoes the value back via state.
+  // Chuyển qua các mốc thời gian chờ có sẵn; máy chủ gửi lại giá trị qua trạng thái.
   const COOLDOWN_STEPS = [0, 5, 10, 15, 30, 60];
   document.getElementById("cooldown-toggle").onclick = () => {
     const i = COOLDOWN_STEPS.indexOf(cooldownSeconds);
@@ -242,7 +241,7 @@ function wireControls() {
     paintVol();
     if (playerReady) player.setVolume(parseInt(volEl.value, 10));
   };
-  // Event-context editor: the 場景 pill reveals an input; 儲存 sends it.
+  // Trình chỉnh sửa bối cảnh sự kiện: nút Bối cảnh hiện ô nhập; nút Lưu gửi nội dung.
   const ctxRow = document.getElementById("context-row");
   const ctxInput = document.getElementById("context-input");
   document.getElementById("context-toggle").onclick = () => {
@@ -258,13 +257,13 @@ function wireControls() {
   });
 
   document.addEventListener("keydown", (e) => {
-    if (e.target.tagName === "INPUT") return; // typing in the context field
+    if (e.target.tagName === "INPUT") return; // đang nhập trong ô bối cảnh
     if (e.code === "Space") { e.preventDefault(); document.getElementById("playpause").click(); }
     if (e.key.toLowerCase() === "n") document.getElementById("skip").click();
   });
 }
 
-// ---- Bootstrap --------------------------------------------------------
+// ---- Khởi tạo ---------------------------------------------------------
 async function loadInfo() {
   try {
     const info = await (await fetch("/api/info")).json();
@@ -275,14 +274,14 @@ async function loadInfo() {
     moderationConfigured = !!info.moderationConfigured;
     renderFilter();
   } catch (err) {
-    document.getElementById("guest-url").textContent = "Could not load guest link";
+    document.getElementById("guest-url").textContent = "Không thể tải liên kết dành cho khách";
   }
   try {
-    // The browser reuses the page's Basic Auth credentials for this fetch.
+    // Trình duyệt dùng lại thông tin xác thực Basic Auth của trang cho yêu cầu này.
     hostToken = (await (await fetch("/api/host-token")).json()).token || null;
-    sendAuth(); // the WS may have connected before the token arrived
+    sendAuth(); // WS có thể đã kết nối trước khi nhận được mã
   } catch {
-    /* no password mode, or offline — controls stay open or inert */
+    /* không dùng mật khẩu hoặc đang ngoại tuyến — các nút vẫn mở hoặc không hoạt động */
   }
 }
 

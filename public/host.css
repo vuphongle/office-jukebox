@@ -1,6 +1,6 @@
-/* Host (projector) page — implements the "Event Jukebox" design:
-   dark plum stage, gold = now-playing/filter-on, red-orange = count/volume,
-   Noto Serif TC for display type, readable from across a dark venue. */
+/* Trang host (máy chiếu) — triển khai giao diện máy phát nhạc sự kiện:
+   sân khấu màu mận tối, vàng = đang phát/bộ lọc bật, đỏ cam = số lượng/âm lượng,
+   Noto Serif cho tiêu đề, dễ đọc từ xa trong không gian tối. */
 
 :root {
   --bg-a: oklch(17% 0.03 325);
@@ -21,8 +21,8 @@
   --warm-soft: oklch(84% 0.03 60);
   --muted: oklch(56% 0.025 320);
   --faint: oklch(50% 0.02 320);
-  --serif: "Noto Serif TC", serif;
-  --sans: "Noto Sans TC", "PingFang TC", "Microsoft JhengHei", sans-serif;
+  --serif: "Noto Serif", serif;
+  --sans: "Noto Sans", Arial, sans-serif;
 }
 
 * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -42,7 +42,7 @@ html, body {
   50% { transform: scaleY(1); }
 }
 
-/* ---- Start overlay ---- */
+/* ---- Lớp phủ bắt đầu ---- */
 #start-overlay {
   position: fixed;
   inset: 0;
@@ -68,7 +68,7 @@ html, body {
 #start-btn:hover { background: oklch(60% 0.19 28); }
 .start-card small { display: block; margin-top: 1.4rem; color: var(--faint); }
 
-/* ---- Stage layout ---- */
+/* ---- Bố cục sân khấu ---- */
 #stage {
   height: 100vh;
   display: grid;
@@ -115,7 +115,7 @@ html, body {
 #idle p { font: 600 1.5rem/1.4 var(--sans); color: var(--text-hi); }
 .idle-sub { font: 400 1rem/1.5 var(--sans); color: var(--muted); margin-top: 0.4rem; }
 
-/* ---- Now playing meta ---- */
+/* ---- Thông tin bài đang phát ---- */
 .now-label { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
 .now-label .np-zh { font: 700 15px/1 var(--sans); color: var(--gold); letter-spacing: 0.04em; }
 .now-label .np-en { font: 600 11px/1 var(--sans); color: var(--faint); letter-spacing: 0.14em; text-transform: uppercase; }
@@ -136,7 +136,7 @@ html, body {
 }
 #now-channel { font: 500 19px/1.4 var(--sans); color: var(--warm); }
 
-/* ---- Controls ---- */
+/* ---- Điều khiển ---- */
 #controls { display: flex; align-items: center; gap: 14px; }
 #controls button {
   width: 56px;
@@ -177,8 +177,8 @@ html, body {
   color: var(--red-ink);
 }
 #controls button.pill.strict:hover { background: oklch(60% 0.19 28); }
-/* The cooldown pill stays neutral even when active (only the filter pill
-   goes gold in the design) — needs #controls to out-specify the .on rule. */
+/* Nút thời gian chờ vẫn giữ màu trung tính khi bật (chỉ nút bộ lọc chuyển
+   sang màu vàng theo thiết kế) — cần độ ưu tiên cao hơn quy tắc .on. */
 #controls #cooldown-toggle.pill.on {
   background: var(--fill);
   border-color: oklch(100% 0 0 / 0.1);
@@ -216,7 +216,7 @@ html, body {
   cursor: pointer;
 }
 
-/* Event-context editor (revealed by the 場景 pill) */
+/* Trình chỉnh sửa bối cảnh sự kiện (hiện ra khi nhấn nút Bối cảnh) */
 .context-row { display: flex; gap: 10px; }
 .context-row input {
   flex: 1;
@@ -244,7 +244,7 @@ html, body {
 }
 .context-row button:hover { background: oklch(84% 0.14 85); }
 
-/* ---- Sidebar ---- */
+/* ---- Thanh bên ---- */
 .sidebar {
   display: flex;
   flex-direction: column;
