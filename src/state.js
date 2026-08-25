@@ -1,21 +1,21 @@
-// Authoritative, in-memory queue state. The server owns the queue; the host
-// page is just the player that renders whatever `nowPlaying` says.
+// Trạng thái hàng đợi trong bộ nhớ, có tính quyết định. Server sở hữu hàng đợi;
+// trang host chỉ là trình phát hiển thị nội dung của nowPlaying.
 //
-// Any mutation fires onChange(), which the server uses to broadcast the full
-// state to every connected client. The state is small (a party playlist), so
-// broadcasting the whole thing on every change keeps the logic dead simple.
+// Mọi thay đổi đều gọi onChange(), server dùng hàm này để phát toàn bộ trạng thái
+// tới mọi client đang kết nối. Trạng thái nhỏ (playlist của buổi tiệc), nên phát
+// toàn bộ sau mỗi thay đổi giúp logic đơn giản.
 
 import { randomUUID } from "node:crypto";
 
 export class JukeboxState {
   constructor() {
-    this.nowPlaying = null; // current item or null
-    this.queue = []; // upcoming items
-    this.history = []; // played items (most recent last), capped
+    this.nowPlaying = null; // mục hiện tại hoặc null
+    this.queue = []; // các mục sắp phát
+    this.history = []; // các mục đã phát (mới nhất ở cuối), có giới hạn
     this.onChange = () => {};
   }
 
-  // Is this video already playing or somewhere in the queue?
+  // Video này đang phát hay đã ở đâu đó trong hàng đợi?
   has(videoId) {
     return this.nowPlaying?.videoId === videoId || this.queue.some((s) => s.videoId === videoId);
   }
@@ -32,14 +32,14 @@ export class JukeboxState {
     this.onChange(this.snapshot());
   }
 
-  // Promote the next queued song if nothing is playing.
+  // Đưa bài tiếp theo trong hàng đợi lên phát nếu hiện không có bài nào.
   _promoteIfIdle() {
     if (!this.nowPlaying && this.queue.length > 0) {
       this.nowPlaying = this.queue.shift();
     }
   }
 
-  // Add a moderated/approved song. Returns the created item incl. its position.
+  // Thêm bài hát đã được kiểm duyệt/chấp thuận. Trả về mục đã tạo kèm vị trí.
   add({ videoId, title, channel, duration, thumbnail, addedBy }) {
     const item = {
       id: randomUUID(),
@@ -58,11 +58,11 @@ export class JukeboxState {
     return { item, position };
   }
 
-  // Advance to the next song. `finishedVideoId` guards against double-advances
-  // from duplicate "ended"/"error" events for the same track.
+  // Chuyển sang bài tiếp theo. finishedVideoId ngăn chuyển hai lần do các event
+  // "ended"/"error" trùng lặp của cùng một bài.
   advance(finishedVideoId) {
     if (finishedVideoId && this.nowPlaying && this.nowPlaying.videoId !== finishedVideoId) {
-      return; // stale event for a track we already moved past
+      return; // event cũ của bài đã được chuyển qua
     }
     if (this.nowPlaying) {
       this.history.push(this.nowPlaying);
@@ -72,19 +72,19 @@ export class JukeboxState {
     this._emit();
   }
 
-  // Host control: skip the current track regardless of what's playing.
+  // Điều khiển host: bỏ qua bài hiện tại bất kể bài nào đang phát.
   skip() {
     this.advance(this.nowPlaying?.videoId);
   }
 
-  // Remove an upcoming item by id (host control).
+  // Xóa một mục sắp phát theo id (điều khiển host).
   remove(id) {
     const before = this.queue.length;
     this.queue = this.queue.filter((s) => s.id !== id);
     if (this.queue.length !== before) this._emit();
   }
 
-  // Move an upcoming item up/down (host control).
+  // Di chuyển một mục sắp phát lên/xuống (điều khiển host).
   move(id, dir) {
     const i = this.queue.findIndex((s) => s.id === id);
     if (i === -1) return;

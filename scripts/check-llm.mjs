@@ -1,7 +1,7 @@
-// Verifies your LLM moderation provider (Kimi by default) and runs a quick
-// moderation test. Run with: bun run check-llm
+// Xác minh nhà cung cấp kiểm duyệt LLM (mặc định là Kimi) và chạy bài kiểm tra
+// kiểm duyệt nhanh. Chạy bằng: bun run check-llm
 //
-// Reads LLM_API_KEY / LLM_BASE_URL / LLM_MODEL from .env.
+// Đọc LLM_API_KEY / LLM_BASE_URL / LLM_MODEL từ .env.
 
 import { readFileSync, existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
@@ -22,35 +22,35 @@ const baseUrl = (process.env.LLM_BASE_URL || "https://api.moonshot.ai/v1").repla
 const model = process.env.LLM_MODEL || "kimi-k2.6";
 
 if (!key) {
-  console.error("No LLM_API_KEY in .env — moderation will accept everything even when the filter is ON.");
+  console.error("Không có LLM_API_KEY trong .env — kiểm duyệt sẽ chấp thuận mọi thứ dù bộ lọc đang BẬT.");
   process.exit(1);
 }
 
-console.log(`Provider base URL: ${baseUrl}`);
-console.log(`Model:             ${model}\n`);
+console.log(`URL cơ sở provider: ${baseUrl}`);
+console.log(`Model:              ${model}\n`);
 
-// Most OpenAI-compatible providers expose GET /v1/models.
+// Phần lớn nhà cung cấp tương thích OpenAI có GET /v1/models.
 try {
   const res = await fetch(`${baseUrl}/models`, { headers: { Authorization: `Bearer ${key}` } });
   if (res.ok) {
     const { data = [] } = await res.json();
-    console.log("Available models:");
+    console.log("Các model khả dụng:");
     for (const m of data) console.log("  -", m.id);
     console.log();
   } else {
-    console.log(`(GET /models returned ${res.status} — provider may not support listing; continuing.)\n`);
+    console.log(`(GET /models trả về ${res.status} — provider có thể không hỗ trợ liệt kê; tiếp tục.)\n`);
   }
 } catch (e) {
-  console.log(`(Could not list models: ${e.message}; continuing.)\n`);
+  console.log(`(Không thể liệt kê model: ${e.message}; tiếp tục.)\n`);
 }
 
-console.log("Moderation test (title + channel only):");
+console.log("Kiểm tra kiểm duyệt (chỉ tiêu đề + kênh):");
 for (const song of [
   { title: "BTS (방탄소년단) 'Dynamite' Official MV", channel: "HYBE LABELS" },
   { title: "How to file your taxes 2024 — full tutorial", channel: "TaxTips" },
   { title: "God Save the King — British National Anthem", channel: "Royal Anthems" },
-  // Chinese-hosted models refuse this topic outright (finish_reason
-  // content_filter) — must come back 🚫 via the fail-closed branch.
+  // Các model do Trung Quốc lưu trữ từ chối thẳng chủ đề này (finish_reason
+  // content_filter) — phải trả về 🚫 qua nhánh fail-closed.
   { title: "香港國歌《願榮光歸香港》管弦樂團及合唱團版 Hong Kong National Anthem", channel: "Malechan Chen" },
 ]) {
   const v = await moderate(song);
