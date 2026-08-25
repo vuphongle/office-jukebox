@@ -60,6 +60,8 @@ body {
 }
 
 /* ---- Đầu trang ---- */
+header .brand-heading { display: flex; align-items: center; gap: 12px; }
+.brand-icon { width: 44px; height: 44px; flex: 0 0 auto; object-fit: contain; filter: drop-shadow(0 6px 14px oklch(10% 0.03 325 / 0.35)); }
 header h1 { font: 700 34px/1.25 var(--serif); color: var(--text-hi); }
 header .h-sub { font: 600 15px/1.3 var(--sans); color: var(--warm); margin-top: 2px; }
 header p { font: 400 13.5px/1.6 var(--sans); color: var(--muted); margin-top: 10px; }
@@ -663,6 +665,7 @@ header .desktop-intro { display: none; }
     pointer-events: none;
   }
   body > header { grid-area: header; padding: 4px 0 2px; }
+  .brand-icon { width: 58px; height: 58px; }
   header h1 { font-size: clamp(38px, 4vw, 54px); letter-spacing: -0.025em; }
   header .h-sub { font-size: 16px; }
   .desktop-intro { display: block; max-width: 58ch; margin-top: 12px; color: var(--muted); font: 400 14px/1.6 var(--sans); }
