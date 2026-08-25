@@ -303,6 +303,16 @@ app.post("/api/request", async (req, res) => {
     }
   }
 
+  // Các bước kiểm tra ở trên là async: request khác có thể đã lấp đầy queue
+  // trong lúc chờ YouTube/LLM. Kiểm tra lại ngay trước khi mutate state để
+  // không vượt giới hạn khi nhiều guest gửi đồng thời.
+  if (state.queue.length >= MAX_QUEUE_LENGTH || (queueLimitOn && state.queue.length >= queueLimit)) {
+    return res.json({ ok: false, reason: "Hàng đợi đã đầy — vui lòng thử lại sau khi phát bớt bài." });
+  }
+  if (state.has(videoId)) {
+    return res.json({ ok: false, reason: "Bài hát này đã có trong hàng đợi!" });
+  }
+
   // 3. Thêm vào hàng đợi.
   const { item, position } = state.add({
     videoId,
