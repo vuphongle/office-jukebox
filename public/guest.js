@@ -7,6 +7,17 @@ const qEl = document.getElementById("q");
 const nameEl = document.getElementById("name");
 const sugSection = document.getElementById("suggestions-section");
 const backToExploreBtn = document.getElementById("back-to-explore");
+const youtubeLinkPanel = document.getElementById("youtube-link-panel");
+const youtubeLinkForm = document.getElementById("youtube-link-form");
+const youtubeLinkInput = document.getElementById("youtube-link-input");
+const youtubeLinkSubmit = document.getElementById("youtube-link-submit");
+const youtubeLinkStatus = document.getElementById("youtube-link-status");
+const youtubeLinkPreview = document.getElementById("youtube-link-preview");
+const youtubeLinkThumb = document.getElementById("youtube-link-thumb");
+const youtubeLinkTitle = document.getElementById("youtube-link-title");
+const youtubeLinkSub = document.getElementById("youtube-link-sub");
+const youtubeLinkAdd = document.getElementById("youtube-link-add");
+let resolvedYouTubeSong = null;
 
 // ---- Khám phá (duyệt kiểu KTV) ------------------------------------------
 // Các tab thể loại và chip ca sĩ dùng các truy vấn YouTube có sẵn qua /api/browse
@@ -322,6 +333,59 @@ function renderResults(results) {
   resultsEl.innerHTML = "";
   appendResults(results);
 }
+
+// ---- Thêm bằng link YouTube --------------------------------------------
+document.getElementById("show-youtube-link").onclick = () => {
+  const open = youtubeLinkPanel.classList.toggle("hidden") === false;
+  document.getElementById("show-youtube-link").textContent = open ? "Thu gọn" : "Dán link";
+  if (open) youtubeLinkInput.focus();
+};
+
+function setYouTubeLinkStatus(text, kind = "") {
+  youtubeLinkStatus.textContent = text;
+  youtubeLinkStatus.className = `youtube-link-status${kind ? ` ${kind}` : ""}`;
+}
+
+function showYouTubePreview(song) {
+  resolvedYouTubeSong = song;
+  youtubeLinkThumb.src = song.thumbnail || NO_THUMB;
+  youtubeLinkTitle.textContent = song.title;
+  youtubeLinkSub.textContent = song.channel;
+  youtubeLinkAdd.disabled = false;
+  youtubeLinkAdd.textContent = "+";
+  youtubeLinkPreview.classList.remove("hidden");
+}
+
+youtubeLinkForm.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const url = youtubeLinkInput.value.trim();
+  if (!url) return setYouTubeLinkStatus("Vui lòng dán link YouTube.", "bad");
+  youtubeLinkSubmit.disabled = true;
+  youtubeLinkSubmit.textContent = "Đang kiểm tra…";
+  youtubeLinkPreview.classList.add("hidden");
+  resolvedYouTubeSong = null;
+  setYouTubeLinkStatus("");
+  try {
+    const res = await fetch("/api/youtube/resolve", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ url }),
+    });
+    const data = await res.json();
+    if (!res.ok || !data.ok) throw new Error(data.reason || "Link YouTube không đúng định dạng.");
+    showYouTubePreview(data.song);
+    setYouTubeLinkStatus("Đã tìm thấy video. Bạn có thể thêm vào hàng đợi.", "ok");
+  } catch (err) {
+    setYouTubeLinkStatus(err.message || "Không thể kiểm tra link YouTube.", "bad");
+  } finally {
+    youtubeLinkSubmit.disabled = false;
+    youtubeLinkSubmit.textContent = "Kiểm tra";
+  }
+});
+
+youtubeLinkAdd.onclick = () => {
+  if (resolvedYouTubeSong) requestSong(resolvedYouTubeSong, youtubeLinkAdd);
+};
 
 // ---- Nhận diện khách ----------------------------------------------------
 // Gửi ID ngẫu nhiên được lưu lại cùng mỗi yêu cầu để thời gian chờ của máy chủ

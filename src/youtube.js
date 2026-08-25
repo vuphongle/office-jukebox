@@ -150,6 +150,61 @@ export function mergeSearchResults(primary, fallback, limit = 12) {
   return merged;
 }
 
+// Chỉ nhận các dạng link video YouTube phổ biến. Không dùng URL của trang tìm
+// kiếm/kênh/playlist làm link bài hát vì hàng đợi cần một video cụ thể.
+const YOUTUBE_VIDEO_ID = /^[A-Za-z0-9_-]{11}$/;
+const YOUTUBE_HOSTS = new Set(["youtube.com", "www.youtube.com", "m.youtube.com", "music.youtube.com", "youtu.be"]);
+
+export function parseYouTubeVideoId(value) {
+  if (typeof value !== "string" || !value.trim()) return null;
+  let url;
+  try {
+    url = new URL(value.trim());
+  } catch {
+    return null;
+  }
+  if (!/^https?:$/.test(url.protocol) || !YOUTUBE_HOSTS.has(url.hostname.toLowerCase())) return null;
+
+  let id = "";
+  const host = url.hostname.toLowerCase();
+  if (host === "youtu.be") {
+    id = url.pathname.split("/").filter(Boolean)[0] || "";
+  } else if (url.pathname === "/watch") {
+    id = url.searchParams.get("v") || "";
+  } else {
+    const match = url.pathname.match(/^\/(?:shorts|embed|live)\/([^/?#]+)/);
+    id = match?.[1] || "";
+  }
+  return YOUTUBE_VIDEO_ID.test(id) ? id : null;
+}
+
+// oEmbed cung cấp metadata hiển thị mà không cần YouTube API key.
+export async function fetchYouTubeMetadata(videoId, { timeoutMs = 5000, fetchImpl = globalThis.fetch } = {}) {
+  if (!YOUTUBE_VIDEO_ID.test(videoId)) return null;
+  const url =
+    "https://www.youtube.com/oembed?url=" +
+    encodeURIComponent("https://youtu.be/" + videoId) +
+    "&format=json";
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const res = await fetchImpl(url, { headers: { "User-Agent": UA }, signal: controller.signal });
+    if (!res.ok) return null;
+    const data = await res.json();
+    return {
+      videoId,
+      title: data.title || "(không có tiêu đề)",
+      channel: data.author_name || "Không rõ",
+      duration: "",
+      thumbnail: data.thumbnail_url || `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`,
+    };
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 async function fetchSearchData(query, { mode, timeoutMs, fetchImpl = globalThis.fetch }) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);

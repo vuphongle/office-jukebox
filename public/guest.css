@@ -260,6 +260,88 @@ header p { font: 400 13.5px/1.6 var(--sans); color: var(--muted); margin-top: 10
   font-size: 15px;
 }
 
+/* ---- Thêm bằng link YouTube ------------------------------------------- */
+.youtube-link-tool {
+  margin-top: 18px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: oklch(100% 0 0 / 0.035);
+  overflow: hidden;
+}
+.youtube-link-head {
+  min-height: 70px;
+  padding: 12px 12px 12px 14px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.youtube-link-copy { display: flex; align-items: center; gap: 10px; min-width: 0; flex: 1; }
+.youtube-link-icon {
+  width: 30px;
+  height: 30px;
+  border-radius: 9px;
+  background: oklch(65% 0.18 30 / 0.18);
+  color: var(--red);
+  display: grid;
+  place-items: center;
+  font-size: 12px;
+  flex-shrink: 0;
+}
+.youtube-link-copy strong,
+.youtube-link-copy span {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.youtube-link-copy strong { font: 600 13.5px/1.3 var(--sans); color: var(--text); }
+.youtube-link-copy span { margin-top: 3px; font: 400 12px/1.3 var(--sans); color: var(--muted); }
+.link-toggle {
+  height: 36px;
+  padding: 0 13px;
+  border-radius: 10px;
+  border: 1px solid oklch(100% 0 0 / 0.13);
+  background: var(--fill);
+  color: var(--warm-soft);
+  font: 600 12.5px/1 var(--sans);
+  flex-shrink: 0;
+}
+.link-toggle:active { background: var(--fill-hover); }
+.youtube-link-panel { padding: 0 14px 14px; }
+.youtube-link-form { display: flex; gap: 8px; }
+#youtube-link-input {
+  min-width: 0;
+  flex: 1;
+  height: 44px;
+  border-radius: 11px;
+  border: 1px solid var(--line);
+  background: var(--fill);
+  color: var(--text);
+  padding: 0 12px;
+  font: 400 13px/1 var(--sans);
+  outline: none;
+}
+#youtube-link-input:focus { border-color: oklch(100% 0 0 / 0.25); }
+#youtube-link-input::placeholder { color: var(--faint); }
+#youtube-link-submit {
+  height: 44px;
+  padding: 0 13px;
+  border: 0;
+  border-radius: 11px;
+  background: var(--red);
+  color: var(--red-ink);
+  font: 600 12.5px/1 var(--sans);
+  white-space: nowrap;
+}
+#youtube-link-submit:disabled { opacity: 0.6; }
+.youtube-link-status { min-height: 0; margin-top: 8px; font: 400 12px/1.35 var(--sans); color: var(--muted); }
+.youtube-link-status.bad { color: oklch(76% 0.13 30); }
+.youtube-link-status.ok { color: var(--ok-sub); }
+.youtube-link-preview { display: flex; align-items: center; gap: 10px; margin-top: 10px; }
+.youtube-link-preview img { width: 58px; height: 58px; border-radius: 9px; object-fit: cover; background: var(--thumb); flex-shrink: 0; }
+.youtube-link-preview .r-title { font-size: 13.5px; }
+.youtube-link-preview .r-sub { margin-top: 3px; }
+
 .more {
   margin: 16px 0 0;
   width: 100%;

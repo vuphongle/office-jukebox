@@ -193,6 +193,39 @@ test("mergeSearchResults preserves primary ranking and removes duplicate video I
   assert.deepEqual(merged, [{ videoId: "top" }, { videoId: "shared" }, { videoId: "fallback" }]);
 });
 
+test("parseYouTubeVideoId accepts watch and short links with query parameters", () => {
+  assert.equal(youtube.parseYouTubeVideoId("https://www.youtube.com/watch?v=W7rindfYUHk&list=RDW7rindfYUHk"), "W7rindfYUHk");
+  assert.equal(youtube.parseYouTubeVideoId("https://youtu.be/W7rindfYUHk?si=LRn0eZlQ840rEGSq"), "W7rindfYUHk");
+  assert.equal(youtube.parseYouTubeVideoId("https://www.youtube.com/shorts/W7rindfYUHk"), "W7rindfYUHk");
+});
+
+test("parseYouTubeVideoId rejects non-YouTube URLs and malformed IDs", () => {
+  assert.equal(youtube.parseYouTubeVideoId("https://vimeo.com/123456789"), null);
+  assert.equal(youtube.parseYouTubeVideoId("W7rindfYUHk"), null);
+  assert.equal(youtube.parseYouTubeVideoId("https://youtu.be/not-video"), null);
+});
+
+test("fetchYouTubeMetadata maps oEmbed response to a request song", async () => {
+  const song = await youtube.fetchYouTubeMetadata("W7rindfYUHk", {
+    fetchImpl: async () =>
+      new Response(
+        JSON.stringify({
+          title: "A song",
+          author_name: "An artist",
+          thumbnail_url: "https://img.test/thumb.jpg",
+        }),
+        { status: 200 }
+      ),
+  });
+  assert.deepEqual(song, {
+    videoId: "W7rindfYUHk",
+    title: "A song",
+    channel: "An artist",
+    duration: "",
+    thumbnail: "https://img.test/thumb.jpg",
+  });
+});
+
 test("web search falls back to Songs results without copying browser credentials", async () => {
   assert.equal(typeof youtube.searchYouTube, "function");
   const requests = [];
