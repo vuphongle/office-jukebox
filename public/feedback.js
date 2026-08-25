@@ -1,7 +1,9 @@
 const listEl = document.getElementById("feedback-list");
 const toggleEl = document.getElementById("feedback-toggle");
+const chatToggleEl = document.getElementById("chat-toggle");
 const statusEl = document.getElementById("page-status");
 let feedbackOn = true;
+let chatOn = true;
 
 function setStatus(message, bad = false) {
   statusEl.textContent = message;
@@ -14,6 +16,12 @@ function renderToggle() {
   toggleEl.setAttribute("aria-pressed", String(feedbackOn));
 }
 
+function renderChatToggle() {
+  chatToggleEl.textContent = `Chat: ${chatOn ? "Bật" : "Tắt"}`;
+  chatToggleEl.classList.toggle("on", chatOn);
+  chatToggleEl.setAttribute("aria-pressed", String(chatOn));
+}
+
 function formatDate(value) {
   const date = new Date(value);
   return Number.isNaN(date.getTime()) ? "" : date.toLocaleString("vi-VN", { dateStyle: "medium", timeStyle: "short" });
@@ -21,7 +29,9 @@ function formatDate(value) {
 
 function render(data) {
   feedbackOn = !!data.feedbackOn;
+  chatOn = data.chatOn !== false;
   renderToggle();
+  renderChatToggle();
   document.getElementById("stat-total").textContent = data.stats.total;
   document.getElementById("stat-today").textContent = data.stats.today;
   document.getElementById("stat-week").textContent = data.stats.last7Days;
@@ -82,22 +92,33 @@ async function deleteFeedback(id) {
   }
 }
 
-toggleEl.onclick = async () => {
-  toggleEl.disabled = true;
+async function updateSettings(payload, successMessage) {
   try {
     const res = await fetch("/api/feedback/settings", {
-      method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ on: !feedbackOn }),
+      method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload),
     });
     const data = await res.json();
     if (!res.ok || !data.ok) throw new Error(data.reason || "Không thể cập nhật cài đặt.");
-    feedbackOn = data.feedbackOn;
+    if (typeof data.feedbackOn === "boolean") feedbackOn = data.feedbackOn;
+    if (typeof data.chatOn === "boolean") chatOn = data.chatOn;
     renderToggle();
-    setStatus(`Đã ${feedbackOn ? "bật" : "tắt"} tính năng góp ý.`);
+    renderChatToggle();
+    setStatus(successMessage);
   } catch (error) {
     setStatus(error.message || "Không thể cập nhật cài đặt.", true);
-  } finally {
-    toggleEl.disabled = false;
   }
+}
+
+toggleEl.onclick = async () => {
+  toggleEl.disabled = true;
+  await updateSettings({ on: !feedbackOn }, `Đã ${!feedbackOn ? "bật" : "tắt"} tính năng góp ý.`);
+  toggleEl.disabled = false;
+};
+
+chatToggleEl.onclick = async () => {
+  chatToggleEl.disabled = true;
+  await updateSettings({ chatOn: !chatOn }, `Đã ${!chatOn ? "bật" : "tắt"} tính năng chat.`);
+  chatToggleEl.disabled = false;
 };
 
 load();
