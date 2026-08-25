@@ -3,8 +3,163 @@ const toggleEl = document.getElementById("feedback-toggle");
 const chatToggleEl = document.getElementById("chat-toggle");
 const chatClearEl = document.getElementById("chat-clear");
 const statusEl = document.getElementById("page-status");
+const adminChatMessagesEl = document.getElementById("admin-chat-messages");
+const adminChatForm = document.getElementById("admin-chat-form");
+const adminChatNameEl = document.getElementById("admin-chat-name");
+const adminChatMessageEl = document.getElementById("admin-chat-message");
+const adminChatSendEl = document.getElementById("admin-chat-send");
+const adminChatStatusEl = document.getElementById("admin-chat-status");
 let feedbackOn = true;
 let chatOn = true;
+let adminChatWs = null;
+let adminChatPending = false;
+let adminChatMessages = [];
+const adminClientId = (() => {
+  const key = "adminChatClientId";
+  const existing = localStorage.getItem(key);
+  if (existing) return existing;
+  const value = window.crypto?.randomUUID?.() || `admin-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  localStorage.setItem(key, value);
+  return value;
+})();
+
+adminChatNameEl.value = localStorage.getItem("adminChatName") || "Admin";
+
+function setAdminChatStatus(message, bad = false) {
+  adminChatStatusEl.textContent = message;
+  adminChatStatusEl.className = `admin-chat-status${bad ? " bad" : ""}`;
+}
+
+function renderAdminChatMessages() {
+  adminChatMessagesEl.innerHTML = "";
+  if (!adminChatMessages.length) {
+    adminChatMessagesEl.innerHTML = '<p class="admin-chat-empty">Chưa có tin nhắn trong phòng chat.</p>';
+    return;
+  }
+  for (const message of adminChatMessages) {
+    const item = document.createElement("article");
+    item.className = `admin-chat-message${message.senderId === adminClientId ? " is-own" : ""}${message.isAdmin ? " is-admin" : ""}`;
+    const head = document.createElement("div");
+    head.className = "admin-chat-message-head";
+    const name = document.createElement("strong");
+    name.textContent = message.name;
+    head.appendChild(name);
+    if (message.isAdmin) {
+      const badge = document.createElement("span");
+      badge.className = "admin-badge compact";
+      badge.textContent = "ADMIN";
+      head.appendChild(badge);
+    }
+    const text = document.createElement("p");
+    text.textContent = message.text;
+    item.append(head, text);
+    adminChatMessagesEl.appendChild(item);
+  }
+  adminChatMessagesEl.scrollTop = adminChatMessagesEl.scrollHeight;
+}
+
+function appendAdminChatMessage(message) {
+  if (!message || typeof message.name !== "string" || typeof message.text !== "string") return;
+  adminChatMessages.push({
+    name: message.name.slice(0, 40),
+    text: message.text.slice(0, 280),
+    senderId: typeof message.senderId === "string" ? message.senderId.slice(0, 64) : "",
+    isAdmin: message.isAdmin === true,
+  });
+  if (adminChatMessages.length > 40) adminChatMessages = adminChatMessages.slice(-40);
+  renderAdminChatMessages();
+}
+
+function renderAdminChatAvailability() {
+  const disabled = !chatOn;
+  adminChatNameEl.disabled = disabled;
+  adminChatMessageEl.disabled = disabled;
+  adminChatSendEl.disabled = disabled || adminChatPending;
+  if (disabled) setAdminChatStatus("Chat đang tắt.");
+}
+
+async function connectAdminChat() {
+  try {
+    const tokenResponse = await fetch("/api/host-token");
+    if (!tokenResponse.ok) throw new Error("Không thể xác thực phòng chat admin.");
+    const { token = "" } = await tokenResponse.json();
+    const proto = location.protocol === "https:" ? "wss" : "ws";
+    const ws = new WebSocket(`${proto}://${location.host}`);
+    adminChatWs = ws;
+    ws.onopen = () => {
+      if (token) ws.send(JSON.stringify({ type: "auth", token }));
+      if (chatOn) setAdminChatStatus("Đã kết nối phòng chat.");
+    };
+    ws.onmessage = (event) => {
+      const message = JSON.parse(event.data);
+      if (message.type === "state") {
+        if (typeof message.chatOn === "boolean") chatOn = message.chatOn;
+        if (!chatOn) {
+          adminChatPending = false;
+          adminChatMessages = [];
+          renderAdminChatMessages();
+        }
+        renderAdminChatAvailability();
+      } else if (message.type === "chatHistory") {
+        adminChatMessages = [];
+        for (const item of Array.isArray(message.messages) ? message.messages.slice(-40) : []) appendAdminChatMessage(item);
+      } else if (message.type === "chatMessage") {
+        appendAdminChatMessage(message.message);
+      } else if (message.type === "chatCleared") {
+        adminChatMessages = [];
+        renderAdminChatMessages();
+        setAdminChatStatus("Tin nhắn đã được làm mới.");
+      } else if (message.type === "chatSendResult") {
+        adminChatPending = false;
+        renderAdminChatAvailability();
+        if (message.ok) {
+          adminChatMessageEl.value = "";
+          setAdminChatStatus("Đã gửi tin nhắn admin.");
+        } else {
+          setAdminChatStatus(message.reason || "Không thể gửi tin nhắn.", true);
+        }
+      }
+    };
+    ws.onclose = () => {
+      adminChatPending = false;
+      renderAdminChatAvailability();
+      if (chatOn) setAdminChatStatus("Mất kết nối, đang thử lại…", true);
+      window.setTimeout(connectAdminChat, 2000);
+    };
+  } catch (error) {
+    setAdminChatStatus(error.message || "Không thể kết nối phòng chat admin.", true);
+    window.setTimeout(connectAdminChat, 2000);
+  }
+}
+
+adminChatNameEl.addEventListener("change", () => {
+  localStorage.setItem("adminChatName", adminChatNameEl.value.trim().slice(0, 40));
+});
+
+adminChatForm.addEventListener("submit", (event) => {
+  event.preventDefault();
+  if (!chatOn || adminChatPending) return;
+  if (!adminChatWs || adminChatWs.readyState !== WebSocket.OPEN) {
+    setAdminChatStatus("Mất kết nối, đang thử lại…", true);
+    return;
+  }
+  const name = adminChatNameEl.value.trim();
+  const text = adminChatMessageEl.value.trim();
+  if (!name) {
+    setAdminChatStatus("Vui lòng nhập tên admin.", true);
+    adminChatNameEl.focus();
+    return;
+  }
+  if (!text) {
+    setAdminChatStatus("Vui lòng nhập nội dung tin nhắn.", true);
+    adminChatMessageEl.focus();
+    return;
+  }
+  localStorage.setItem("adminChatName", name);
+  adminChatPending = true;
+  renderAdminChatAvailability();
+  adminChatWs.send(JSON.stringify({ type: "chatSend", admin: true, name, text, clientId: adminClientId }));
+});
 
 function setStatus(message, bad = false) {
   statusEl.textContent = message;
@@ -33,6 +188,7 @@ function render(data) {
   chatOn = data.chatOn !== false;
   renderToggle();
   renderChatToggle();
+  renderAdminChatAvailability();
   document.getElementById("stat-total").textContent = data.stats.total;
   document.getElementById("stat-today").textContent = data.stats.today;
   document.getElementById("stat-week").textContent = data.stats.last7Days;
@@ -104,6 +260,7 @@ async function updateSettings(payload, successMessage) {
     if (typeof data.chatOn === "boolean") chatOn = data.chatOn;
     renderToggle();
     renderChatToggle();
+    renderAdminChatAvailability();
     setStatus(successMessage);
   } catch (error) {
     setStatus(error.message || "Không thể cập nhật cài đặt.", true);
@@ -138,3 +295,4 @@ chatClearEl.onclick = async () => {
 };
 
 load();
+connectAdminChat();

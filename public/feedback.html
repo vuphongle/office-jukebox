@@ -37,6 +37,30 @@
       <article><strong id="stat-week">—</strong><span>7 ngày qua</span></article>
     </section>
 
+    <section class="admin-chat-card" aria-labelledby="admin-chat-title">
+      <div class="admin-chat-head">
+        <div>
+          <p class="eyebrow">Phòng chat</p>
+          <h2 id="admin-chat-title">Chat với khách</h2>
+          <p class="admin-chat-intro">Tin nhắn của admin có nhãn nổi bật để khách dễ nhận ra.</p>
+        </div>
+        <span class="admin-badge" aria-label="Tin nhắn admin">ADMIN</span>
+      </div>
+      <div id="admin-chat-messages" class="admin-chat-messages" role="log" aria-live="polite" aria-relevant="additions"></div>
+      <form id="admin-chat-form" class="admin-chat-form">
+        <div class="admin-chat-fields">
+          <label for="admin-chat-name">Tên admin</label>
+          <input id="admin-chat-name" type="text" maxlength="40" autocomplete="name" value="Admin" />
+        </div>
+        <div class="admin-chat-compose">
+          <label class="sr-only" for="admin-chat-message">Nội dung chat</label>
+          <input id="admin-chat-message" type="text" maxlength="280" autocomplete="off" enterkeyhint="send" placeholder="Nhắn điều gì đó cho khách…" />
+          <button id="admin-chat-send" type="submit" aria-label="Gửi tin nhắn admin">Gửi</button>
+        </div>
+        <p id="admin-chat-status" class="admin-chat-status" role="status" aria-live="polite">Đang kết nối phòng chat…</p>
+      </form>
+    </section>
+
     <section class="feedback-list-card">
       <div class="list-head"><h2>Danh sách góp ý</h2><span id="list-count"></span></div>
       <div id="feedback-list" class="feedback-list"></div>

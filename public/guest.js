@@ -66,10 +66,16 @@ function renderChatMessages() {
   }
   for (const message of chatMessages) {
     const item = document.createElement("article");
-    item.className = `chat-message${message.senderId === clientId ? " is-own" : ""}`;
+    item.className = `chat-message${message.senderId === clientId ? " is-own" : ""}${message.isAdmin ? " is-admin" : ""}`;
     const name = document.createElement("strong");
     name.className = "chat-message-name";
     name.textContent = message.name;
+    if (message.isAdmin) {
+      const badge = document.createElement("span");
+      badge.className = "chat-message-badge";
+      badge.textContent = "ADMIN";
+      name.append(" ", badge);
+    }
     const text = document.createElement("p");
     text.className = "chat-message-text";
     text.textContent = message.text;
@@ -85,6 +91,7 @@ function appendChatMessage(message, { notify = true } = {}) {
     name: message.name.slice(0, 40),
     text: message.text.slice(0, 280),
     senderId: typeof message.senderId === "string" ? message.senderId.slice(0, 64) : "",
+    isAdmin: message.isAdmin === true,
   });
   if (chatMessages.length > 40) chatMessages = chatMessages.slice(-40);
   renderChatMessages();
