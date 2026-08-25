@@ -77,13 +77,23 @@ let moderationMode =
 let eventContext = savedSettings.eventContext ?? (process.env.EVENT_CONTEXT || "");
 // Thời gian chờ request theo từng khách (giây, 0 = tắt).
 let cooldownSeconds = savedSettings.cooldownSeconds ?? 15;
+// Giới hạn số bài sắp phát: tắt hoặc một trong các mốc UX định sẵn.
+const QUEUE_LIMIT_STEPS = [5, 10, 15, 20];
+let queueLimitOn = savedSettings.queueLimitOn ?? false;
+let queueLimit = QUEUE_LIMIT_STEPS.includes(savedSettings.queueLimit) ? savedSettings.queueLimit : 10;
+// Một host có thể không muốn hiện tên người yêu cầu; khi bật, guest phải nhập tên.
+let requireName = savedSettings.requireName ?? false;
 
 function saveSettings() {
   try {
     mkdirSync(DATA_DIR, { recursive: true });
     writeFileSync(
       SETTINGS_PATH,
-      JSON.stringify({ filterOn, moderationMode, eventContext, cooldownSeconds }, null, 2)
+      JSON.stringify(
+        { filterOn, moderationMode, eventContext, cooldownSeconds, queueLimitOn, queueLimit, requireName },
+        null,
+        2
+      )
     );
   } catch (err) {
     console.warn(`[settings] không thể lưu: ${err.message}`);
@@ -127,7 +137,16 @@ const state = new JukeboxState();
 app.get("/api/info", async (_req, res) => {
   try {
     const qr = await QRCode.toDataURL(GUEST_URL, { width: 480, margin: 1 });
-    res.json({ guestUrl: GUEST_URL, qr, filterOn, moderationMode, moderationConfigured: moderationConfigured() });
+    res.json({
+      guestUrl: GUEST_URL,
+      qr,
+      filterOn,
+      moderationMode,
+      moderationConfigured: moderationConfigured(),
+      queueLimitOn,
+      queueLimit,
+      requireName,
+    });
   } catch {
     res.status(500).json({ error: "Không thể tạo mã QR." });
   }
@@ -230,7 +249,12 @@ app.get("/api/host-token", requireHostAuth, (_req, res) => {
 // Khách yêu cầu bài hát.
 app.post("/api/request", async (req, res) => {
   const { videoId, title, channel, duration, thumbnail, name, clientId } = req.body || {};
-  const floodKey = `${req.ip}|${(clientId || "").toString().slice(0, 64)}`;
+  const requesterId = (clientId || "").toString().slice(0, 64);
+  const requesterName = (name || "").toString().trim().slice(0, 40);
+  if (requireName && !requesterName) {
+    return res.json({ ok: false, reason: "Vui lòng nhập tên để thêm bài hát." });
+  }
+  const floodKey = `${req.ip}|${requesterId}`;
   const last = lastRequestAt.get(floodKey);
   if (cooldownSeconds > 0 && last) {
     const waitMs = cooldownSeconds * 1000 - (Date.now() - last);
@@ -245,7 +269,7 @@ app.post("/api/request", async (req, res) => {
     return res.status(400).json({ ok: false, reason: "Thiếu thông tin bài hát." });
   }
 
-  if (state.queue.length >= MAX_QUEUE_LENGTH) {
+  if (state.queue.length >= MAX_QUEUE_LENGTH || (queueLimitOn && state.queue.length >= queueLimit)) {
     return res.json({ ok: false, reason: "Hàng đợi đã đầy — vui lòng thử lại sau khi phát bớt bài." });
   }
 
@@ -280,7 +304,15 @@ app.post("/api/request", async (req, res) => {
   }
 
   // 3. Thêm vào hàng đợi.
-  const { item, position } = state.add({ videoId, title, channel, duration, thumbnail, addedBy: name });
+  const { item, position } = state.add({
+    videoId,
+    title,
+    channel,
+    duration,
+    thumbnail,
+    addedBy: requesterName,
+    requesterId,
+  });
   res.json({ ok: true, reason: "Đã thêm!", position, id: item.id });
 });
 
@@ -319,6 +351,9 @@ function stateMessage() {
     moderationMode,
     cooldownSeconds,
     eventContext,
+    queueLimitOn,
+    queueLimit,
+    requireName,
   });
 }
 function broadcastState() {
@@ -346,6 +381,18 @@ wss.on("connection", (ws) => {
     }
     if (msg.type === "auth") {
       if (!HOST_PASSWORD || msg.token === hostToken) ws.isHost = true;
+      return;
+    }
+    // Guest được xóa mục của chính mình; server đối chiếu clientId lưu trong item.
+    if (msg.type === "removeOwn") {
+      const id = typeof msg.id === "string" ? msg.id : "";
+      const removed = state.removeOwned(id, (msg.clientId || "").toString().slice(0, 64));
+      ws.send(JSON.stringify({
+        type: "removeOwnResult",
+        id,
+        ok: removed,
+        ...(removed ? {} : { reason: "Bài hát không còn trong hàng đợi hoặc không thuộc về bạn." }),
+      }));
       return;
     }
     if (!ws.isHost) return; // mọi loại message khác đều là điều khiển của host
@@ -392,6 +439,21 @@ wss.on("connection", (ws) => {
       case "setEventContext": // host mô tả địa điểm/dịp tổ chức cho bộ lọc
         eventContext = (msg.context || "").toString().slice(0, 300);
         console.log(`[host] đã đặt bối cảnh sự kiện: ${eventContext || "(mặc định)"}`);
+        saveSettings();
+        broadcastState();
+        break;
+      case "setQueueLimit": {
+        const nextLimit = Number(msg.limit);
+        if (typeof msg.on === "boolean") queueLimitOn = msg.on;
+        if (QUEUE_LIMIT_STEPS.includes(nextLimit)) queueLimit = nextLimit;
+        console.log(`[host] giới hạn hàng đợi ${queueLimitOn ? `BẬT (${queueLimit})` : "TẮT"}`);
+        saveSettings();
+        broadcastState();
+        break;
+      }
+      case "setRequireName":
+        requireName = !!msg.on;
+        console.log(`[host] bắt buộc nhập tên ${requireName ? "BẬT" : "TẮT"}`);
         saveSettings();
         broadcastState();
         break;

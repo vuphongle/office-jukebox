@@ -21,11 +21,40 @@ export class JukeboxState {
   }
 
   snapshot() {
+    const queue = this._estimatedQueue();
     return {
-      nowPlaying: this.nowPlaying,
-      queue: this.queue,
+      nowPlaying: this._publicItem(this.nowPlaying),
+      queue,
       historyCount: this.history.length,
     };
+  }
+
+  _publicItem(item, extra = {}) {
+    if (!item) return null;
+    const { requesterId: _requesterId, startedAt: _startedAt, ...publicItem } = item;
+    return { ...publicItem, ...extra };
+  }
+
+  _estimatedQueue() {
+    let nextStart = Date.now();
+    if (this.nowPlaying) {
+      const startedAt = this.nowPlaying.startedAt || Date.now();
+      const elapsed = Math.max(0, (Date.now() - startedAt) / 1000);
+      const remaining = durationSeconds(this.nowPlaying.duration);
+      if (!Number.isFinite(remaining)) {
+        nextStart = null;
+      } else {
+        nextStart = Date.now() + Math.max(0, remaining - elapsed) * 1000;
+      }
+    }
+
+    return this.queue.map((item) => {
+      const estimatedStartAt = nextStart;
+      const duration = durationSeconds(item.duration);
+      if (nextStart !== null && Number.isFinite(duration)) nextStart += duration * 1000;
+      else nextStart = null;
+      return this._publicItem(item, { estimatedStartAt });
+    });
   }
 
   _emit() {
@@ -36,11 +65,12 @@ export class JukeboxState {
   _promoteIfIdle() {
     if (!this.nowPlaying && this.queue.length > 0) {
       this.nowPlaying = this.queue.shift();
+      this.nowPlaying.startedAt = Date.now();
     }
   }
 
   // Thêm bài hát đã được kiểm duyệt/chấp thuận. Trả về mục đã tạo kèm vị trí.
-  add({ videoId, title, channel, duration, thumbnail, addedBy }) {
+  add({ videoId, title, channel, duration, thumbnail, addedBy, requesterId }) {
     const item = {
       id: randomUUID(),
       videoId,
@@ -49,6 +79,7 @@ export class JukeboxState {
       duration: duration || "",
       thumbnail: thumbnail || null,
       addedBy: (addedBy || "").slice(0, 40),
+      requesterId: (requesterId || "").toString().slice(0, 64),
       addedAt: Date.now(),
     };
     this.queue.push(item);
@@ -69,6 +100,7 @@ export class JukeboxState {
       if (this.history.length > 100) this.history.shift();
     }
     this.nowPlaying = this.queue.shift() || null;
+    if (this.nowPlaying) this.nowPlaying.startedAt = Date.now();
     this._emit();
   }
 
@@ -82,6 +114,16 @@ export class JukeboxState {
     const before = this.queue.length;
     this.queue = this.queue.filter((s) => s.id !== id);
     if (this.queue.length !== before) this._emit();
+  }
+
+  // Xóa một mục sắp phát khi clientId trùng với người đã thêm mục đó.
+  removeOwned(id, requesterId) {
+    if (typeof id !== "string" || typeof requesterId !== "string" || !requesterId) return false;
+    const index = this.queue.findIndex((item) => item.id === id && item.requesterId === requesterId);
+    if (index === -1) return false;
+    this.queue.splice(index, 1);
+    this._emit();
+    return true;
   }
 
   // Di chuyển một mục sắp phát lên/xuống (điều khiển host).
@@ -124,4 +166,9 @@ export class JukeboxState {
     this._emit();
     return true;
   }
+}
+
+function durationSeconds(duration) {
+  if (!duration || !/^[\d:]+$/.test(duration)) return Infinity;
+  return duration.split(":").reduce((total, part) => total * 60 + Number(part), 0);
 }
