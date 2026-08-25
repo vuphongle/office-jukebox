@@ -1,4 +1,4 @@
-// Guest (mobile) page: search YouTube, request a song, watch the live queue.
+// Trang dành cho khách trên điện thoại: tìm kiếm YouTube, chọn bài hát và theo dõi hàng đợi trực tiếp.
 
 const resultsEl = document.getElementById("results");
 const statusEl = document.getElementById("status");
@@ -8,21 +8,22 @@ const nameEl = document.getElementById("name");
 const sugSection = document.getElementById("suggestions-section");
 const backToExploreBtn = document.getElementById("back-to-explore");
 
-// ---- Explore (KTV-style browse) ----------------------------------------
-// Genre tabs and singer chips run canned YouTube queries via /api/browse
-// (cached server-side), so the songs shown are real and current — not a
-// hardcoded list. "More songs" walks through the query variants.
-// Queries are plain genre/artist phrases: the source is YouTube Music's
-// "Songs" search (music-only singles), so no "Official MV" suffix is needed
-// to steer away from compilations — the ≤10 min server filter is the backstop.
+// ---- Khám phá (duyệt kiểu KTV) ------------------------------------------
+// Các tab thể loại và chip ca sĩ dùng các truy vấn YouTube có sẵn qua /api/browse
+// (được máy chủ lưu bộ nhớ đệm), nên bài hát hiển thị là dữ liệu thực và mới — không phải
+// danh sách viết cố định. Nút "Thêm bài hát" lần lượt duyệt qua các biến thể truy vấn.
+// Truy vấn chỉ gồm cụm từ thể loại hoặc nghệ sĩ: nguồn là tìm kiếm "Songs" của YouTube Music
+// (chỉ lấy đĩa đơn nhạc), nên không cần thêm hậu tố "Official MV" để tránh video tổng hợp —
+// bộ lọc tối đa 10 phút ở máy chủ là lớp bảo vệ cuối cùng.
 const THIS_YEAR = new Date().getFullYear();
 const GENRE_QUERIES = {
-  // "__hk_hits" is a server-side sentinel (not a search): YouTube's Hong Kong
-  // chart. Generic text queries like "hit songs" rank by literal title match,
-  // not local popularity, so the chart is what makes 全部 show HK hits first.
+  // "__hk_hits" là sentinel phía máy chủ (không phải truy vấn tìm kiếm): bảng xếp hạng
+  // Hong Kong của YouTube. Các truy vấn chung như "hit songs" xếp hạng theo mức khớp
+  // với tên bài hát, không theo độ phổ biến tại địa phương, nên bảng xếp hạng giúp mục
+  // Tất cả hiển thị các bài nổi bật ở Hong Kong trước.
   All: ["__hk_hits", `廣東歌 ${THIS_YEAR}`, `K-pop ${THIS_YEAR}`, "party anthems"],
-  // No singer chips for this tab on purpose — graduation songs are a theme,
-  // not an artist roster (no GENRE_SLUG entry, so the singer row stays empty).
+  // Tab này cố ý không có chip ca sĩ — nhạc tốt nghiệp là một chủ đề,
+  // không phải danh sách nghệ sĩ (không có mục GENRE_SLUG nên hàng ca sĩ để trống).
   Graduation: ["畢業歌", "畢業歌 廣東歌", "友誼 畢業 歌曲", "graduation songs"],
   "K-pop": [`K-pop ${THIS_YEAR}`, "K-pop dance hits", "K-pop girl group hits"],
   Cantopop: [`廣東歌 ${THIS_YEAR}`, "香港歌手 新歌", "廣東歌 熱門"],
@@ -31,9 +32,9 @@ const GENRE_QUERIES = {
   Party: ["party dance hits", "EDM anthems", "dancefloor classics"],
   Classics: ["Beyond 經典", "張國榮", "陳慧嫻", "廣東歌 90年代"],
 };
-// Display: Chinese label + inline icon per genre (keys stay English — they
-// index GENRE_QUERIES and the singer-filter slugs).
-const GENRE_LABEL = { All: "全部", Graduation: "畢業歌", "K-pop": "K-pop", Cantopop: "廣東歌", Mandopop: "國語歌", Western: "歐美", Party: "派對", Classics: "經典" };
+// Nhãn hiển thị: tên thể loại tiếng Việt kèm biểu tượng nội tuyến (các key giữ nguyên
+// để lập chỉ mục GENRE_QUERIES và các slug dùng để lọc ca sĩ).
+const GENRE_LABEL = { All: "Tất cả", Graduation: "Tốt nghiệp", "K-pop": "K-pop", Cantopop: "Nhạc Quảng Đông", Mandopop: "Nhạc Hoa ngữ", Western: "Nhạc Âu Mỹ", Party: "Nhạc tiệc", Classics: "Nhạc kinh điển" };
 const GENRE_ICON = {
   All: '<svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><circle cx="7" cy="7" r="2.6"/><circle cx="17" cy="7" r="2.6"/><circle cx="7" cy="17" r="2.6"/><circle cx="17" cy="17" r="2.6"/></svg>',
   Graduation: '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 9.5L12 5l9.5 4.5L12 14z"/><path d="M6.5 11.8v4.2c0 1.1 2.5 2.5 5.5 2.5s5.5-1.4 5.5-2.5v-4.2"/><path d="M21.5 9.5v5"/></svg>',
@@ -133,13 +134,13 @@ const SINGERS = [
 ];
 
 const moreBtn = document.getElementById("more");
-let activeGenre = "All"; // which tab is selected — also filters the singer row
-let activeKey = "genre:All"; // "genre:<name>" or "singer:<name>" (highlight)
+let activeGenre = "All"; // tab đang chọn — đồng thời lọc hàng ca sĩ
+let activeKey = "genre:All"; // "genre:<name>" hoặc "singer:<name>" (đánh dấu)
 const browse = { queries: [], idx: 0, seen: new Set(), gen: 0 };
 
-// Fisher-Yates — used both for the query-variant reorder (shuffle button) and
-// to shuffle fetched results client-side, since the server cache returns the
-// same array every time for a given query.
+// Fisher-Yates — dùng để sắp xếp lại các biến thể truy vấn (nút ngẫu nhiên) và
+// trộn kết quả ở phía máy khách, vì bộ nhớ đệm máy chủ trả về cùng một mảng
+// mỗi lần với cùng một truy vấn.
 function shuffleArray(arr) {
   const a = arr.slice();
   for (let i = a.length - 1; i > 0; i--) {
@@ -167,8 +168,8 @@ function renderSingers() {
   row.innerHTML = "";
   const list =
     activeGenre === "All" ? SINGERS : SINGERS.filter((s) => s.g === GENRE_SLUG[activeGenre]);
-  // Genres without a GENRE_SLUG entry (e.g. Graduation) have no singer roster —
-  // hide the row instead of leaving an empty strip.
+  // Các thể loại không có mục GENRE_SLUG (ví dụ Graduation) không có danh sách ca sĩ —
+  // ẩn cả hàng thay vì để lại một dải trống.
   row.classList.toggle("hidden", list.length === 0);
   for (const s of list) {
     const btn = document.createElement("button");
@@ -200,37 +201,37 @@ async function startBrowse(queries) {
   browse.queries = queries;
   browse.idx = 0;
   browse.seen = new Set();
-  browse.gen++; // invalidate any in-flight loadMoreSongs from the previous tab/search
+  browse.gen++; // vô hiệu hóa mọi lần loadMoreSongs đang chạy của tab/tìm kiếm trước đó
   resultsEl.innerHTML = "";
   moreBtn.classList.add("hidden");
   await loadMoreSongs();
 }
 
-// Walks through query variants (one /api/browse call per variant) until it
-// finds at least one song not already shown, or runs out of variants — so a
-// variant whose results are all dupes doesn't silently add nothing (D3).
+// Duyệt qua các biến thể truy vấn (mỗi biến thể gọi /api/browse một lần) cho đến khi
+// tìm được ít nhất một bài hát chưa hiển thị hoặc hết biến thể — để biến thể có toàn
+// kết quả trùng không âm thầm không thêm gì (D3).
 async function loadMoreSongs() {
   const gen = browse.gen;
   moreBtn.disabled = true;
-  setStatus("載入歌曲中… Loading songs…");
+  setStatus("Đang tải bài hát…");
   try {
     while (browse.idx < browse.queries.length) {
       const q = browse.queries[browse.idx++];
       const res = await fetch("/api/browse?q=" + encodeURIComponent(q));
-      if (browse.gen !== gen) return; // stale — a newer tab/search/shuffle took over
+      if (browse.gen !== gen) return; // đã cũ — tab/tìm kiếm/ngẫu nhiên mới hơn đã thay thế
       const data = await res.json();
       if (browse.gen !== gen) return;
-      if (!res.ok) throw new Error(data.error || "Couldn't load songs.");
+      if (!res.ok) throw new Error(data.error || "Không thể tải bài hát.");
       let fresh = (data.results || []).filter((r) => r.videoId && !browse.seen.has(r.videoId));
-      if (fresh.length === 0) continue; // this variant was all dupes — try the next one
+      if (fresh.length === 0) continue; // biến thể này toàn kết quả trùng — thử biến thể tiếp theo
       for (const r of fresh) browse.seen.add(r.videoId);
-      fresh = shuffleArray(fresh); // don't show the same order every time (A4)
+      fresh = shuffleArray(fresh); // không hiển thị cùng một thứ tự mỗi lần (A4)
       setStatus("");
       appendResults(fresh);
       break;
     }
     if (browse.gen === gen && browse.seen.size === 0) {
-      setStatus("沒有找到歌曲 — 試試其他分類。No songs found — try another tab.");
+      setStatus("Không tìm thấy bài hát — hãy thử danh mục khác.");
     }
   } catch (err) {
     if (browse.gen === gen) setStatus("😕 " + err.message);
@@ -245,37 +246,37 @@ async function loadMoreSongs() {
 moreBtn.onclick = loadMoreSongs;
 
 document.getElementById("shuffle").onclick = () => {
-  // Re-run the current selection with its query variants in a fresh order.
+  // Chạy lại lựa chọn hiện tại với các biến thể truy vấn theo thứ tự mới.
   startBrowse(shuffleArray(browse.queries));
 };
 
-// ---- Search -----------------------------------------------------------
+// ---- Tìm kiếm ----------------------------------------------------------
 document.getElementById("search-form").addEventListener("submit", (e) => {
   e.preventDefault();
   doSearch(qEl.value.trim());
 });
 
 async function doSearch(q) {
-  if (!q) return backToExplore(); // empty submit restores explore
+  if (!q) return backToExplore(); // gửi biểu mẫu trống sẽ khôi phục mục khám phá
 
   qEl.blur();
   resultsEl.innerHTML = "";
-  sugSection.classList.add("hidden"); // hide explore once searching
+  sugSection.classList.add("hidden"); // ẩn mục khám phá khi bắt đầu tìm kiếm
   moreBtn.classList.add("hidden");
   backToExploreBtn.classList.remove("hidden");
-  setStatus("搜尋中… Searching…");
+  setStatus("Đang tìm kiếm…");
   try {
     const res = await fetch("/api/search?q=" + encodeURIComponent(q));
     const data = await res.json();
-    if (!res.ok) throw new Error(data.error || "Search failed");
+    if (!res.ok) throw new Error(data.error || "Tìm kiếm thất bại.");
     renderResults(data.results || []);
   } catch (err) {
     setStatus("😕 " + err.message);
   }
 }
 
-// Restore the explore section after a search — re-runs whatever browse
-// selection (genre/singer) was active before the guest searched.
+// Khôi phục mục khám phá sau khi tìm kiếm — chạy lại lựa chọn duyệt
+// (thể loại/ca sĩ) đã được chọn trước khi khách tìm kiếm.
 function backToExplore() {
   qEl.value = "";
   resultsEl.innerHTML = "";
@@ -293,8 +294,8 @@ function setStatus(text) {
   statusEl.classList.remove("hidden");
 }
 
-// Placeholder for missing thumbnails — a bare <img src=""> would otherwise
-// request the current page URL. Same pattern as host.js's queue rendering.
+// Ảnh thay thế cho hình thu nhỏ bị thiếu — thẻ <img src=""> trống sẽ gửi yêu cầu
+// đến URL của trang hiện tại. Dùng cùng mẫu với cách host.js hiển thị hàng đợi.
 const NO_THUMB = 'data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22/%3E';
 
 function resultCard(r) {
@@ -305,7 +306,7 @@ function resultCard(r) {
       <div class="r-title"></div>
       <div class="r-sub"></div>
     </div>
-    <button class="add-btn" title="Add">+</button>`;
+    <button class="add-btn" title="Thêm bài hát">+</button>`;
   li.querySelector(".r-title").textContent = r.title;
   li.querySelector(".r-sub").textContent = r.channel + (r.duration ? ` · ${r.duration}` : "");
   const btn = li.querySelector(".add-btn");
@@ -318,15 +319,15 @@ function appendResults(results) {
 }
 
 function renderResults(results) {
-  if (results.length === 0) return setStatus("沒有結果，試試其他關鍵字。No results — try a different search.");
+  if (results.length === 0) return setStatus("Không có kết quả, hãy thử từ khóa khác.");
   setStatus("");
   resultsEl.innerHTML = "";
   appendResults(results);
 }
 
-// ---- Guest identity -----------------------------------------------------
-// Persistent random id sent with requests so the server's cooldown is
-// per-phone, not per-IP (guests on the venue Wi-Fi share one public IP).
+// ---- Nhận diện khách ----------------------------------------------------
+// Gửi ID ngẫu nhiên được lưu lại cùng mỗi yêu cầu để thời gian chờ của máy chủ
+// tính theo điện thoại thay vì theo IP (khách dùng Wi-Fi địa điểm thường chung một IP công khai).
 const clientId =
   localStorage.getItem("clientId") ||
   (() => {
@@ -335,13 +336,13 @@ const clientId =
     return id;
   })();
 
-// ---- Guest name (persisted, optional) ----------------------------------
+// ---- Tên khách (lưu lại, không bắt buộc) -------------------------------
 nameEl.value = localStorage.getItem("guestName") || "";
 nameEl.addEventListener("change", () => {
   localStorage.setItem("guestName", nameEl.value.trim());
 });
 
-// ---- Own requests (for the "YOU" badge in the queue) -------------------
+// ---- Yêu cầu của mình (cho nhãn "Bạn" trong hàng đợi) -------------------
 function loadMyRequestIds() {
   try {
     return new Set(JSON.parse(localStorage.getItem("myRequestIds") || "[]"));
@@ -350,18 +351,18 @@ function loadMyRequestIds() {
   }
 }
 function rememberMyRequest(id) {
-  const ids = [...loadMyRequestIds(), id].slice(-50); // cap so it can't grow unbounded
+  const ids = [...loadMyRequestIds(), id].slice(-50); // giới hạn để danh sách không tăng vô hạn
   localStorage.setItem("myRequestIds", JSON.stringify(ids));
 }
 
-// ---- Request a song ---------------------------------------------------
+// ---- Chọn một bài hát --------------------------------------------------
 async function requestSong(song, btn) {
   btn.disabled = true;
   btn.textContent = "…";
-  // Persistent, animated "checking" card — with the web-searching filter a
-  // verdict can take 5–20s, so it must read as activity, not a frozen toast.
-  // Subline names the song: several checks can be in flight at once.
-  const t = toast("info", "🔎", "檢查歌曲中…", { persist: true, sub: song.title, checking: true });
+  // Thẻ "đang kiểm tra" được giữ lại và có hoạt ảnh — bộ lọc tìm kiếm trên web
+  // có thể mất 5–20 giây, nên thẻ phải thể hiện hoạt động thay vì trông như bị treo.
+  // Dòng phụ ghi tên bài hát vì có thể kiểm tra nhiều bài cùng lúc.
+  const t = toast("info", "🔎", "Đang kiểm tra bài hát…", { persist: true, sub: song.title, checking: true });
   try {
     const res = await fetch("/api/request", {
       method: "POST",
@@ -370,35 +371,35 @@ async function requestSong(song, btn) {
     });
     const data = await res.json();
     if (data.ok) {
-      const main = data.position === 0 ? "已加入 · 現正播放" : `已加入 · 排第 ${data.position} 首`;
-      const sub = data.position === 0 ? "Added — playing now!" : `Added — #${data.position} in the queue!`;
+      const main = data.position === 0 ? "Đã thêm · đang phát" : `Đã thêm · vị trí ${data.position}`;
+      const sub = data.position === 0 ? "Bài hát đang phát ngay." : `Đang ở vị trí ${data.position} trong hàng đợi.`;
       t.set("ok", "✓", main, { sub });
       btn.textContent = "✓";
       if (data.id) {
         rememberMyRequest(data.id);
-        // The queue broadcast usually lands before this response does, so the
-        // row was rendered without knowing it's ours — re-render for the badge.
+        // Thông báo hàng đợi thường đến trước phản hồi này, nên dòng đã được
+        // hiển thị khi chưa biết đó là yêu cầu của mình — hiển thị lại để có nhãn.
         if (lastQueueState) renderQueue(lastQueueState);
       }
     } else {
       if (data.retryIn) {
         t.dismiss();
         cooldownToast(data.retryIn);
-      } else t.set("bad", "🚫", data.reason || "Couldn't add that song.");
+      } else t.set("bad", "🚫", data.reason || "Không thể thêm bài hát này.");
       btn.disabled = false;
       btn.textContent = "+";
     }
   } catch (err) {
-    t.set("bad", "⚠️", "網絡錯誤，請再試。", { sub: "Network error. Try again." });
+    t.set("bad", "⚠️", "Lỗi mạng, vui lòng thử lại.", { sub: "Không thể kết nối mạng. Hãy thử lại." });
     btn.disabled = false;
     btn.textContent = "+";
   }
 }
 
-// Stacking toasts: each card is its own element (icon circle + Chinese main
-// line + smaller English subline). toast() returns a handle whose set() morphs
-// the card in place — a request's "checking…" card becomes its own verdict —
-// so parallel requests never clobber each other's feedback.
+// Xếp chồng thông báo: mỗi thẻ là một phần tử riêng (vòng biểu tượng, dòng chính
+// và dòng phụ nhỏ hơn). toast() trả về một đối tượng điều khiển có set() để biến đổi
+// thẻ ngay tại chỗ — thẻ "đang kiểm tra" trở thành kết quả tương ứng — nhờ đó các
+// yêu cầu song song không ghi đè phản hồi của nhau.
 const MAX_TOASTS = 3;
 
 function toast(kind, icon, main, opts = {}) {
@@ -406,7 +407,7 @@ function toast(kind, icon, main, opts = {}) {
   el.className = "toast";
   toastsEl.appendChild(el);
   while (toastsEl.children.length > MAX_TOASTS) toastsEl.firstElementChild.remove();
-  void el.offsetHeight; // flush styles so adding .show below animates the entry
+  void el.offsetHeight; // buộc trình duyệt cập nhật kiểu để thêm .show có thể tạo hoạt ảnh
   let timer;
   const h = {
     el,
@@ -426,16 +427,16 @@ function toast(kind, icon, main, opts = {}) {
     dismiss() {
       clearTimeout(timer);
       el.classList.remove("show");
-      setTimeout(() => el.remove(), 300); // let the exit transition play
+      setTimeout(() => el.remove(), 300); // chờ chuyển tiếp ẩn hoàn tất
     },
   };
   h.set(kind, icon, main, opts);
   return h;
 }
 
-// Live countdown shown when the server rejects a request for coming too soon
-// (retryIn = seconds left). Singleton card: retrying mid-cooldown restarts the
-// countdown on the same card instead of stacking duplicates.
+// Hiển thị đếm ngược trực tiếp khi máy chủ từ chối yêu cầu vì gửi quá sớm
+// (retryIn = số giây còn lại). Dùng một thẻ duy nhất: nếu thử lại khi đang chờ,
+// đếm ngược sẽ khởi động lại trên cùng thẻ thay vì xếp thêm bản sao.
 function cooldownToast(seconds) {
   clearInterval(cooldownToast._i);
   if (!cooldownToast._h?.el.isConnected) {
@@ -444,7 +445,7 @@ function cooldownToast(seconds) {
   const t = cooldownToast._h;
   let left = seconds;
   const draw = () =>
-    t.set("bad", "⏳", `再等 ${left} 秒`, { persist: true, sub: `Next song in ${left}s…` });
+    t.set("bad", "⏳", `Vui lòng đợi thêm ${left} giây`, { persist: true, sub: `Bài tiếp theo sau ${left} giây…` });
   draw();
   cooldownToast._i = setInterval(() => {
     left--;
@@ -455,8 +456,8 @@ function cooldownToast(seconds) {
   }, 1000);
 }
 
-// ---- Live queue (WebSocket) ------------------------------------------
-let lastQueueState = null; // kept so the 你 badge can re-render after an add
+// ---- Hàng đợi trực tiếp (WebSocket) -----------------------------------
+let lastQueueState = null; // giữ lại để có thể hiển thị lại nhãn Bạn sau khi thêm bài
 
 function connectWs() {
   const proto = location.protocol === "https:" ? "wss" : "ws";
@@ -481,14 +482,14 @@ function renderQueue(state) {
       <div class="np-body">
         <div class="np-label">
           <span class="eq"><span></span><span></span><span></span></span>
-          現正播放 NOW PLAYING
+          ĐANG PHÁT
         </div>
         <div class="np-title"></div>
         <div class="np-sub"></div>
       </div>`;
     npEl.querySelector(".np-title").textContent = np.title;
     npEl.querySelector(".np-sub").textContent =
-      (np.channel || "") + (np.addedBy ? ` · 點唱: ${np.addedBy}` : "");
+      (np.channel || "") + (np.addedBy ? ` · Người chọn: ${np.addedBy}` : "");
   } else {
     npEl.classList.add("hidden");
   }
@@ -498,7 +499,7 @@ function renderQueue(state) {
   const ul = document.getElementById("queue");
   ul.innerHTML = "";
   if (queue.length === 0) {
-    ul.innerHTML = '<li class="q-empty">暫時未有歌曲 — 快啲點歌啦！Nothing queued yet — be the first!</li>';
+    ul.innerHTML = '<li class="q-empty">Chưa có bài hát nào — hãy là người đầu tiên chọn bài!</li>';
     return;
   }
   const myIds = loadMyRequestIds();
@@ -513,7 +514,7 @@ function renderQueue(state) {
     if (myIds.has(item.id)) {
       const chip = document.createElement("span");
       chip.className = "q-you";
-      chip.textContent = "你";
+      chip.textContent = "Bạn";
       li.querySelector(".t-row").appendChild(chip);
     }
     ul.appendChild(li);
@@ -521,5 +522,5 @@ function renderQueue(state) {
 }
 
 renderSingers();
-selectGenre("All"); // renders tabs + loads real songs on open
+selectGenre("All"); // hiển thị tab và tải bài hát thật khi mở trang
 connectWs();
