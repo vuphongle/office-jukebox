@@ -48,9 +48,12 @@ dùng cho mọi sự kiện.
   **tắt / bật / nghiêm ngặt**. Khi gặp sự cố, hệ thống cho phép yêu cầu đi tiếp
   — việc kiểm duyệt không thể làm nhạc dừng.
 - 🎛 **Điều khiển trực tiếp cho người phụ trách** — phát/tạm dừng/bỏ qua, âm
-  lượng, xóa bài, thời gian chờ yêu cầu theo từng khách, chế độ lọc và mô tả
+  lượng trong trình phát YouTube, xóa bài, thời gian chờ yêu cầu theo từng khách, chế độ lọc và mô tả
   sự kiện cung cấp cho AI — tất cả từ trang được chiếu, tất cả vẫn được lưu sau
   khi khởi động lại.
+- 💬 **Góp ý từ khách** — khách có thể gửi ý tưởng hoặc báo lỗi ngay trên trang
+  `/guest`; người phụ trách xem, xóa, bật/tắt tính năng và theo dõi thống kê tại
+  `/feedback`.
 - 🔒 **Mật khẩu người phụ trách** — đăng nhập tùy chọn bảo vệ trang máy chiếu
   *và* các điều khiển WebSocket; khách không bị ảnh hưởng.
 - 🛡 **Rào chắn hàng đợi** — từ chối bài trùng, thời gian chờ theo từng điện
@@ -98,9 +101,12 @@ hình.
 |------|---------|
 | `/` | Trang người phụ trách/máy chiếu — trình phát, mã QR, hàng đợi, các điều khiển |
 | `/guest` | Trang di động khách mở qua mã QR |
+| `/feedback` | Trang quản trị góp ý (được bảo vệ cùng mật khẩu host) |
 | `GET /api/search?q=` | Đọc kết quả tìm kiếm YouTube (không cần khóa API) |
 | `GET /api/browse?q=` | Tìm kiếm chỉ gồm đĩa đơn có bộ nhớ đệm, dùng cho các tab khám phá |
 | `POST /api/request` | Rào chắn → kiểm tra khả năng phát → (bộ lọc AI tùy chọn) → thêm vào hàng đợi |
+| `POST /api/feedback` | Lưu góp ý của khách khi tính năng đang bật |
+| `GET/PATCH/DELETE /api/feedback` | Xem thống kê/danh sách, bật/tắt và xóa góp ý (host) |
 | WebSocket `/` | Phát trạng thái hàng đợi; truyền các điều khiển của người phụ trách |
 
 Tìm kiếm trực tiếp ưu tiên context Việt Nam giống YouTube Music web để các bài

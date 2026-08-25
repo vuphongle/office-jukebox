@@ -360,6 +360,38 @@ header p { font: 400 13.5px/1.6 var(--sans); color: var(--muted); margin-top: 10
 .more:disabled { opacity: 0.5; }
 .more.hidden { display: none; }
 
+/* ---- Góp ý ------------------------------------------------------------ */
+.feedback-section {
+  margin-top: 34px;
+  padding: 18px;
+  border: 1px solid oklch(80% 0.14 85 / 0.28);
+  border-radius: 16px;
+  background: oklch(80% 0.14 85 / 0.07);
+}
+.feedback-head { display: flex; align-items: flex-start; gap: 12px; }
+.feedback-head h2 { font: 700 20px/1.2 var(--sans); color: var(--text-hi); }
+.feedback-head h2 small { font: 500 11px/1 var(--sans); color: var(--muted); text-transform: uppercase; letter-spacing: .06em; }
+.feedback-head p { margin-top: 5px; font: 400 12.5px/1.4 var(--sans); color: var(--muted); }
+.feedback-mark { margin-left: auto; color: var(--gold); font-size: 22px; line-height: 1; }
+.feedback-form { margin-top: 14px; }
+.feedback-form input, .feedback-form textarea {
+  width: 100%; border: 1px solid var(--line); border-radius: 11px; background: var(--fill);
+  color: var(--text); font: 400 13.5px/1.4 var(--sans); outline: none;
+}
+.feedback-form input { height: 42px; padding: 0 12px; }
+.feedback-form textarea { margin-top: 8px; padding: 10px 12px; resize: vertical; min-height: 76px; }
+.feedback-form input:focus, .feedback-form textarea:focus { border-color: oklch(80% 0.14 85 / 0.6); }
+.feedback-form input::placeholder, .feedback-form textarea::placeholder { color: var(--faint); }
+.feedback-actions { display: flex; align-items: center; gap: 10px; margin-top: 10px; }
+.feedback-status { flex: 1; min-width: 0; font: 400 11.5px/1.35 var(--sans); color: var(--muted); }
+.feedback-status.ok { color: var(--ok-sub); }
+.feedback-status.bad { color: oklch(76% 0.13 30); }
+#feedback-submit {
+  height: 38px; padding: 0 14px; border: 0; border-radius: 10px; background: var(--gold);
+  color: var(--gold-ink); font: 700 12.5px/1 var(--sans); white-space: nowrap;
+}
+#feedback-submit:disabled { opacity: .55; }
+
 /* ---- Tiếp theo ---- */
 .queue-section { margin-top: 38px; }
 .queue-section h2 {

@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Góp ý · Quản trị</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Serif:wght@600;700&family=Noto+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/feedback.css" />
+</head>
+<body>
+  <main class="feedback-admin">
+    <a class="back-link" href="/">← Về trang máy chiếu</a>
+    <header class="page-head">
+      <div>
+        <p class="eyebrow">Quản trị</p>
+        <h1>Góp ý từ khách</h1>
+        <p class="intro">Theo dõi ý tưởng, báo lỗi và những điều khách muốn cải thiện.</p>
+      </div>
+      <button id="feedback-toggle" class="toggle" type="button" aria-pressed="true">Góp ý: Bật</button>
+    </header>
+
+    <div id="page-status" class="page-status" role="status" aria-live="polite"></div>
+    <section class="stats" aria-label="Thống kê góp ý">
+      <article><strong id="stat-total">—</strong><span>Tổng góp ý</span></article>
+      <article><strong id="stat-today">—</strong><span>Trong hôm nay</span></article>
+      <article><strong id="stat-week">—</strong><span>7 ngày qua</span></article>
+    </section>
+
+    <section class="feedback-list-card">
+      <div class="list-head"><h2>Danh sách góp ý</h2><span id="list-count"></span></div>
+      <div id="feedback-list" class="feedback-list"></div>
+    </section>
+  </main>
+  <script src="/feedback.js"></script>
+</body>
+</html>
