@@ -4,15 +4,15 @@ services:
     container_name: event-music
     restart: unless-stopped
 
-    # Join the reverse proxy's network so it can route to this container by name
-    # (event-music:45416). The proxy terminates TLS and serves the public domain.
+    # Tham gia mạng của reverse proxy để proxy định tuyến tới container theo tên
+    # (event-music:45416). Proxy xử lý TLS và phục vụ domain công khai.
     networks:
       - reverseproxy
     expose:
       - "${PORT:-45416}"
 
-    # Host-page settings (filter/mode/cooldown/event context) persist here
-    # across rebuilds and restarts.
+    # Cài đặt trang host (bộ lọc/chế độ/thời gian chờ/bối cảnh sự kiện) được lưu
+    # tại đây qua các lần xây dựng lại và khởi động lại.
     volumes:
       - ./data:/app/data
 
@@ -20,7 +20,7 @@ services:
       - .env
     environment:
       PORT: ${PORT:-45416}
-      # Public address the QR code points guests to (your reverse-proxy domain).
+      # Địa chỉ công khai mà mã QR trỏ tới (domain của reverse proxy).
       PUBLIC_URL: ${PUBLIC_URL:-}
 
 networks:

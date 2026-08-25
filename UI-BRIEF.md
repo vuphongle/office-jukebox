@@ -53,8 +53,8 @@ thái đang tải nào ngoài các trạng thái nêu trên.
 
 Trên thực tế chỉ dùng trên thiết bị di động. Khách sử dụng trong khoảng 30 giây
 mỗi lần, thường ở nơi tối và có thể đã hơi chếnh choáng. Vùng chạm phải lớn.
-Nội dung vốn có cả tiếng Trung và tiếng Anh (tên bài hát, tên ca sĩ như 陳奕迅 /
-BLACKPINK).
+Giao diện dùng tiếng Việt; tên bài hát và tên ca sĩ được giữ nguyên ngôn ngữ gốc
+(ví dụ 陳奕迅 / BLACKPINK) để không làm sai dữ liệu âm nhạc.
 
 **Đầu trang** — tiêu đề và phần giải thích trong một dòng.
 
@@ -122,4 +122,5 @@ có gì trong hàng đợi — hãy là người đầu tiên!"
   phòng tối, có thể đọc được từ cách xa vài mét.
 - Không thể thay đổi kiểu dáng của chính trình phát YouTube (đây là iframe
   nhúng).
-- Nội dung văn bản vốn có hai ngôn ngữ; font phải hỗ trợ chữ Hán phồn thể.
+- Nội dung giao diện bằng tiếng Việt; tên bài hát và nghệ sĩ giữ nguyên ngôn ngữ
+  gốc nên font phải hỗ trợ tiếng Việt và các ký tự quốc tế cần thiết.

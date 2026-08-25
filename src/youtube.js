@@ -11,7 +11,7 @@ const UA =
   "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) " +
   "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36";
 
-// Cookie SOCS/CONSENT tránh màn hình chấp thuận "before you continue" của EU,
+// Cookie SOCS/CONSENT tránh màn hình chấp thuận "trước khi tiếp tục" của EU,
 // vốn sẽ thay ytInitialData bằng trang xen kẽ.
 const COMMON_HEADERS = {
   "User-Agent": UA,

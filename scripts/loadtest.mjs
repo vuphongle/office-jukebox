@@ -68,7 +68,7 @@ function pct(arr, p) {
   return s[Math.min(s.length - 1, Math.floor((p / 100) * s.length))];
 }
 function fmt(arr) {
-  if (!arr.length) return "  (no samples)";
+  if (!arr.length) return "  (không có mẫu)";
   return `  n=${arr.length}  p50=${pct(arr, 50)}ms  p95=${pct(arr, 95)}ms  max=${Math.max(...arr)}ms`;
 }
 

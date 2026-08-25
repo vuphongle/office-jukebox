@@ -10,8 +10,8 @@ hợp với từng dịp, bất kể đó là dịp gì.
 
 [![Runtime: Bun](https://img.shields.io/badge/runtime-bun-f9f1e1?logo=bun&logoColor=black)](https://bun.sh)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
-[![No API keys required](https://img.shields.io/badge/YouTube%20API%20key-not%20needed-red)](#how-it-works)
-[![Self-hosted](https://img.shields.io/badge/self--hosted-Docker-blue?logo=docker&logoColor=white)](#run-on-a-home-server-docker--reverse-proxy)
+[![Không cần khóa API](https://img.shields.io/badge/YouTube%20API%20key-not%20needed-red)](#cách-hoạt-động)
+[![Tự lưu trữ](https://img.shields.io/badge/self--hosted-Docker-blue?logo=docker&logoColor=white)](#chạy-trên-máy-chủ-gia-đình-docker--proxy-ngược)
 
 <img src="docs/host.png" alt="Màn hình máy chiếu — bài đang phát, mã QR và hàng đợi trực tiếp" width="100%" />
 
@@ -71,7 +71,7 @@ dùng cho mọi sự kiện.
 git clone https://github.com/Hangton-Code/event-music-system.git
 cd event-music-system
 bun install
-cp .env.example .env      # defaults are fine — the AI filter is off
+cp .env.example .env      # giá trị mặc định dùng được — bộ lọc AI đang tắt
 bun start
 ```
 
@@ -85,13 +85,13 @@ hình.
 ## Cách hoạt động
 
 ```
-   Projector (laptop / server)        Guests' phones
+   Máy chiếu (laptop / server)        Điện thoại khách
   ┌────────────────────┐             ┌──────────────┐
-  │  ▶ Now Playing     │   scan QR   │  🔍 search   │
-  │  [ YouTube video ] │  ◀───────▶  │  + add song  │
-  │  ▣ QR   Up Next ▤▤ │   Wi-Fi     │  live queue  │
+  │  ▶ Đang phát       │   quét QR   │  🔍 tìm kiếm │
+  │  [ video YouTube ] │  ◀───────▶  │  + thêm bài  │
+  │  ▣ QR   Sắp phát ▤▤│   Wi-Fi     │  hàng đợi    │
   └────────────────────┘             └──────────────┘
-            │ audio out → venue AV system
+            │ âm thanh → hệ thống AV địa điểm
 ```
 
 | Đường dẫn | Mục đích |
@@ -158,7 +158,7 @@ Máy chủ tự xây dựng image từ mã nguồn — không cần registry, kh
 ```bash
 git clone https://github.com/Hangton-Code/event-music-system.git
 cd event-music-system
-cp .env.example .env          # set PUBLIC_URL to your domain, HOST_PASSWORD too
+cp .env.example .env          # đặt PUBLIC_URL là domain của bạn, cùng HOST_PASSWORD
 docker compose up -d --build
 ```
 
@@ -233,16 +233,16 @@ tiên.
 
 ```
 server.js                  Express + WebSocket server, request pipeline, settings
-src/youtube.js             No-key search scraping, oEmbed check, watch-page details
-src/moderation.js          LLM content filter (OpenAI-compatible, fail-open)
-src/state.js               Authoritative in-memory queue
-src/net.js                 LAN IP detection
-public/host.*              Projector page (player, QR, controls)
-public/guest.*             Mobile page (search, explore, live queue)
-scripts/check-llm.mjs      Verify LLM key + list models
-Dockerfile                 Bun-based image
-docker-compose.yml         Home-server deployment (builds locally)
-update.sh                  Cron alternative: pull + rebuild if changed
+src/youtube.js             Tìm kiếm không cần khóa, kiểm tra oEmbed, metadata trang xem
+src/moderation.js          Bộ lọc nội dung LLM (tương thích OpenAI, fail-open)
+src/state.js               Hàng đợi trong bộ nhớ có thẩm quyền
+src/net.js                 Phát hiện IP LAN
+public/host.*              Trang máy chiếu (trình phát, QR, điều khiển)
+public/guest.*             Trang di động (tìm kiếm, khám phá, hàng đợi trực tiếp)
+scripts/check-llm.mjs      Xác minh khóa LLM và liệt kê model
+Dockerfile                 Image dựa trên Bun
+docker-compose.yml         Triển khai máy chủ gia đình (xây dựng cục bộ)
+update.sh                  Cách khác dùng Cron: kéo mã và xây dựng lại nếu có thay đổi
 ```
 
 Không dùng framework, không có bước build, chỉ có ba dependency

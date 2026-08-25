@@ -17,9 +17,9 @@ Dùng **bun** (không dùng npm):
 
 ```bash
 bun install
-cp .env.example .env   # defaults are fine; moderation is off
-bun start              # runs server.js on port 45416
-bun run check-llm      # verify LLM_API_KEY and list available models
+cp .env.example .env   # giá trị mặc định dùng được; kiểm duyệt đang tắt
+bun start              # chạy server.js trên cổng 45416
+bun run check-llm      # xác minh LLM_API_KEY và liệt kê model khả dụng
 ```
 
 Không có bước lint, build hoặc test. Xác minh thay đổi bằng cách chạy máy chủ và

@@ -1,13 +1,13 @@
-# Event Music System — runs on Bun.
+# Hệ thống âm nhạc sự kiện — chạy trên Bun.
 FROM oven/bun:1-alpine
 
 WORKDIR /app
 
-# Install dependencies first (better layer caching).
+# Cài dependency trước (tận dụng cache của layer tốt hơn).
 COPY package.json bun.lockb* ./
 RUN bun install --frozen-lockfile --production
 
-# App source.
+# Mã nguồn ứng dụng.
 COPY server.js ./
 COPY src ./src
 COPY public ./public
