@@ -1,14 +1,19 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+Tệp này cung cấp hướng dẫn cho Claude Code (claude.ai/code) khi làm việc với mã
+nguồn trong kho này.
 
-## What this is
+## Tổng quan
 
-A projector QR jukebox for events: the host page (`/`) is projected and plays YouTube videos; guests scan the on-screen QR to open `/guest` on their phones, search/browse YouTube, and queue songs. Vanilla JS everywhere — no framework, no bundler, no TypeScript, no tests.
+Một jukebox QR trên máy chiếu dành cho các sự kiện: trang người phụ trách
+(`/`) được chiếu và phát video YouTube; khách quét mã QR trên màn hình để mở
+`/guest` bằng điện thoại, tìm kiếm/duyệt YouTube và xếp bài hát vào hàng đợi.
+Toàn bộ dùng JavaScript thuần — không framework, không bundler, không TypeScript,
+không có bài kiểm thử.
 
-## Commands
+## Lệnh
 
-Use **bun** (not npm):
+Dùng **bun** (không dùng npm):
 
 ```bash
 bun install
@@ -17,30 +22,84 @@ bun start              # runs server.js on port 45416
 bun run check-llm      # verify LLM_API_KEY and list available models
 ```
 
-There is no lint, build, or test step. Verify changes by running the server and exercising both pages (`/` and `/guest`).
+Không có bước lint, build hoặc test. Xác minh thay đổi bằng cách chạy máy chủ và
+kiểm tra cả hai trang (`/` và `/guest`).
 
-## Architecture
+## Kiến trúc
 
-**The server owns all state.** `src/state.js` (`JukeboxState`) is the authoritative in-memory queue; every mutation fires `onChange`, and `server.js` broadcasts the full state snapshot to all WebSocket clients. The host page is a dumb player: it renders whatever `nowPlaying` says and reports back `ended`/`error` events, which make the server advance the queue. Host controls (skip/remove/move/filter toggle) also arrive over the same WebSocket. There is no persistence — a restart clears the queue.
+**Máy chủ quản lý toàn bộ trạng thái.** `src/state.js` (`JukeboxState`) là
+hàng đợi trong bộ nhớ có thẩm quyền; mỗi thay đổi gọi `onChange`, còn
+`server.js` phát toàn bộ ảnh chụp trạng thái tới mọi máy khách WebSocket. Trang
+máy chiếu chỉ là một trình phát đơn giản: trang hiển thị nội dung mà
+`nowPlaying` chỉ định và gửi lại các sự kiện `ended`/`error`, từ đó máy chủ
+chuyển sang bài tiếp theo. Các điều khiển của người phụ trách (bỏ qua/xóa/di
+chuyển/bật tắt bộ lọc) cũng đi qua cùng WebSocket. Không có cơ chế lưu trữ —
+khởi động lại sẽ xóa hàng đợi.
 
-**Song request pipeline** (`POST /api/request` in `server.js`):
-1. `checkPlayable()` — YouTube oEmbed check rejects deleted/private videos (fails open on network errors; the host player auto-skips iframe error codes 101/150 as backstop for embed-disabled/region-locked videos).
-2. `moderate()` — optional LLM filter, only when toggled on from the host page.
-3. `state.add()` — enqueue and broadcast.
+**Luồng yêu cầu bài hát** (`POST /api/request` trong `server.js`):
+1. `checkPlayable()` — kiểm tra oEmbed của YouTube để từ chối video đã bị xóa
+   hoặc đặt ở chế độ riêng tư (cho phép tiếp tục khi lỗi mạng; trình phát máy
+   chiếu tự động bỏ qua mã lỗi iframe 101/150 như lớp dự phòng cho video bị tắt
+   nhúng hoặc khóa theo khu vực).
+2. `moderate()` — bộ lọc LLM tùy chọn, chỉ chạy khi được bật từ trang máy chiếu.
+3. `state.add()` — thêm vào hàng đợi và phát thông báo.
 
-**YouTube without an API key** (`src/youtube.js`): search queries YouTube Music's internal InnerTube API (the JSON endpoint the music.youtube.com web app uses), filtered to the "Songs" category — music-only results (mostly audio tracks with album art, not music videos) with real artist metadata, whose videoIds play in the regular YouTube iframe. Video details for moderation come from the watch page's `ytInitialPlayerResponse`. The `SOCS/CONSENT` cookie avoids the EU consent wall. If search breaks, suspect InnerTube API/schema changes. `/api/browse` (guest page genre tabs/singer chips) is the same search but cached 30 min per query and filtered to singles (≤10 min) as a backstop against long live/compilation tracks. The sentinel query `__hk_hits` (the 全部 tab's first load) serves YouTube's "Daily Top Music Videos - Hong Kong" chart playlist instead of a text search, because text search ranks by title match, not local popularity.
+**YouTube không cần khóa API** (`src/youtube.js`): tìm kiếm gọi InnerTube API
+nội bộ của YouTube Music (điểm cuối JSON mà ứng dụng web
+`music.youtube.com` sử dụng), được lọc theo danh mục "Songs" — chỉ trả về kết
+quả âm nhạc (phần lớn là bản âm thanh có ảnh bìa, không phải video ca nhạc)
+kèm siêu dữ liệu nghệ sĩ thực tế; các `videoIds` này phát được trong iframe
+YouTube thông thường. Chi tiết video để kiểm duyệt lấy từ
+`ytInitialPlayerResponse` trên trang xem. Cookie `SOCS/CONSENT` giúp tránh
+trang yêu cầu đồng ý của EU. Nếu tìm kiếm hỏng, hãy nghi ngờ thay đổi API hoặc
+schema của InnerTube. `/api/browse` (các tab thể loại/chip ca sĩ trên trang
+khách) dùng cùng cơ chế tìm kiếm nhưng được lưu bộ nhớ đệm 30 phút cho mỗi truy
+vấn và lọc chỉ các đĩa đơn (≤10 phút) để dự phòng các bản phát trực tiếp hoặc
+bản tuyển tập quá dài. Truy vấn sentinel `__hk_hits` (lần tải đầu tiên của tab
+Tất cả) trả về danh sách phát biểu đồ "Daily Top Music Videos - Hong Kong" của
+YouTube thay vì tìm kiếm văn bản, vì tìm kiếm văn bản xếp hạng theo mức khớp
+tiêu đề chứ không theo độ phổ biến tại địa phương.
 
-**Moderation fail-open vs fail-closed** (`src/moderation.js`) — this distinction is deliberate, preserve it:
-- **Fail-open** (approve) for infrastructure failures only: missing API key, HTTP error, network error. A moderation outage must never stop the music (the host can also toggle the filter off live).
-- **Fail-closed with a retryable reason** (「系統繁忙，請再試一次」) on timeout: slow verdicts cluster on exactly the songs the filter exists for — a banned protest song once slipped through a fail-open timeout — so a timed-out song must not play unmoderated. The guest just taps again.
-- **Fail-closed** (reject) when the model answers but dodges: provider `content_filter` finish reason, or a reply without valid `{"approved": boolean}` JSON. This catches e.g. banned protest songs that Chinese-hosted models refuse to discuss.
+**Kiểm duyệt: cho phép tiếp tục hay từ chối khi lỗi** (`src/moderation.js`) —
+đây là sự phân biệt có chủ ý, phải giữ nguyên:
+- **Cho phép tiếp tục** (phê duyệt) chỉ khi có lỗi hạ tầng: thiếu khóa API, lỗi
+  HTTP hoặc lỗi mạng. Sự cố kiểm duyệt không được làm nhạc dừng (người phụ
+  trách cũng có thể tắt trực tiếp bộ lọc).
+- **Từ chối kèm lý do có thể thử lại** ("Hệ thống đang bận, vui lòng thử lại")
+  khi hết thời gian chờ: các phán quyết chậm thường tập trung đúng vào những
+  bài hát mà bộ lọc cần xử lý — từng có một bài hát phản kháng bị cấm lọt qua
+  do hết thời gian chờ — vì vậy bài hết thời gian chờ không được phát mà chưa
+  kiểm duyệt. Khách chỉ cần chạm lại.
+- **Từ chối** khi mô hình trả lời nhưng né tránh: lý do kết thúc
+  `content_filter` của nhà cung cấp, hoặc câu trả lời không có JSON hợp lệ
+  `{"approved": boolean}`. Cách này bắt được, chẳng hạn, các bài hát phản
+  kháng bị cấm mà những mô hình do Trung Quốc lưu trữ từ chối thảo luận.
 
-The LLM is any OpenAI-compatible chat API, configured entirely via `LLM_BASE_URL`/`LLM_MODEL`/`LLM_API_KEY` — no provider-specific code, with one opt-in exception: `LLM_WEB_SEARCH=true` attaches OpenRouter's web plugin (`plugins: [{id: "web"}]`) so the model sees live search results (usually the song's lyrics) instead of judging by title alone. Other providers reject the extra field, so it must stay opt-in. Don't rely on `response_format: json_object` (support varies) and don't set `temperature` unless `LLM_TEMPERATURE` is explicit (some models reject arbitrary values). The prompt includes `EVENT_CONTEXT` so the model judges fit for the occasion, not just explicitness.
+LLM có thể là bất kỳ API trò chuyện nào tương thích OpenAI, được cấu hình hoàn
+toàn qua `LLM_BASE_URL`/`LLM_MODEL`/`LLM_API_KEY` — không có mã riêng cho từng
+nhà cung cấp, với một ngoại lệ phải chủ động bật: `LLM_WEB_SEARCH=true` gắn
+plugin web của OpenRouter (`plugins: [{id: "web"}]`) để mô hình thấy kết quả
+tìm kiếm trực tiếp (thường là lời bài hát) thay vì chỉ đánh giá theo tiêu đề.
+Các nhà cung cấp khác sẽ từ chối trường bổ sung này, nên trường đó phải tiếp
+tục là tùy chọn. Đừng phụ thuộc vào `response_format: json_object` (mức hỗ trợ
+khác nhau) và đừng đặt `temperature` trừ khi `LLM_TEMPERATURE` được chỉ định rõ
+(một số mô hình từ chối giá trị tùy ý). Prompt bao gồm `EVENT_CONTEXT` để mô
+hình đánh giá mức phù hợp với dịp, không chỉ mức độ nhạy cảm.
 
-**No dotenv dependency** — `server.js` has its own minimal `.env` loader. Dependencies are just express, ws, qrcode; keep it that way unless there's a strong reason.
+**Không phụ thuộc dotenv** — `server.js` có bộ nạp `.env` tối giản riêng.
+Dependency chỉ gồm express, ws, qrcode; hãy giữ nguyên như vậy trừ khi có lý do
+thực sự cần thiết.
 
-## Deployment
+## Triển khai
 
-Runs on a home server via `docker compose up -d --build` — the image is built locally from source; there is no registry, no CI build. A self-hosted GitHub Actions runner (`.github/workflows/deploy.yml`) rebuilds on every push to `main`. The container joins the external `reverseproxy` Docker network; `PUBLIC_URL` in `.env` is what the QR code points to, and the reverse proxy must forward WebSocket upgrades. Do not add `pull_request` triggers to the deploy workflow — the repo is public and the runner is self-hosted.
+Chạy trên máy chủ gia đình bằng `docker compose up -d --build` — image được
+xây dựng cục bộ từ mã nguồn; không có registry và không có bước build CI. Một
+runner GitHub Actions tự lưu trữ (`.github/workflows/deploy.yml`) xây dựng lại
+sau mỗi lần đẩy lên `main`. Container tham gia mạng Docker bên ngoài
+`reverseproxy`; `PUBLIC_URL` trong `.env` là địa chỉ mà mã QR trỏ tới, còn
+proxy ngược phải chuyển tiếp việc nâng cấp WebSocket. Không thêm trigger
+`pull_request` vào quy trình triển khai — kho mã là công khai và runner tự lưu
+trữ.
 
-Static assets are served with `Cache-Control: no-cache` on purpose (iOS Safari otherwise holds stale JS/CSS across deploys).
+Tài sản tĩnh được phục vụ với `Cache-Control: no-cache` có chủ ý (nếu không,
+iOS Safari sẽ giữ JS/CSS cũ qua các lần triển khai).

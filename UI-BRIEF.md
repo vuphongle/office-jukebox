@@ -1,109 +1,125 @@
-# Event Music System — UI brief
+# Hệ thống âm nhạc sự kiện — tóm tắt giao diện
 
-A **QR jukebox** for a live event (a secondary-school graduation dinner in Hong Kong).
-A projector shows the **Host page**; guests scan the on-screen QR code, open the
-**Guest page** on their phones, and queue YouTube songs. There are only these two
-screens. Current implementation is plain HTML/CSS/JS (`public/host.*` and
-`public/guest.*`) — a redesign can restyle everything, but the element ids and
-behaviors below must keep working.
-
----
-
-## 1. Host page (`/`) — the projected screen
-
-Viewed from across a dark venue, on a projector. Big, legible, glanceable.
-
-**Start overlay** — full-screen card with logo, title, and a single **▶ Start**
-button (one click is required by browsers to unlock audio). Small note about
-routing audio to the venue AV system.
-
-**Player pane** (main area)
-- Embedded YouTube player (16:9), fills most of the screen.
-- Idle state when the queue is empty: 🎧 emoji + "Scan the QR code to add the first one!"
-- Below the video: **now-playing title** and a secondary line with
-  **channel · 點唱: guest-name** (the requester credit, only when the guest gave a name).
-- Control row:
-  - ⏸/▶ play-pause (also keyboard `space`)
-  - ⏭ skip (also keyboard `n`)
-  - 🛡 **Filter pill** — toggles the LLM content filter ON/OFF live; has an
-    "on" (highlighted) state and a small warning hint ("no LLM key — accepts all")
-    when it's ON but unconfigured.
-  - ⏱ **Cooldown pill** — shows the per-guest request cooldown ("Cooldown: 15s"
-    or "Cooldown: OFF"); clicking cycles presets 0 / 5 / 10 / 15 / 30 / 60 s.
-  - 🔊 volume slider.
-
-**Sidebar**
-- **QR card** — "Scan to add a song", large QR code, the guest URL in plain text
-  under it. This is the single most important element for guests far from the screen.
-- **Up Next card** — live queue list with count badge. Each row: thumbnail,
-  title, channel · requester name, and an ✕ remove button (host-only control).
-  Empty state: "Queue is empty — scan the QR to add a song."
-
-Everything updates live over WebSocket — no refresh, no loading states beyond the above.
+Một **jukebox QR** cho sự kiện trực tiếp (bữa tối tốt nghiệp trung học ở Hồng
+Kông). Máy chiếu hiển thị **trang người phụ trách**; khách quét mã QR trên màn
+hình, mở **trang khách** bằng điện thoại và xếp bài hát YouTube vào hàng đợi.
+Chỉ có hai màn hình này.
+Bản triển khai hiện tại dùng HTML/CSS/JS thuần (`public/host.*` và
+`public/guest.*`) — bản thiết kế lại có thể thay đổi toàn bộ kiểu dáng, nhưng
+id phần tử và các hành vi dưới đây phải tiếp tục hoạt động.
 
 ---
 
-## 2. Guest page (`/guest`) — mobile phones
+## 1. Trang người phụ trách (`/`) — màn hình được chiếu
 
-Mobile-only in practice. Guests use it for ~30 seconds at a time, often in the
-dark, possibly tipsy. Big tap targets. Content mixes Chinese and English
-(song titles, singer names like 陳奕迅 / BLACKPINK).
+Được xem từ khoảng cách xa trong một địa điểm tối, trên máy chiếu. Chữ phải
+lớn, rõ ràng và dễ đọc lướt.
 
-**Header** — title + one-line explainer.
+**Lớp phủ bắt đầu** — thẻ toàn màn hình có logo, tiêu đề và một nút duy nhất
+**▶ Bắt đầu** (trình duyệt yêu cầu một lần nhấp để mở khóa âm thanh). Ghi chú
+ngắn về việc chuyển âm thanh tới hệ thống AV của địa điểm.
 
-**Name field** — optional single input, "shown with your song"; persisted on the
-phone, so returning guests see it pre-filled.
+**Khu vực trình phát** (khu vực chính)
+- Trình phát YouTube nhúng (16:9), chiếm phần lớn màn hình.
+- Trạng thái chờ khi hàng đợi trống: emoji 🎧 + "Quét mã QR để thêm bài đầu tiên!"
+- Bên dưới video: **tiêu đề bài đang phát** và một dòng phụ gồm
+  **kênh · Yêu cầu: guest-name** (tên người yêu cầu, chỉ hiển thị khi khách đã nhập tên).
+- Hàng điều khiển:
+  - ⏸/▶ phát-tạm dừng (cũng dùng phím `space`)
+  - ⏭ bỏ qua (cũng dùng phím `n`)
+  - 🛡 **Nút Bộ lọc** — bật/tắt trực tiếp bộ lọc nội dung LLM; có trạng thái
+    "bật" (được tô sáng) và gợi ý cảnh báo nhỏ ("chưa có khóa LLM — chấp nhận
+    tất cả") khi đang bật nhưng chưa được cấu hình.
+  - ⏱ **Nút Thời gian chờ** — hiển thị thời gian chờ yêu cầu theo từng khách
+    ("Thời gian chờ: 15s" hoặc "Thời gian chờ: TẮT"); khi nhấp sẽ chuyển qua
+    các mức 0 / 5 / 10 / 15 / 30 / 60 giây.
+  - 🔊 thanh trượt âm lượng.
 
-**Search bar** — text input + Search button, hits YouTube directly.
+**Thanh bên**
+- **Thẻ QR** — "Quét để thêm bài hát", mã QR lớn và URL khách ở dạng văn bản
+  thuần bên dưới. Đây là thành phần quan trọng nhất đối với khách đứng xa màn
+  hình.
+- **Thẻ Tiếp theo** — danh sách hàng đợi trực tiếp kèm huy hiệu số lượng. Mỗi
+  hàng gồm: ảnh thu nhỏ, tiêu đề, kênh · tên người yêu cầu và nút ✕ xóa (chỉ
+  người phụ trách được dùng). Trạng thái trống: "Hàng đợi trống — quét mã QR để
+  thêm bài hát."
 
-**Explore section (the "KTV" browser)** — the default view and the heart of the page:
-- **Singer chips row** — horizontally scrollable chips, each with a circular
-  avatar (first character of the name, genre-colored) + name. Tapping loads that
-  singer's songs. The row is filtered by the active genre tab.
-- **Genre tabs** — 🔥 All · 💜 K-pop · 🎤 Cantopop · 🎵 Mandopop · 🎧 Western ·
-  🪩 Party · 📼 Classics. One is always active (highlighted).
-- **🔀 Shuffle button** — reshuffles the current selection's songs.
-- Songs shown are real, current YouTube results (fetched live), not a hardcoded list.
-
-**Results list** (shared by explore and search) — rows of: thumbnail, title,
-channel · duration, and a round **+ add button**. Button states: `+` → `…`
-(checking) → `✓` (added, disabled). A **"More songs ↓"** button appends the next
-batch. After a search, a **"← Back to Explore"** button restores the explore view.
-
-**Status line** — inline messages: "Loading songs…", "Searching…",
-"No songs found — try another tab.", error strings with 😕.
-
-**Toast** (bottom, floating) — the request feedback channel:
-- 🔎 "Checking song…" (persistent while the server verifies)
-- ✅ "Added — playing now!" / "Added — #3 in the queue!"
-- 🚫 rejection with a reason (e.g. "That song is already in the queue!",
-  "Not a good fit for this event.", "Queue is full…")
-- ⏳ **live countdown** when the guest is rate-limited: "Next song in 12s…"
-  ticking down each second.
-
-**Up Next section** — live queue (count badge, now-playing banner with "NOW
-PLAYING" label, numbered list of title + channel). Rows for songs this guest
-requested carry a small **"YOU" badge**. Empty state: "Nothing queued yet — be
-the first!"
+Mọi thứ cập nhật trực tiếp qua WebSocket — không cần làm mới, không có trạng
+thái đang tải nào ngoài các trạng thái nêu trên.
 
 ---
 
-## Flows to keep in mind
+## 2. Trang khách (`/guest`) — điện thoại di động
 
-1. **Happy path**: scan QR → land on explore → tap a genre/singer → tap + →
-   toast confirms with queue position → song appears in Up Next (with YOU badge).
-2. **Search path**: type → results → add → "← Back to Explore".
-3. **Rejections**: duplicate song, queue full (50), content filter, unplayable
-   video, and the ⏳ cooldown countdown. Each is a toast with a human reason —
-   the guest should never feel stuck.
-4. **Host moderating live**: toggling the filter, changing the cooldown,
-   removing/skipping songs — all reflected on every phone within a second.
+Trên thực tế chỉ dùng trên thiết bị di động. Khách sử dụng trong khoảng 30 giây
+mỗi lần, thường ở nơi tối và có thể đã hơi chếnh choáng. Vùng chạm phải lớn.
+Nội dung vốn có cả tiếng Trung và tiếng Anh (tên bài hát, tên ca sĩ như 陳奕迅 /
+BLACKPINK).
 
-## Constraints
+**Đầu trang** — tiêu đề và phần giải thích trong một dòng.
 
-- No framework, no build step: deliverables should map to plain CSS (two
-  stylesheets) and the existing DOM structure/ids where possible.
-- Guest page: small screens, one-handed use, `no-cache` assets (design can change
-  freely between events). Host page: 16:9 projector, dark room, readable from meters away.
-- The YouTube player look itself can't be restyled (it's an embedded iframe).
-- Text content is bilingual by nature; fonts must cover Traditional Chinese.
+**Trường tên** — một ô nhập tùy chọn, "hiển thị cùng bài hát của bạn"; được lưu
+trên điện thoại để khách quay lại thấy trường đã được điền sẵn.
+
+**Thanh tìm kiếm** — ô nhập văn bản và nút Tìm kiếm, truy vấn trực tiếp YouTube.
+
+**Mục Khám phá (trình duyệt "KTV")** — chế độ mặc định và phần cốt lõi của
+trang:
+- **Hàng chip ca sĩ** — các chip có thể cuộn ngang, mỗi chip có ảnh đại diện
+  hình tròn (ký tự đầu tiên của tên, màu theo thể loại) và tên. Chạm vào để
+  tải các bài hát của ca sĩ đó. Hàng chip được lọc theo tab thể loại đang hoạt
+  động.
+- **Các tab thể loại** — 🔥 Tất cả · 💜 K-pop · 🎤 Cantopop · 🎵 Mandopop · 🎧
+  Nhạc phương Tây · 🪩 Nhạc tiệc · 📼 Nhạc kinh điển. Luôn có một tab đang hoạt
+  động (được tô sáng).
+- **Nút 🔀 Xáo trộn** — xáo trộn lại các bài hát trong lựa chọn hiện tại.
+- Các bài hát hiển thị là kết quả YouTube thực tế, hiện tại (được tải trực
+  tiếp), không phải danh sách viết sẵn.
+
+**Danh sách kết quả** (dùng chung cho khám phá và tìm kiếm) — mỗi hàng gồm: ảnh
+thu nhỏ, tiêu đề, kênh · thời lượng và **nút + thêm** hình tròn. Trạng thái nút:
+`+` → `…` (đang kiểm tra) → `✓` (đã thêm, bị vô hiệu hóa). Nút **"Thêm bài hát
+↓"** nối thêm nhóm tiếp theo. Sau khi tìm kiếm, nút **"← Quay lại mục Khám phá"**
+khôi phục chế độ khám phá.
+
+**Dòng trạng thái** — thông báo nội tuyến: "Đang tải bài hát…", "Đang tìm
+kiếm…", "Không tìm thấy bài hát — hãy thử tab khác.", cùng các chuỗi lỗi có 😕.
+
+**Thông báo nổi** (ở dưới cùng) — kênh phản hồi yêu cầu:
+- 🔎 "Đang kiểm tra bài hát…" (hiển thị liên tục trong khi máy chủ xác minh)
+- ✅ "Đã thêm — đang phát!" / "Đã thêm — vị trí số 3 trong hàng đợi!"
+- 🚫 từ chối kèm lý do (ví dụ: "Bài hát này đã có trong hàng đợi!",
+  "Bài hát không phù hợp với sự kiện này.", "Hàng đợi đã đầy…")
+- ⏳ **đếm ngược trực tiếp** khi khách bị giới hạn tần suất: "Bài tiếp theo sau
+  12 giây…", giảm từng giây.
+
+**Mục Tiếp theo** — hàng đợi trực tiếp (huy hiệu số lượng, biểu ngữ bài đang
+phát với nhãn "ĐANG PHÁT", danh sách đánh số gồm tiêu đề + kênh). Hàng của các
+bài hát do khách này yêu cầu có huy hiệu nhỏ **"BẠN"**. Trạng thái trống: "Chưa
+có gì trong hàng đợi — hãy là người đầu tiên!"
+
+---
+
+## Các luồng cần lưu ý
+
+1. **Luồng thuận lợi**: quét QR → vào mục khám phá → chạm vào thể loại/ca sĩ →
+   chạm + → thông báo xác nhận vị trí trong hàng đợi → bài hát xuất hiện trong
+   mục Tiếp theo (kèm huy hiệu BẠN).
+2. **Luồng tìm kiếm**: nhập → kết quả → thêm → "← Quay lại mục Khám phá".
+3. **Từ chối**: bài trùng, hàng đợi đầy (50), bộ lọc nội dung, video không thể
+   phát và đếm ngược thời gian chờ ⏳. Mỗi trường hợp đều là một thông báo có lý
+   do dễ hiểu — khách không bao giờ cảm thấy bị mắc kẹt.
+4. **Người phụ trách kiểm duyệt trực tiếp**: bật/tắt bộ lọc, thay đổi thời gian
+   chờ, xóa/bỏ qua bài hát — tất cả phản ánh trên mọi điện thoại trong vòng một
+   giây.
+
+## Ràng buộc
+
+- Không dùng framework, không có bước build: sản phẩm bàn giao nên tương ứng
+  với CSS thuần (hai stylesheet) và cấu trúc/id DOM hiện có khi có thể.
+- Trang khách: màn hình nhỏ, dùng bằng một tay, tài sản `no-cache` (thiết kế có
+  thể thay đổi tự do giữa các sự kiện). Trang người phụ trách: máy chiếu 16:9,
+  phòng tối, có thể đọc được từ cách xa vài mét.
+- Không thể thay đổi kiểu dáng của chính trình phát YouTube (đây là iframe
+  nhúng).
+- Nội dung văn bản vốn có hai ngôn ngữ; font phải hỗ trợ chữ Hán phồn thể.
