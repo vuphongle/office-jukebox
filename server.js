@@ -338,6 +338,9 @@ wss.on("connection", (ws) => {
       case "move":
         state.move(msg.id, msg.dir);
         break;
+      case "reorder":
+        state.reorder(msg.id, msg.beforeId);
+        break;
       case "setFilter": // host chuyển bộ lọc nội dung: off / on / strict
         filterOn = !!msg.on;
         if (msg.mode === "strict" || msg.mode === "default") moderationMode = msg.mode;
