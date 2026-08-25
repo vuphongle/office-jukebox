@@ -19,9 +19,9 @@
 
   <div class="name-wrap">
     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8.2" r="3.4"></circle><path d="M4.8 20c1.3-4.2 4.2-6.3 7.2-6.3s5.9 2.1 7.2 6.3"></path></svg>
-    <input id="name" type="text" placeholder="Tên của bạn (không bắt buộc)" autocomplete="off" maxlength="40" />
+    <input id="name" type="text" placeholder="Tên order (không bắt buộc)" autocomplete="off" maxlength="40" />
   </div>
-  <div class="name-hint">Không bắt buộc · hiển thị bên cạnh bài hát bạn chọn</div>
+  <div id="name-hint" class="name-hint">Không bắt buộc · hiển thị bên cạnh bài hát bạn chọn</div>
 
   <form id="search-form">
     <input id="q" type="search" placeholder="Tìm bài hát hoặc ca sĩ…"
@@ -81,6 +81,7 @@
 
   <section class="queue-section">
     <h2>Tiếp theo <small>Sắp phát</small> <span id="queue-count" class="count">0</span></h2>
+    <div id="queue-limit-notice" class="queue-limit-notice hidden" role="status" aria-live="polite"></div>
     <ul id="queue"></ul>
   </section>
 

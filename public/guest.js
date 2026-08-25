@@ -18,6 +18,11 @@ const youtubeLinkTitle = document.getElementById("youtube-link-title");
 const youtubeLinkSub = document.getElementById("youtube-link-sub");
 const youtubeLinkAdd = document.getElementById("youtube-link-add");
 let resolvedYouTubeSong = null;
+let queueLimitOn = false;
+let queueLimit = 10;
+let requireName = false;
+let queueWs = null;
+const pendingRemovals = new Set();
 
 // ---- Khám phá (duyệt kiểu KTV) ------------------------------------------
 // Các tab thể loại và chip ca sĩ dùng các truy vấn YouTube có sẵn qua /api/browse
@@ -404,6 +409,14 @@ nameEl.addEventListener("change", () => {
   localStorage.setItem("guestName", nameEl.value.trim());
 });
 
+function renderRequestSettings() {
+  nameEl.required = requireName;
+  nameEl.placeholder = requireName ? "Tên order (bắt buộc)" : "Tên order (không bắt buộc)";
+  document.getElementById("name-hint").textContent = requireName
+    ? "Bắt buộc · hiển thị bên cạnh bài hát bạn chọn"
+    : "Không bắt buộc · hiển thị bên cạnh bài hát bạn chọn";
+}
+
 // ---- Yêu cầu của mình (cho nhãn "Bạn" trong hàng đợi) -------------------
 function loadMyRequestIds() {
   try {
@@ -419,6 +432,11 @@ function rememberMyRequest(id) {
 
 // ---- Chọn một bài hát --------------------------------------------------
 async function requestSong(song, btn) {
+  if (requireName && !nameEl.value.trim()) {
+    toast("bad", "!", "Vui lòng nhập tên order trước.", { sub: "Host đang yêu cầu tên người chọn bài." });
+    nameEl.focus();
+    return;
+  }
   btn.disabled = true;
   btn.textContent = "…";
   // Thẻ "đang kiểm tra" được giữ lại và có hoạt ảnh — bộ lọc tìm kiếm trên web
@@ -524,11 +542,21 @@ let lastQueueState = null; // giữ lại để có thể hiển thị lại nh�
 function connectWs() {
   const proto = location.protocol === "https:" ? "wss" : "ws";
   const ws = new WebSocket(`${proto}://${location.host}`);
+  queueWs = ws;
   ws.onmessage = (e) => {
     const msg = JSON.parse(e.data);
     if (msg.type === "state") {
       lastQueueState = msg.state;
+      if (typeof msg.queueLimitOn === "boolean") queueLimitOn = msg.queueLimitOn;
+      if (typeof msg.queueLimit === "number") queueLimit = msg.queueLimit;
+      if (typeof msg.requireName === "boolean") requireName = msg.requireName;
+      renderRequestSettings();
       renderQueue(msg.state);
+    } else if (msg.type === "removeOwnResult") {
+      pendingRemovals.delete(msg.id);
+      if (msg.ok) toast("ok", "✓", "Đã xóa khỏi hàng đợi.");
+      else toast("bad", "!", msg.reason || "Không thể xóa bài hát này.");
+      if (lastQueueState) renderQueue(lastQueueState);
     }
   };
   ws.onclose = () => setTimeout(connectWs, 2000);
@@ -558,6 +586,10 @@ function renderQueue(state) {
 
   const queue = state.queue || [];
   document.getElementById("queue-count").textContent = queue.length;
+  const limitNotice = document.getElementById("queue-limit-notice");
+  const limitReached = queueLimitOn && queue.length >= queueLimit;
+  limitNotice.classList.toggle("hidden", !limitReached);
+  if (limitReached) limitNotice.textContent = `Hàng đợi đã đạt giới hạn ${queueLimit} bài — hãy chờ phát bớt trước khi thêm bài mới.`;
   const ul = document.getElementById("queue");
   ul.innerHTML = "";
   if (queue.length === 0) {
@@ -570,19 +602,42 @@ function renderQueue(state) {
     li.innerHTML = `
       <span class="q-num">${i + 1}</span>
       <img src="${item.thumbnail || NO_THUMB}" alt="" loading="lazy" />
-      <div class="q-text"><div class="t-row"><span class="t"></span></div><div class="s"></div></div>`;
+      <div class="q-text"><div class="t-row"><span class="t"></span></div><div class="s"></div><div class="q-eta"></div></div>
+      <button class="q-remove-own hidden" type="button" title="Xóa bài của bạn">×</button>`;
     li.querySelector(".t").textContent = item.title;
     li.querySelector(".s").textContent = item.channel;
+    li.querySelector(".q-eta").textContent = formatEstimatedStart(item.estimatedStartAt);
     if (myIds.has(item.id)) {
       const chip = document.createElement("span");
       chip.className = "q-you";
       chip.textContent = "Bạn";
       li.querySelector(".t-row").appendChild(chip);
+      const remove = li.querySelector(".q-remove-own");
+      remove.classList.remove("hidden");
+      remove.disabled = pendingRemovals.has(item.id);
+      remove.onclick = () => {
+        if (!queueWs || queueWs.readyState !== WebSocket.OPEN || pendingRemovals.has(item.id)) return;
+        pendingRemovals.add(item.id);
+        remove.disabled = true;
+        queueWs.send(JSON.stringify({ type: "removeOwn", id: item.id, clientId }));
+      };
     }
     ul.appendChild(li);
   });
 }
 
+function formatEstimatedStart(timestamp) {
+  if (!Number.isFinite(timestamp)) return "Chưa rõ thời gian phát";
+  const minutes = Math.max(0, Math.round((timestamp - Date.now()) / 60000));
+  if (minutes < 1) return "Dự kiến phát sắp tới";
+  if (minutes < 60) return `Dự kiến phát sau khoảng ${minutes} phút`;
+  return `Dự kiến phát lúc ${new Date(timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`;
+}
+
 renderSingers();
 selectGenre("All"); // hiển thị tab và tải bài hát thật khi mở trang
+renderRequestSettings();
 connectWs();
+setInterval(() => {
+  if (lastQueueState) renderQueue(lastQueueState);
+}, 30000);
