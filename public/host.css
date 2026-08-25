@@ -133,7 +133,7 @@ html, body {
   color: var(--text-hi);
   white-space: nowrap;
   overflow: hidden;
-  text-overflow: ellipsis;
+  text-overflow: clip;
   margin-bottom: 8px;
 }
 #now-channel { font: 500 19px/1.4 var(--sans); color: var(--warm); }
@@ -352,7 +352,15 @@ html, body {
   color: var(--text);
   white-space: nowrap;
   overflow: hidden;
-  text-overflow: ellipsis;
+  text-overflow: clip;
+}
+.marquee-title { overflow: hidden; text-overflow: clip; }
+.marquee-track { display: inline-block; min-width: 100%; padding-right: 3rem; white-space: nowrap; will-change: transform; }
+.marquee-title.is-overflowing .marquee-track { animation: title-marquee 16s linear infinite alternate; }
+.marquee-title:hover .marquee-track, .marquee-title:focus-within .marquee-track { animation-play-state: paused; }
+@keyframes title-marquee {
+  0%, 16% { transform: translateX(0); }
+  84%, 100% { transform: translateX(var(--marquee-distance)); }
 }
 .q-sub {
   font: 500 12.5px/1.3 var(--sans);
@@ -421,6 +429,7 @@ button:focus-visible, a:focus-visible, input:focus-visible {
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .marquee-title.is-overflowing .marquee-track { animation: none; }
   *, *::before, *::after {
     animation-duration: 0.01ms !important;
     animation-iteration-count: 1 !important;

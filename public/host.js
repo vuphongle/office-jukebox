@@ -219,10 +219,38 @@ window.addEventListener("pageshow", (e) => {
 });
 
 // ---- Hiển thị ---------------------------------------------------------
+function updateMarqueeTitle(el) {
+  if (!el) return;
+  const text = el.textContent.trim();
+  let track = el.querySelector(":scope > .marquee-track");
+  if (!track) {
+    track = document.createElement("span");
+    track.className = "marquee-track";
+    el.textContent = "";
+    el.appendChild(track);
+  }
+  track.textContent = text;
+  el.classList.add("marquee-title");
+  requestAnimationFrame(() => {
+    const distance = el.clientWidth - track.scrollWidth;
+    const overflowing = distance < -1;
+    el.classList.toggle("is-overflowing", overflowing);
+    el.style.setProperty("--marquee-distance", `${Math.min(0, distance)}px`);
+    if (overflowing) el.title = text;
+    else el.removeAttribute("title");
+  });
+}
+
+window.addEventListener("resize", () => {
+  document.querySelectorAll(".marquee-title").forEach(updateMarqueeTitle);
+});
+
 function render() {
   const np = latestState.nowPlaying;
   document.getElementById("now-label").classList.toggle("hidden", !np);
-  document.getElementById("now-title").textContent = np ? np.title : "—";
+  const nowTitle = document.getElementById("now-title");
+  nowTitle.textContent = np ? np.title : "—";
+  updateMarqueeTitle(nowTitle);
   document.getElementById("now-channel").textContent = np
     ? np.channel + (np.addedBy ? ` · Yêu cầu: ${np.addedBy}` : "")
     : "";
@@ -256,6 +284,7 @@ function render() {
       </div>
       <button class="q-remove" title="Xóa">✕</button>`;
     li.querySelector(".q-title").textContent = item.title;
+    updateMarqueeTitle(li.querySelector(".q-title"));
     li.querySelector(".q-sub").textContent = item.addedBy ? `Yêu cầu: ${item.addedBy}` : item.channel;
     li.querySelector(".q-remove").onclick = () => send({ type: "remove", id: item.id });
     ul.appendChild(li);

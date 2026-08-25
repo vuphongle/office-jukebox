@@ -32,6 +32,32 @@ let feedbackOn = true;
 let queueWs = null;
 const pendingRemovals = new Set();
 
+function updateMarqueeTitle(el) {
+  if (!el) return;
+  const text = el.textContent.trim();
+  let track = el.querySelector(":scope > .marquee-track");
+  if (!track) {
+    track = document.createElement("span");
+    track.className = "marquee-track";
+    el.textContent = "";
+    el.appendChild(track);
+  }
+  track.textContent = text;
+  el.classList.add("marquee-title");
+  requestAnimationFrame(() => {
+    const distance = el.clientWidth - track.scrollWidth;
+    const overflowing = distance < -1;
+    el.classList.toggle("is-overflowing", overflowing);
+    el.style.setProperty("--marquee-distance", `${Math.min(0, distance)}px`);
+    if (overflowing) el.title = text;
+    else el.removeAttribute("title");
+  });
+}
+
+window.addEventListener("resize", () => {
+  document.querySelectorAll(".marquee-title").forEach(updateMarqueeTitle);
+});
+
 // ---- Khám phá (duyệt kiểu KTV) ------------------------------------------
 // Các tab thể loại và chip ca sĩ dùng các truy vấn YouTube có sẵn qua /api/browse
 // (được máy chủ lưu bộ nhớ đệm), nên bài hát hiển thị là dữ liệu thực và mới — không phải
@@ -360,6 +386,7 @@ function resultCard(r) {
     </div>
     <button class="add-btn" title="Thêm bài hát" aria-label="Thêm bài hát">+</button>`;
   li.querySelector(".r-title").textContent = r.title;
+  updateMarqueeTitle(li.querySelector(".r-title"));
   li.querySelector(".r-sub").textContent = r.channel + (r.duration ? ` · ${r.duration}` : "");
   const btn = li.querySelector(".add-btn");
   btn.onclick = () => requestSong(r, btn);
@@ -393,6 +420,7 @@ function showYouTubePreview(song) {
   resolvedYouTubeSong = song;
   youtubeLinkThumb.src = song.thumbnail || NO_THUMB;
   youtubeLinkTitle.textContent = song.title;
+  updateMarqueeTitle(youtubeLinkTitle);
   youtubeLinkSub.textContent = song.channel;
   youtubeLinkAdd.disabled = false;
   youtubeLinkAdd.textContent = "+";
@@ -649,6 +677,7 @@ function renderQueue(state) {
         <div class="np-sub"></div>
       </div>`;
     npEl.querySelector(".np-title").textContent = np.title;
+    updateMarqueeTitle(npEl.querySelector(".np-title"));
     npEl.querySelector(".np-sub").textContent =
       (np.channel || "") + (np.addedBy ? ` · Người chọn: ${np.addedBy}` : "");
   } else {
@@ -676,6 +705,7 @@ function renderQueue(state) {
       <div class="q-text"><div class="t-row"><span class="t"></span></div><div class="s"></div><div class="q-eta"></div></div>
       <button class="q-remove-own hidden" type="button" title="Xóa bài của bạn" aria-label="Xóa bài của bạn">×</button>`;
     li.querySelector(".t").textContent = item.title;
+    updateMarqueeTitle(li.querySelector(".t"));
     li.querySelector(".s").textContent = item.channel;
     li.querySelector(".q-eta").textContent = formatEstimatedStart(item.estimatedStartAt);
     if (myIds.has(item.id)) {
