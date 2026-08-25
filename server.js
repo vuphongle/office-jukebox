@@ -29,6 +29,11 @@ import {
 import { moderate, moderationConfigured } from "./src/moderation.js";
 import { JukeboxState } from "./src/state.js";
 import { detectLanIp } from "./src/net.js";
+import {
+  CHAT_MIN_INTERVAL_MS,
+  parseChatInput,
+  pushRecentChat,
+} from "./src/chat.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -85,6 +90,9 @@ let queueLimit = QUEUE_LIMIT_STEPS.includes(savedSettings.queueLimit) ? savedSet
 // Một host có thể không muốn hiện tên người yêu cầu; khi bật, guest phải nhập tên.
 let requireName = savedSettings.requireName ?? false;
 let feedbackOn = savedSettings.feedbackOn ?? true;
+let chatOn = savedSettings.chatOn ?? true;
+const chatMessages = [];
+const chatLastSentAt = new WeakMap();
 
 let feedbackItems = [];
 try {
@@ -100,7 +108,7 @@ function saveSettings() {
     writeFileSync(
       SETTINGS_PATH,
       JSON.stringify(
-        { filterOn, moderationMode, eventContext, cooldownSeconds, queueLimitOn, queueLimit, requireName, feedbackOn },
+        { filterOn, moderationMode, eventContext, cooldownSeconds, queueLimitOn, queueLimit, requireName, feedbackOn, chatOn },
         null,
         2
       )
@@ -177,6 +185,7 @@ app.get("/api/info", async (_req, res) => {
       queueLimit,
       requireName,
       feedbackOn,
+      chatOn,
     });
   } catch {
     res.status(500).json({ error: "Không thể tạo mã QR." });
@@ -377,15 +386,23 @@ app.post("/api/feedback", (req, res) => {
 });
 
 app.get("/api/feedback", requireHostAuth, (_req, res) => {
-  res.json({ feedbackOn, stats: feedbackStats(), items: feedbackItems });
+  res.json({ feedbackOn, chatOn, stats: feedbackStats(), items: feedbackItems });
 });
 
 app.patch("/api/feedback/settings", requireHostAuth, (req, res) => {
-  if (typeof req.body?.on !== "boolean") return res.status(400).json({ ok: false, reason: "Giá trị không hợp lệ." });
-  feedbackOn = req.body.on;
+  const hasFeedbackSetting = typeof req.body?.on === "boolean";
+  const hasChatSetting = typeof req.body?.chatOn === "boolean";
+  if (!hasFeedbackSetting && !hasChatSetting) {
+    return res.status(400).json({ ok: false, reason: "Giá trị không hợp lệ." });
+  }
+  if (hasFeedbackSetting) feedbackOn = req.body.on;
+  if (hasChatSetting) {
+    chatOn = req.body.chatOn;
+    if (!chatOn) chatMessages.length = 0;
+  }
   saveSettings();
   broadcastState();
-  res.json({ ok: true, feedbackOn });
+  res.json({ ok: true, feedbackOn, chatOn });
 });
 
 app.delete("/api/feedback/:id", requireHostAuth, (req, res) => {
@@ -440,6 +457,7 @@ function stateMessage() {
     queueLimit,
     requireName,
     feedbackOn,
+    chatOn,
   });
 }
 function broadcastState() {
@@ -457,8 +475,12 @@ wss.on("connection", (ws) => {
 
   // Gửi trạng thái hiện tại ngay khi kết nối.
   ws.send(stateMessage());
+  if (chatOn && chatMessages.length) {
+    ws.send(JSON.stringify({ type: "chatHistory", messages: chatMessages }));
+  }
 
   ws.on("message", (raw) => {
+    if (raw.length > 4000) return;
     let msg;
     try {
       msg = JSON.parse(raw.toString());
@@ -467,6 +489,37 @@ wss.on("connection", (ws) => {
     }
     if (msg.type === "auth") {
       if (!HOST_PASSWORD || msg.token === hostToken) ws.isHost = true;
+      return;
+    }
+    if (msg.type === "chatSend") {
+      if (!chatOn) {
+        ws.send(JSON.stringify({ type: "chatSendResult", ok: false, reason: "Tính năng chat hiện đang tắt." }));
+        return;
+      }
+      const parsed = parseChatInput(msg);
+      if (!parsed.ok) {
+        ws.send(JSON.stringify({ type: "chatSendResult", ok: false, reason: parsed.reason }));
+        return;
+      }
+      const now = Date.now();
+      const last = chatLastSentAt.get(ws) || 0;
+      if (now - last < CHAT_MIN_INTERVAL_MS) {
+        ws.send(JSON.stringify({ type: "chatSendResult", ok: false, reason: "Bạn gửi hơi nhanh. Vui lòng chờ một chút." }));
+        return;
+      }
+      const message = {
+        id: randomUUID(),
+        name: parsed.name,
+        text: parsed.text,
+        createdAt: new Date().toISOString(),
+      };
+      pushRecentChat(chatMessages, message);
+      chatLastSentAt.set(ws, now);
+      const chatMessage = JSON.stringify({ type: "chatMessage", message });
+      for (const client of wss.clients) {
+        if (client.readyState === 1) client.send(chatMessage);
+      }
+      ws.send(JSON.stringify({ type: "chatSendResult", ok: true, id: message.id }));
       return;
     }
     // Guest được xóa mục của chính mình; server đối chiếu clientId lưu trong item.

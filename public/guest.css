@@ -613,6 +613,103 @@ header .desktop-intro { display: none; }
   50% { transform: scale(1.18); }
 }
 
+/* ---- Chat trực tiếp ---------------------------------------------------
+   Progressive disclosure: chỉ một nút nổi khi khách cần, panel giới hạn
+   chiều cao để không che luồng chọn bài và có thể đóng bằng Escape. */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+.chat-widget { position: fixed; right: 16px; bottom: calc(16px + env(safe-area-inset-bottom)); z-index: 80; }
+.chat-launcher {
+  min-width: 76px;
+  height: 48px;
+  padding: 0 15px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  border: 1px solid oklch(80% 0.14 85 / 0.55);
+  border-radius: 999px;
+  background: linear-gradient(145deg, var(--gold), oklch(74% 0.15 62));
+  color: var(--gold-ink);
+  font: 700 13px/1 var(--sans);
+  box-shadow: 0 12px 30px rgba(0, 0, 0, .34);
+  cursor: pointer;
+  transition: transform 180ms ease, box-shadow 180ms ease, filter 180ms ease;
+}
+.chat-launcher:hover { transform: translateY(-2px); box-shadow: 0 16px 34px rgba(0, 0, 0, .4); filter: saturate(1.06); }
+.chat-launcher:active { transform: translateY(1px); }
+.chat-unread {
+  min-width: 19px;
+  height: 19px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: var(--red);
+  color: var(--red-ink);
+  font-size: 10px;
+  line-height: 19px;
+  text-align: center;
+}
+.chat-panel {
+  position: absolute;
+  right: 0;
+  bottom: 60px;
+  width: min(360px, calc(100vw - 28px));
+  max-height: min(520px, calc(100dvh - 112px));
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid oklch(100% 0 0 / .13);
+  border-radius: 18px;
+  background: linear-gradient(180deg, oklch(24% .04 325 / .98), oklch(17% .03 325 / .98));
+  box-shadow: 0 24px 60px rgba(0, 0, 0, .42);
+  transform-origin: bottom right;
+  animation: chat-panel-in 180ms cubic-bezier(.22, 1, .36, 1) both;
+}
+@keyframes chat-panel-in { from { opacity: 0; transform: translateY(8px) scale(.97); } to { opacity: 1; transform: none; } }
+.chat-panel-head { display: flex; align-items: flex-start; gap: 12px; padding: 15px 15px 12px; border-bottom: 1px solid var(--line); }
+.chat-panel-head h2 { color: var(--text-hi); font: 700 16px/1.2 var(--sans); }
+.chat-panel-head p { margin-top: 4px; color: var(--muted); font: 400 11.5px/1.35 var(--sans); }
+.chat-close {
+  width: 40px;
+  height: 40px;
+  margin: -5px -5px 0 auto;
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  border: 1px solid var(--line);
+  border-radius: 11px;
+  background: var(--fill);
+  color: var(--warm);
+  cursor: pointer;
+}
+.chat-close:hover { background: var(--fill-hover); color: var(--text-hi); }
+.chat-messages { min-height: 112px; max-height: 320px; padding: 12px 13px; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; scrollbar-color: oklch(100% 0 0 / .2) transparent; }
+.chat-empty { padding: 18px 8px; color: var(--muted); font: 400 12.5px/1.45 var(--sans); text-align: center; }
+.chat-message { max-width: 88%; margin: 0 0 10px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 12px 12px 12px 4px; background: oklch(100% 0 0 / .055); animation: chat-message-in 180ms ease both; }
+.chat-message:last-child { margin-bottom: 0; }
+@keyframes chat-message-in { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+.chat-message-name { display: block; margin-bottom: 3px; color: var(--gold); font: 700 11px/1.2 var(--sans); }
+.chat-message-text { color: var(--text); font: 400 13px/1.42 var(--sans); overflow-wrap: anywhere; }
+.chat-off-state { padding: 20px 14px; color: var(--muted); font: 400 13px/1.4 var(--sans); text-align: center; }
+.chat-form { display: flex; gap: 8px; padding: 10px 12px 12px; border-top: 1px solid var(--line); }
+.chat-form input { min-width: 0; flex: 1; height: 42px; padding: 0 11px; border: 1px solid var(--line); border-radius: 11px; outline: none; background: var(--fill); color: var(--text); font: 400 13px/1 var(--sans); }
+.chat-form input::placeholder { color: var(--faint); }
+.chat-form input:focus { border-color: oklch(80% 0.14 85 / .62); }
+.chat-form button { width: 42px; height: 42px; display: grid; place-items: center; flex-shrink: 0; border: 0; border-radius: 11px; background: var(--gold); color: var(--gold-ink); cursor: pointer; }
+.chat-form button:disabled { opacity: .55; cursor: wait; }
+.chat-status { min-height: 0; padding: 0 13px 10px; color: var(--muted); font: 400 11.5px/1.35 var(--sans); }
+.chat-status.bad { color: oklch(76% .13 30); }
+.chat-status.ok { color: var(--ok-sub); }
+
 /* ---- Desktop web layout ------------------------------------------------
    Mobile remains the default above. Larger screens get a three-part rhythm:
    discovery and search on the left, a sticky live queue on the right, and a

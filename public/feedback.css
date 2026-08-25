@@ -12,6 +12,7 @@ button { font: inherit; cursor: pointer; }
 .back-link { color: var(--warm); text-decoration: none; font-size: 13px; }
 .back-link:hover { color: var(--text-hi); }
 .page-head { display: flex; align-items: flex-end; justify-content: space-between; gap: 24px; margin-top: 34px; }
+.page-head-actions { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 10px; flex-shrink: 0; }
 .page-head-copy { display: flex; align-items: flex-start; gap: 18px; min-width: 0; }
 .feedback-brand-logo { width: 88px; height: 88px; flex: 0 0 auto; object-fit: contain; filter: drop-shadow(0 12px 22px oklch(8% 0.03 325 / 0.45)); }
 .eyebrow { margin: 0 0 8px; color: var(--gold); font-size: 11px; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; }
@@ -38,7 +39,7 @@ h1 { margin: 0; color: var(--text-hi); font: 700 clamp(32px, 6vw, 48px)/1.15 var
 .delete-btn { float: right; margin: -4px -4px 0 12px; width: 31px; height: 31px; border: 1px solid var(--line); border-radius: 50%; background: transparent; color: var(--warm); }
 .delete-btn:hover { border-color: oklch(68% .18 32 / .5); color: var(--red); }
 .empty { padding: 28px 0 12px; color: var(--muted); text-align: center; font-size: 14px; }
-@media (max-width: 560px) { .feedback-admin { width: min(100% - 28px, 920px); padding-top: 24px; } .page-head { align-items: flex-start; flex-direction: column; margin-top: 26px; } .page-head-copy { gap: 12px; } .feedback-brand-logo { width: 64px; height: 64px; } .toggle { align-self: stretch; } .stats { gap: 8px; } .stats article { padding: 14px 12px; } .stats strong { font-size: 23px; } .feedback-list-card { padding: 16px; } }
+@media (max-width: 560px) { .feedback-admin { width: min(100% - 28px, 920px); padding-top: 24px; } .page-head { align-items: flex-start; flex-direction: column; margin-top: 26px; } .page-head-copy { gap: 12px; } .feedback-brand-logo { width: 64px; height: 64px; } .page-head-actions { width: 100%; } .page-head-actions .toggle { flex: 1; min-width: 0; } .stats { gap: 8px; } .stats article { padding: 14px 12px; } .stats strong { font-size: 23px; } .feedback-list-card { padding: 16px; } }
 
 /* ---- Shared event-jukebox polish ------------------------------------- */
 html { color-scheme: dark; }

@@ -24,13 +24,137 @@ const feedbackName = document.getElementById("feedback-name");
 const feedbackContent = document.getElementById("feedback-content");
 const feedbackSubmit = document.getElementById("feedback-submit");
 const feedbackStatus = document.getElementById("feedback-status");
+const chatWidget = document.getElementById("chat-widget");
+const chatToggle = document.getElementById("chat-toggle");
+const chatPanel = document.getElementById("chat-panel");
+const chatClose = document.getElementById("chat-close");
+const chatMessagesEl = document.getElementById("chat-messages");
+const chatForm = document.getElementById("chat-form");
+const chatMessageEl = document.getElementById("chat-message");
+const chatSend = document.getElementById("chat-send");
+const chatStatus = document.getElementById("chat-status");
+const chatUnread = document.getElementById("chat-unread");
+const chatOffState = document.getElementById("chat-off-state");
 let resolvedYouTubeSong = null;
 let queueLimitOn = false;
 let queueLimit = 10;
 let requireName = false;
 let feedbackOn = true;
+let chatOn = true;
+let chatOpen = false;
+let chatUnreadCount = 0;
+let chatPending = false;
+let chatMessages = [];
 let queueWs = null;
 const pendingRemovals = new Set();
+
+function setChatStatus(message, kind = "") {
+  chatStatus.textContent = message;
+  chatStatus.className = `chat-status${kind ? ` ${kind}` : ""}`;
+}
+
+function renderChatUnread() {
+  chatUnread.textContent = chatUnreadCount > 99 ? "99+" : String(chatUnreadCount);
+  chatUnread.classList.toggle("hidden", chatUnreadCount === 0 || chatOpen);
+}
+
+function renderChatMessages() {
+  chatMessagesEl.innerHTML = "";
+  if (!chatMessages.length) {
+    chatMessagesEl.innerHTML = '<p class="chat-empty">Chưa có tin nhắn. Hãy bắt đầu cuộc trò chuyện!</p>';
+    return;
+  }
+  for (const message of chatMessages) {
+    const item = document.createElement("article");
+    item.className = "chat-message";
+    const name = document.createElement("strong");
+    name.className = "chat-message-name";
+    name.textContent = message.name;
+    const text = document.createElement("p");
+    text.className = "chat-message-text";
+    text.textContent = message.text;
+    item.append(name, text);
+    chatMessagesEl.appendChild(item);
+  }
+  chatMessagesEl.scrollTop = chatMessagesEl.scrollHeight;
+}
+
+function appendChatMessage(message, { notify = true } = {}) {
+  if (!message || typeof message.name !== "string" || typeof message.text !== "string") return;
+  chatMessages.push({ name: message.name.slice(0, 40), text: message.text.slice(0, 280) });
+  if (chatMessages.length > 40) chatMessages = chatMessages.slice(-40);
+  renderChatMessages();
+  if (notify && !chatOpen) {
+    chatUnreadCount += 1;
+    renderChatUnread();
+  }
+}
+
+function setChatOpen(open) {
+  if (!chatOn) return;
+  chatOpen = open;
+  chatPanel.classList.toggle("hidden", !open);
+  chatToggle.setAttribute("aria-expanded", String(open));
+  if (open) {
+    chatUnreadCount = 0;
+    renderChatUnread();
+    window.setTimeout(() => {
+      if (chatOpen && chatOn) chatMessageEl.focus();
+    }, 0);
+  } else {
+    renderChatUnread();
+    chatToggle.focus();
+  }
+}
+
+function renderChatSettings() {
+  if (!chatOn) {
+    chatOpen = false;
+    chatPanel.classList.add("hidden");
+    chatWidget.classList.add("hidden");
+    if (chatWidget.contains(document.activeElement)) document.activeElement.blur();
+    chatToggle.setAttribute("aria-expanded", "false");
+    chatOffState.classList.remove("hidden");
+    return;
+  }
+  chatWidget.classList.remove("hidden");
+  chatOffState.classList.add("hidden");
+  chatForm.classList.remove("hidden");
+  renderChatUnread();
+}
+
+function sendChatMessage(event) {
+  event.preventDefault();
+  if (chatPending || !chatOn) return;
+  if (!queueWs || queueWs.readyState !== WebSocket.OPEN) {
+    setChatStatus("Mất kết nối chat, đang thử kết nối lại…", "bad");
+    return;
+  }
+  const name = nameEl.value.trim();
+  const text = chatMessageEl.value.trim();
+  if (!name) {
+    setChatStatus("Nhập tên ở ô Tên order để mọi người nhận ra bạn.", "bad");
+    nameEl.focus();
+    return;
+  }
+  if (!text) {
+    setChatStatus("Hãy nhập nội dung tin nhắn.", "bad");
+    chatMessageEl.focus();
+    return;
+  }
+  localStorage.setItem("guestName", name);
+  chatPending = true;
+  chatSend.disabled = true;
+  setChatStatus("");
+  queueWs.send(JSON.stringify({ type: "chatSend", name, text }));
+}
+
+chatToggle.addEventListener("click", () => setChatOpen(!chatOpen));
+chatClose.addEventListener("click", () => setChatOpen(false));
+chatForm.addEventListener("submit", sendChatMessage);
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape" && chatOpen) setChatOpen(false);
+});
 
 function updateMarqueeTitle(el) {
   if (!el) return;
@@ -648,9 +772,32 @@ function connectWs() {
       if (typeof msg.queueLimit === "number") queueLimit = msg.queueLimit;
       if (typeof msg.requireName === "boolean") requireName = msg.requireName;
       if (typeof msg.feedbackOn === "boolean") feedbackOn = msg.feedbackOn;
+      if (typeof msg.chatOn === "boolean") chatOn = msg.chatOn;
       renderRequestSettings();
       renderFeedback();
+      renderChatSettings();
       renderQueue(msg.state);
+    } else if (msg.type === "chatHistory") {
+      chatMessages = [];
+      for (const message of Array.isArray(msg.messages) ? msg.messages.slice(-40) : []) {
+        appendChatMessage(message, { notify: false });
+      }
+      chatUnreadCount = 0;
+      renderChatUnread();
+    } else if (msg.type === "chatMessage") {
+      appendChatMessage(msg.message);
+    } else if (msg.type === "chatSendResult") {
+      chatPending = false;
+      chatSend.disabled = false;
+      if (msg.ok) {
+        chatMessageEl.value = "";
+        setChatStatus("Đã gửi", "ok");
+        window.setTimeout(() => {
+          if (chatStatus.textContent === "Đã gửi") setChatStatus("");
+        }, 1800);
+      } else {
+        setChatStatus(msg.reason || "Không thể gửi tin nhắn.", "bad");
+      }
     } else if (msg.type === "removeOwnResult") {
       pendingRemovals.delete(msg.id);
       if (msg.ok) toast("ok", "✓", "Đã xóa khỏi hàng đợi.");
