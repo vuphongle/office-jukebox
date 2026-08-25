@@ -137,7 +137,7 @@ html, body {
 #now-channel { font: 500 19px/1.4 var(--sans); color: var(--warm); }
 
 /* ---- Điều khiển ---- */
-#controls { display: flex; align-items: center; gap: 14px; }
+#controls { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
 #controls button {
   width: 56px;
   height: 56px;
@@ -317,6 +317,7 @@ html, body {
   font: 700 13px/26px var(--sans);
   text-align: center;
 }
+.count.limit-reached { background: var(--gold); color: var(--gold-ink); }
 #queue {
   list-style: none;
   overflow-y: auto;
