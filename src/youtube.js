@@ -1,8 +1,8 @@
 // Truy cập YouTube không cần API key:
 //  - searchYouTube(): gọi API tìm kiếm nội bộ của YouTube Music (InnerTube,
-//    cùng endpoint JSON mà web app music.youtube.com sử dụng), lọc theo danh mục
-//    "Songs". Kết quả chỉ gồm nhạc với metadata nghệ sĩ/album thực; videoId trả
-//    về vẫn phát trong iframe YouTube thông thường như trước.
+//    cùng endpoint JSON mà web app music.youtube.com sử dụng). Tìm kiếm trực tiếp
+//    ưu tiên context giống web, sau đó dùng bộ lọc "Songs" để bổ sung kết quả.
+//    Các tab khám phá vẫn dùng riêng bộ lọc "Songs".
 //  - checkPlayable(): dùng endpoint oEmbed để từ chối video đã xóa/riêng tư
 //    trước khi đưa vào hàng đợi. (Video tắt nhúng vẫn trả về 200 ở đây, nên
 //    trình phát host CŨNG tự bỏ qua các mã lỗi iframe 101/150.)
@@ -10,6 +10,9 @@
 const UA =
   "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) " +
   "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36";
+const SEARCH_UA =
+  "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) " +
+  "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/151.0.0.0 Safari/537.36";
 
 // Cookie SOCS/CONSENT tránh màn hình chấp thuận "trước khi tiếp tục" của EU,
 // vốn sẽ thay ytInitialData bằng trang xen kẽ.
@@ -17,6 +20,22 @@ const COMMON_HEADERS = {
   "User-Agent": UA,
   "Accept-Language": "en-US,en;q=0.9",
   Cookie: "SOCS=CAI;CONSENT=YES+1",
+};
+
+const SEARCH_HEADERS = {
+  ...COMMON_HEADERS,
+  "User-Agent": SEARCH_UA,
+  "Accept-Language": "vi-VN,vi;q=0.9,en-US;q=0.8,en;q=0.7",
+  "Content-Type": "application/json",
+  Origin: "https://music.youtube.com",
+  Referer: "https://music.youtube.com/",
+};
+
+const SEARCH_CLIENT = {
+  clientName: "WEB_REMIX",
+  clientVersion: "1.20260818.08.00",
+  hl: "vi",
+  gl: "VN",
 };
 
 function pickThumbnail(thumbs) {
@@ -27,66 +46,155 @@ function pickThumbnail(thumbs) {
 }
 
 // Bộ lọc tìm kiếm InnerTube cho danh mục "Songs" (cùng giá trị ytmusicapi dùng).
-const SONGS_FILTER = "EgWKAQIIAWoMEA4QChADEAQQCRAF";
+export const SONGS_FILTER = "EgWKAQIIAWoMEA4QChADEAQQCRAF";
 
-export async function searchYouTube(query, { limit = 12, timeoutMs = 8000 } = {}) {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
-  let data;
-  try {
-    const res = await fetch("https://music.youtube.com/youtubei/v1/search?prettyPrint=false", {
-      method: "POST",
-      headers: {
-        ...COMMON_HEADERS,
-        "Content-Type": "application/json",
-        Origin: "https://music.youtube.com",
-        Referer: "https://music.youtube.com/",
-      },
-      body: JSON.stringify({
-        context: {
-          client: { clientName: "WEB_REMIX", clientVersion: "1.20250101.01.00", hl: "en" },
-        },
-        query,
-        params: SONGS_FILTER,
-      }),
-      signal: controller.signal,
-    });
-    if (!res.ok) throw new Error(`YouTube Music phản hồi ${res.status}`);
-    data = await res.json();
-  } finally {
-    clearTimeout(timer);
+export function buildSearchBody(query, { mode = "web" } = {}) {
+  const body = {
+    context: { client: { ...SEARCH_CLIENT } },
+    query,
+  };
+  if (mode === "songs") body.params = SONGS_FILTER;
+  return body;
+}
+
+function walkMusicItems(value, visit) {
+  if (!value || typeof value !== "object") return;
+  if (Array.isArray(value)) {
+    for (const item of value) walkMusicItems(item, visit);
+    return;
   }
+  if (value.musicResponsiveListItemRenderer) visit(value.musicResponsiveListItemRenderer);
+  for (const child of Object.values(value)) walkMusicItems(child, visit);
+}
 
+function walkSongsItems(data, visit) {
   const sections =
     data?.contents?.tabbedSearchResultsRenderer?.tabs?.[0]?.tabRenderer?.content
       ?.sectionListRenderer?.contents || [];
-
-  const results = [];
   for (const section of sections) {
     for (const item of section?.musicShelfRenderer?.contents || []) {
-      const r = item.musicResponsiveListItemRenderer;
-      const videoId =
-        r?.playlistItemData?.videoId ||
-        r?.overlay?.musicItemThumbnailOverlayRenderer?.content?.musicPlayButtonRenderer
-          ?.playNavigationEndpoint?.watchEndpoint?.videoId;
-      if (!videoId) continue;
-      // flexColumns: [0] = tiêu đề, [1] = "nghệ sĩ • album • thời lượng" dưới dạng runs.
-      const cols = (r.flexColumns || []).map(
-        (c) => c.musicResponsiveListItemFlexColumnRenderer?.text?.runs || []
-      );
-      const byline = cols[1] || [];
-      const duration = byline.map((run) => run.text).filter((t) => /^\d+:\d\d/.test(t)).pop();
-      results.push({
-        videoId,
-        title: cols[0]?.map((run) => run.text).join("") || "(không có tiêu đề)",
-        channel: byline[0]?.text || "Không rõ",
-        duration: duration || "",
-        thumbnail: pickThumbnail(r.thumbnail?.musicThumbnailRenderer?.thumbnail?.thumbnails),
-      });
-      if (results.length >= limit) return results;
+      if (item?.musicResponsiveListItemRenderer) visit(item.musicResponsiveListItemRenderer);
     }
   }
+}
+
+function musicVideoType(renderer) {
+  return renderer?.overlay?.musicItemThumbnailOverlayRenderer?.content?.musicPlayButtonRenderer
+    ?.playNavigationEndpoint?.watchEndpoint?.watchEndpointMusicSupportedConfigs
+    ?.watchEndpointMusicConfig?.musicVideoType;
+}
+
+function accessibilityArtist(renderer, title) {
+  const label =
+    renderer?.overlay?.musicItemThumbnailOverlayRenderer?.content?.musicPlayButtonRenderer
+      ?.accessibilityPlayData?.accessibilityData?.label || "";
+  const prefix = `${title} - `;
+  const index = label.lastIndexOf(prefix);
+  return index >= 0 ? label.slice(index + prefix.length).trim() : "";
+}
+
+function isWebMusicResult(renderer, byline) {
+  // The web search mixes songs, official music videos, UGC, podcasts, timers,
+  // and other media in the same shelf. Keep songs and official music videos;
+  // this recovers web-ranked tracks without filling the queue with podcasts.
+  const kind = byline
+    .map((run) => String(run.text || "").trim())
+    .find((text, index) => text && text !== "•" && !byline[index]?.navigationEndpoint);
+  return /^(bài hát|song)$/i.test(kind || "") || musicVideoType(renderer) === "MUSIC_VIDEO_TYPE_OMV";
+}
+
+export function parseSearchResults(data, { limit = 12, webLike = false } = {}) {
+  const results = [];
+  const seen = new Set();
+  const visit = (renderer) => {
+    if (results.length >= limit) return;
+    const videoId =
+      renderer.playlistItemData?.videoId ||
+      renderer.overlay?.musicItemThumbnailOverlayRenderer?.content?.musicPlayButtonRenderer
+        ?.playNavigationEndpoint?.watchEndpoint?.videoId;
+    if (!videoId || seen.has(videoId)) return;
+
+    const cols = (renderer.flexColumns || []).map(
+      (column) => column.musicResponsiveListItemFlexColumnRenderer?.text?.runs || []
+    );
+    const byline = cols[1] || [];
+    if (webLike && !isWebMusicResult(renderer, byline)) return;
+
+    const duration = byline.map((run) => run.text).filter((text) => /^\d+:\d\d/.test(text)).pop();
+    const artistRun = byline.find((run) => run.navigationEndpoint?.browseEndpoint);
+    const title = cols[0]?.map((run) => run.text).join("") || "(không có tiêu đề)";
+    const channel = artistRun?.text || accessibilityArtist(renderer, title) || byline[0]?.text;
+    seen.add(videoId);
+    results.push({
+      videoId,
+      title,
+      channel: channel || "Không rõ",
+      duration: duration || "",
+      thumbnail: pickThumbnail(renderer.thumbnail?.musicThumbnailRenderer?.thumbnail?.thumbnails),
+    });
+  };
+  if (webLike) walkMusicItems(data, visit);
+  else walkSongsItems(data, visit);
   return results;
+}
+
+export function mergeSearchResults(primary, fallback, limit = 12) {
+  const merged = [];
+  const seen = new Set();
+  for (const result of [...primary, ...fallback]) {
+    if (!result?.videoId || seen.has(result.videoId)) continue;
+    seen.add(result.videoId);
+    merged.push(result);
+    if (merged.length >= limit) break;
+  }
+  return merged;
+}
+
+async function fetchSearchData(query, { mode, timeoutMs, fetchImpl = globalThis.fetch }) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const res = await fetchImpl("https://music.youtube.com/youtubei/v1/search?prettyPrint=false", {
+      method: "POST",
+      headers: SEARCH_HEADERS,
+      body: JSON.stringify(buildSearchBody(query, { mode })),
+      signal: controller.signal,
+    });
+    if (!res.ok) throw new Error(`YouTube Music phản hồi ${res.status}`);
+    return await res.json();
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+export async function searchYouTube(
+  query,
+  { limit = 12, timeoutMs = 8000, mode = "web", fetchImpl = globalThis.fetch } = {}
+) {
+  if (mode === "songs") {
+    const data = await fetchSearchData(query, { mode, timeoutMs, fetchImpl });
+    return parseSearchResults(data, { limit });
+  }
+
+  let primaryResults = [];
+  let primaryError;
+  try {
+    const data = await fetchSearchData(query, { mode: "web", timeoutMs, fetchImpl });
+    primaryResults = parseSearchResults(data, { limit, webLike: true });
+  } catch (err) {
+    primaryError = err;
+  }
+
+  if (primaryResults.length >= limit) return primaryResults;
+
+  try {
+    const fallbackData = await fetchSearchData(query, { mode: "songs", timeoutMs, fetchImpl });
+    const fallbackResults = parseSearchResults(fallbackData, { limit });
+    return mergeSearchResults(primaryResults, fallbackResults, limit);
+  } catch (fallbackError) {
+    if (primaryError && primaryResults.length === 0) throw primaryError;
+    return primaryResults;
+  }
 }
 
 // YouTube Music exposes the country chart page through this browse contract.
