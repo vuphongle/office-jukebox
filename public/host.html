@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Event Music — Now Playing</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Serif+TC:wght@600;700&family=Noto+Sans+TC:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/host.css" />
+</head>
+<body>
+  <!-- One click here unlocks browser autoplay so audio reaches the AV system. -->
+  <div id="start-overlay">
+    <div class="start-card">
+      <div class="start-logo">🎶</div>
+      <h1>Event Music System</h1>
+      <p>Click to start the jukebox.</p>
+      <button id="start-btn">▶  Start</button>
+      <small>Make sure this window's audio goes to the venue's AV system.</small>
+    </div>
+  </div>
+
+  <main id="stage" class="hidden">
+    <section class="player-pane">
+      <div id="player-wrap">
+        <div id="player"></div>
+        <div id="idle" class="hidden">
+          <div class="idle-emoji">🎧</div>
+          <p>暫時未有歌曲</p>
+          <p class="idle-sub">掃描 QR code，點播第一首歌！Scan the QR code to add the first one!</p>
+        </div>
+      </div>
+      <div id="now-meta">
+        <div id="now-label" class="now-label hidden">
+          <span class="eq"><span></span><span></span><span></span></span>
+          <span class="np-zh">現正播放</span>
+          <span class="np-en">Now Playing</span>
+        </div>
+        <div id="now-title">—</div>
+        <div id="now-channel"></div>
+      </div>
+      <div id="controls">
+        <button id="playpause" title="Play / Pause (space)">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="5" width="4.5" height="14" rx="1.5"></rect><rect x="13.5" y="5" width="4.5" height="14" rx="1.5"></rect></svg>
+        </button>
+        <button id="skip" title="Skip (n)">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><path d="M6 5v14l10-7z"></path><rect x="17" y="5" width="2.6" height="14" rx="1"></rect></svg>
+        </button>
+        <button id="filter-toggle" class="pill" title="內容過濾 — 點按循環：關 → 開 → 嚴格（只限老少咸宜）">過濾</button>
+        <span id="filter-hint" class="filter-hint hidden">no LLM key — accepts all</span>
+        <button id="cooldown-toggle" class="pill" title="Per-guest request cooldown — click to change">冷卻</button>
+        <button id="context-toggle" class="pill" title="活動場景 — tell the AI filter what kind of event this is">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 21s-6.5-4.3-6.5-10a6.5 6.5 0 0113 0c0 5.7-6.5 10-6.5 10z"></path><circle cx="12" cy="10.5" r="2.4"></circle></svg>
+          <span>場景</span>
+        </button>
+        <div class="vol">
+          <svg width="18" height="18" viewBox="0 0 24 24"><path d="M4 9.5v5h3.6l4.9 4V5.5l-4.9 4H4z" fill="currentColor"></path><path d="M16.2 9.3a4.3 4.3 0 010 5.9" stroke="currentColor" stroke-width="1.6" fill="none" stroke-linecap="round"></path><path d="M18.6 6.8a8 8 0 010 10.9" stroke="currentColor" stroke-width="1.6" fill="none" stroke-linecap="round"></path></svg>
+          <input id="volume" type="range" min="0" max="100" value="100" />
+        </div>
+      </div>
+      <div id="context-row" class="context-row hidden">
+        <input id="context-input" type="text" maxlength="300"
+               placeholder="這是什麼活動？例：a secondary school graduation dinner in Hong Kong / a wedding banquet…" />
+        <button id="context-save">儲存</button>
+      </div>
+    </section>
+
+    <aside class="sidebar">
+      <div class="qr-card">
+        <div class="qr-title">掃碼點歌</div>
+        <div class="qr-sub">Scan to add a song</div>
+        <div class="qr-frame"><img id="qr" alt="QR code" /></div>
+        <div id="guest-url" class="guest-url"></div>
+      </div>
+      <div class="queue-card">
+        <div class="queue-head">
+          接下來 <small>Up Next</small> <span id="queue-count" class="count">0</span>
+        </div>
+        <ul id="queue"></ul>
+      </div>
+    </aside>
+  </main>
+
+  <script src="https://www.youtube.com/iframe_api"></script>
+  <script src="/host.js"></script>
+</body>
+</html>

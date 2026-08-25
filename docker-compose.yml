@@ -1,0 +1,28 @@
+services:
+  event-music:
+    build: .
+    container_name: event-music
+    restart: unless-stopped
+
+    # Join the reverse proxy's network so it can route to this container by name
+    # (event-music:45416). The proxy terminates TLS and serves the public domain.
+    networks:
+      - reverseproxy
+    expose:
+      - "${PORT:-45416}"
+
+    # Host-page settings (filter/mode/cooldown/event context) persist here
+    # across rebuilds and restarts.
+    volumes:
+      - ./data:/app/data
+
+    env_file:
+      - .env
+    environment:
+      PORT: ${PORT:-45416}
+      # Public address the QR code points guests to (your reverse-proxy domain).
+      PUBLIC_URL: ${PUBLIC_URL:-}
+
+networks:
+  reverseproxy:
+    external: true
