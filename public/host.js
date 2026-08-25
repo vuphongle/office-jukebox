@@ -11,6 +11,9 @@ let moderationMode = "default"; // "default" | "strict" (các giá trị giao th
 let moderationConfigured = false;
 let cooldownSeconds = 15;
 let eventContext = "";
+let queueLimitOn = false;
+let queueLimit = 10;
+let requireName = false;
 let hostToken = null; // mã điều khiển WS (chỉ cấp cho trang host đã xác thực)
 let ws = null;
 let draggedQueueId = null;
@@ -43,10 +46,15 @@ function connectWs() {
       if (typeof msg.moderationMode === "string") moderationMode = msg.moderationMode;
       if (typeof msg.cooldownSeconds === "number") cooldownSeconds = msg.cooldownSeconds;
       if (typeof msg.eventContext === "string") eventContext = msg.eventContext;
+      if (typeof msg.queueLimitOn === "boolean") queueLimitOn = msg.queueLimitOn;
+      if (typeof msg.queueLimit === "number") queueLimit = msg.queueLimit;
+      if (typeof msg.requireName === "boolean") requireName = msg.requireName;
       render();
       renderFilter();
       renderCooldown();
       renderContext();
+      renderQueueLimit();
+      renderRequireName();
       syncPlayer();
     }
   };
@@ -221,6 +229,7 @@ function render() {
 
   const queue = latestState.queue || [];
   document.getElementById("queue-count").textContent = queue.length;
+  document.getElementById("queue-count").classList.toggle("limit-reached", queueLimitOn && queue.length >= queueLimit);
   const ul = document.getElementById("queue");
   // Server state is authoritative. Cancel a drag if another state update
   // rebuilds the list while the pointer is still down.
@@ -275,6 +284,18 @@ function renderCooldown() {
   btn.classList.toggle("on", cooldownSeconds > 0);
 }
 
+function renderQueueLimit() {
+  const btn = document.getElementById("queue-limit-toggle");
+  btn.innerHTML = `<span>Hàng đợi: ${queueLimitOn ? queueLimit : "Tắt"}</span>`;
+  btn.classList.toggle("on", queueLimitOn);
+}
+
+function renderRequireName() {
+  const btn = document.getElementById("require-name-toggle");
+  btn.innerHTML = `<span>Tên order: ${requireName ? "Bắt buộc" : "Tắt"}</span>`;
+  btn.classList.toggle("on", requireName);
+}
+
 function renderContext() {
   const input = document.getElementById("context-input");
   // Không ghi đè nội dung host đang nhập bằng dữ liệu phát lại từ máy chủ.
@@ -312,6 +333,19 @@ function wireControls() {
   document.getElementById("cooldown-toggle").onclick = () => {
     const i = COOLDOWN_STEPS.indexOf(cooldownSeconds);
     send({ type: "setCooldown", seconds: COOLDOWN_STEPS[(i + 1) % COOLDOWN_STEPS.length] });
+  };
+  const QUEUE_LIMIT_STEPS = [5, 10, 15, 20];
+  document.getElementById("queue-limit-toggle").onclick = () => {
+    if (!queueLimitOn) {
+      send({ type: "setQueueLimit", on: true, limit: QUEUE_LIMIT_STEPS[0] });
+      return;
+    }
+    const i = QUEUE_LIMIT_STEPS.indexOf(queueLimit);
+    if (i === QUEUE_LIMIT_STEPS.length - 1) send({ type: "setQueueLimit", on: false, limit: queueLimit });
+    else send({ type: "setQueueLimit", on: true, limit: QUEUE_LIMIT_STEPS[Math.max(0, i + 1)] });
+  };
+  document.getElementById("require-name-toggle").onclick = () => {
+    send({ type: "setRequireName", on: !requireName });
   };
   const volEl = document.getElementById("volume");
   const paintVol = () => volEl.style.setProperty("--vol", `${volEl.value}%`);
@@ -351,7 +385,12 @@ async function loadInfo() {
     filterOn = !!info.filterOn;
     if (typeof info.moderationMode === "string") moderationMode = info.moderationMode;
     moderationConfigured = !!info.moderationConfigured;
+    queueLimitOn = !!info.queueLimitOn;
+    if (typeof info.queueLimit === "number") queueLimit = info.queueLimit;
+    requireName = !!info.requireName;
     renderFilter();
+    renderQueueLimit();
+    renderRequireName();
   } catch (err) {
     document.getElementById("guest-url").textContent = "Không thể tải liên kết dành cho khách";
   }
