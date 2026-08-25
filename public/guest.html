@@ -46,6 +46,34 @@
   <button id="back-to-explore" class="back-to-explore hidden">← Quay lại khám phá</button>
   <div id="status" class="status hidden"></div>
   <ul id="results"></ul>
+  <section id="youtube-link-tool" class="youtube-link-tool">
+    <div class="youtube-link-head">
+      <div class="youtube-link-copy">
+        <span class="youtube-link-icon" aria-hidden="true">▶</span>
+        <div>
+          <strong>Không tìm thấy bài bạn muốn?</strong>
+          <span>Dán link YouTube để thêm trực tiếp</span>
+        </div>
+      </div>
+      <button id="show-youtube-link" class="link-toggle" type="button">Dán link</button>
+    </div>
+    <div id="youtube-link-panel" class="youtube-link-panel hidden">
+      <form id="youtube-link-form" class="youtube-link-form" novalidate>
+        <input id="youtube-link-input" type="url" inputmode="url" autocomplete="off"
+               placeholder="https://youtu.be/..." aria-label="Link YouTube" />
+        <button id="youtube-link-submit" type="submit">Kiểm tra</button>
+      </form>
+      <div id="youtube-link-status" class="youtube-link-status" role="status" aria-live="polite"></div>
+      <div id="youtube-link-preview" class="youtube-link-preview hidden">
+        <img id="youtube-link-thumb" alt="" />
+        <div class="r-meta">
+          <div id="youtube-link-title" class="r-title"></div>
+          <div id="youtube-link-sub" class="r-sub"></div>
+        </div>
+        <button id="youtube-link-add" class="add-btn" type="button" title="Thêm bài hát">+</button>
+      </div>
+    </div>
+  </section>
   <button id="more" class="more hidden">
     Thêm bài hát
     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 9l7 7 7-7"></path></svg>

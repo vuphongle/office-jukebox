@@ -18,7 +18,14 @@ import express from "express";
 import { WebSocketServer } from "ws";
 import QRCode from "qrcode";
 
-import { searchYouTube, fetchVietnamChartHits, checkPlayable, fetchVideoDetails } from "./src/youtube.js";
+import {
+  searchYouTube,
+  fetchVietnamChartHits,
+  checkPlayable,
+  fetchVideoDetails,
+  parseYouTubeVideoId,
+  fetchYouTubeMetadata,
+} from "./src/youtube.js";
 import { moderate, moderationConfigured } from "./src/moderation.js";
 import { JukeboxState } from "./src/state.js";
 import { detectLanIp } from "./src/net.js";
@@ -189,6 +196,29 @@ app.get("/api/search", async (req, res) => {
     console.error("[search]", err.message);
     res.status(502).json({ error: "Tìm kiếm thất bại. Vui lòng thử lại." });
   }
+});
+
+// Nhận link YouTube do khách tự dán, lấy metadata để hiển thị trước khi thêm.
+app.post("/api/youtube/resolve", async (req, res) => {
+  const rawUrl = typeof req.body?.url === "string" ? req.body.url.trim() : "";
+  if (!rawUrl) return res.status(400).json({ ok: false, reason: "Vui lòng dán link YouTube." });
+
+  let parsedUrl;
+  try {
+    parsedUrl = new URL(rawUrl);
+  } catch {
+    return res.status(400).json({ ok: false, reason: "Link YouTube không đúng định dạng." });
+  }
+  const host = parsedUrl.hostname.toLowerCase();
+  if (!["youtube.com", "www.youtube.com", "m.youtube.com", "music.youtube.com", "youtu.be"].includes(host)) {
+    return res.status(400).json({ ok: false, reason: "Hiện tại chỉ hỗ trợ link YouTube." });
+  }
+
+  const videoId = parseYouTubeVideoId(rawUrl);
+  if (!videoId) return res.status(400).json({ ok: false, reason: "Link YouTube không đúng định dạng." });
+  const song = await fetchYouTubeMetadata(videoId);
+  if (!song) return res.status(502).json({ ok: false, reason: "Không thể lấy thông tin video này. Vui lòng thử lại." });
+  res.json({ ok: true, song });
 });
 
 // Khởi tạo trang host, phần 2: token điều khiển WS (được bảo vệ bằng Basic Auth,
