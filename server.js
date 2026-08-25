@@ -398,7 +398,13 @@ app.patch("/api/feedback/settings", requireHostAuth, (req, res) => {
   if (hasFeedbackSetting) feedbackOn = req.body.on;
   if (hasChatSetting) {
     chatOn = req.body.chatOn;
-    if (!chatOn) chatMessages.length = 0;
+    if (!chatOn) {
+      chatMessages.length = 0;
+      const message = JSON.stringify({ type: "chatCleared" });
+      for (const client of wss.clients) {
+        if (client.readyState === 1) client.send(message);
+      }
+    }
   }
   saveSettings();
   broadcastState();
@@ -506,6 +512,11 @@ wss.on("connection", (ws) => {
         ws.send(JSON.stringify({ type: "chatSendResult", ok: false, reason: "Tính năng chat hiện đang tắt." }));
         return;
       }
+      const isAdmin = msg.admin === true;
+      if (isAdmin && !ws.isHost) {
+        ws.send(JSON.stringify({ type: "chatSendResult", ok: false, reason: "Bạn không có quyền gửi tin nhắn admin." }));
+        return;
+      }
       const parsed = parseChatInput(msg);
       if (!parsed.ok) {
         ws.send(JSON.stringify({ type: "chatSendResult", ok: false, reason: parsed.reason }));
@@ -522,6 +533,7 @@ wss.on("connection", (ws) => {
         name: parsed.name,
         text: parsed.text,
         senderId: (msg.clientId || "").toString().slice(0, 64),
+        isAdmin,
         createdAt: new Date().toISOString(),
       };
       pushRecentChat(chatMessages, message);
