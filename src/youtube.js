@@ -89,15 +89,35 @@ export async function searchYouTube(query, { limit = 12, timeoutMs = 8000 } = {}
   return results;
 }
 
-// Playlist bảng xếp hạng riêng của YouTube "Daily Top Music Videos - Hong Kong"
-// — gần nhất với danh sách hit HK chính thức (YT Music không có bảng xếp hạng
-// bài hát cho HK).
-const HK_CHART_PLAYLIST = "VLPL4fGSI1pDJn6mlLn-G3Wy5IkOy0c6vAWp";
+// YouTube Music exposes the country chart page through this browse contract.
+// The page returns the current chart playlist for the selected country.
+const VIETNAM_CHART_BROWSE_ID = "FEmusic_charts";
+const VIETNAM_CHART_COUNTRY = "VN";
 
-// Các hit hiện tại trên bảng xếp hạng Hồng Kông, cùng cấu trúc với kết quả
-// searchYouTube(). Các mục là video âm nhạc (bảng xếp hạng theo dõi chúng);
-// cách phát cũng giống nhau.
-export async function fetchChartHits({ limit = 40, timeoutMs = 8000 } = {}) {
+function browseSections(data) {
+  return (
+    data?.contents?.singleColumnBrowseResultsRenderer?.tabs?.[0]?.tabRenderer?.content
+      ?.sectionListRenderer?.contents ||
+    data?.contents?.twoColumnBrowseResultsRenderer?.secondaryContents?.sectionListRenderer
+      ?.contents ||
+    []
+  );
+}
+
+function chartPlaylistBrowseId(data) {
+  for (const section of browseSections(data)) {
+    for (const item of section?.musicCarouselShelfRenderer?.contents || []) {
+      const renderer = item?.musicTwoRowItemRenderer;
+      const browseId =
+        renderer?.navigationEndpoint?.browseEndpoint?.browseId ||
+        renderer?.onTap?.innertubeCommand?.browseEndpoint?.browseId;
+      if (browseId?.startsWith("VLPL")) return browseId;
+    }
+  }
+  return null;
+}
+
+async function browseYouTubeMusic(body, timeoutMs) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   let data;
@@ -110,12 +130,7 @@ export async function fetchChartHits({ limit = 40, timeoutMs = 8000 } = {}) {
         Origin: "https://music.youtube.com",
         Referer: "https://music.youtube.com/",
       },
-      body: JSON.stringify({
-        context: {
-          client: { clientName: "WEB_REMIX", clientVersion: "1.20250101.01.00", hl: "en", gl: "HK" },
-        },
-        browseId: HK_CHART_PLAYLIST,
-      }),
+      body: JSON.stringify(body),
       signal: controller.signal,
     });
     if (!res.ok) throw new Error(`YouTube Music phản hồi ${res.status}`);
@@ -123,13 +138,47 @@ export async function fetchChartHits({ limit = 40, timeoutMs = 8000 } = {}) {
   } finally {
     clearTimeout(timer);
   }
+  return data;
+}
 
-  const sections =
-    data?.contents?.singleColumnBrowseResultsRenderer?.tabs?.[0]?.tabRenderer?.content
-      ?.sectionListRenderer?.contents ||
-    data?.contents?.twoColumnBrowseResultsRenderer?.secondaryContents?.sectionListRenderer
-      ?.contents ||
-    [];
+// Load the current Vietnam chart playlist and return music video items in the
+// same shape as searchYouTube(). The chart page is queried first so its
+// rotating playlist ID does not need to be hard-coded in the application.
+export async function fetchVietnamChartHits({ limit = 40, timeoutMs = 8000 } = {}) {
+  const chartData = await browseYouTubeMusic(
+    {
+      context: {
+        client: {
+          clientName: "WEB_REMIX",
+          clientVersion: "1.20250101.01.00",
+          hl: "en",
+          gl: VIETNAM_CHART_COUNTRY,
+        },
+      },
+      browseId: VIETNAM_CHART_BROWSE_ID,
+      formData: { selectedValues: [VIETNAM_CHART_COUNTRY] },
+    },
+    timeoutMs
+  );
+  const playlistBrowseId = chartPlaylistBrowseId(chartData);
+  if (!playlistBrowseId) return [];
+
+  const data = await browseYouTubeMusic(
+    {
+      context: {
+        client: {
+          clientName: "WEB_REMIX",
+          clientVersion: "1.20250101.01.00",
+          hl: "en",
+          gl: VIETNAM_CHART_COUNTRY,
+        },
+      },
+      browseId: playlistBrowseId,
+    },
+    timeoutMs
+  );
+
+  const sections = browseSections(data);
 
   const results = [];
   for (const section of sections) {

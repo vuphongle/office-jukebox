@@ -18,7 +18,7 @@ import express from "express";
 import { WebSocketServer } from "ws";
 import QRCode from "qrcode";
 
-import { searchYouTube, fetchChartHits, checkPlayable, fetchVideoDetails } from "./src/youtube.js";
+import { searchYouTube, fetchVietnamChartHits, checkPlayable, fetchVideoDetails } from "./src/youtube.js";
 import { moderate, moderationConfigured } from "./src/moderation.js";
 import { JukeboxState } from "./src/state.js";
 import { detectLanIp } from "./src/net.js";
@@ -145,10 +145,11 @@ app.get("/api/browse", async (req, res) => {
   const hit = browseCache.get(q);
   if (hit && Date.now() - hit.at < BROWSE_TTL_MS) return res.json({ results: hit.results });
   try {
-    // "__hk_hits" là sentinel từ tab Tất cả trên trang khách: dùng bảng xếp hạng
-    // YouTube Hồng Kông thay cho tìm kiếm văn bản (không thể xếp hạng theo vùng).
+    // "__vn_hits" is the All-tab sentinel: use the Vietnam chart instead of text search.
     const fetched =
-      q === "__hk_hits" ? await fetchChartHits({ limit: 40 }) : await searchYouTube(q, { limit: 40 });
+      q === "__vn_hits"
+        ? await fetchVietnamChartHits({ limit: 40 })
+        : await searchYouTube(q, { limit: 40 });
     const results = fetched
       .filter((r) => durationSeconds(r.duration) <= MAX_SINGLE_SECONDS)
       .slice(0, 20);
