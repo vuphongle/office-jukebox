@@ -66,7 +66,7 @@ function renderChatMessages() {
   }
   for (const message of chatMessages) {
     const item = document.createElement("article");
-    item.className = "chat-message";
+    item.className = `chat-message${message.senderId === clientId ? " is-own" : ""}`;
     const name = document.createElement("strong");
     name.className = "chat-message-name";
     name.textContent = message.name;
@@ -81,7 +81,11 @@ function renderChatMessages() {
 
 function appendChatMessage(message, { notify = true } = {}) {
   if (!message || typeof message.name !== "string" || typeof message.text !== "string") return;
-  chatMessages.push({ name: message.name.slice(0, 40), text: message.text.slice(0, 280) });
+  chatMessages.push({
+    name: message.name.slice(0, 40),
+    text: message.text.slice(0, 280),
+    senderId: typeof message.senderId === "string" ? message.senderId.slice(0, 64) : "",
+  });
   if (chatMessages.length > 40) chatMessages = chatMessages.slice(-40);
   renderChatMessages();
   if (notify && !chatOpen) {
@@ -146,7 +150,7 @@ function sendChatMessage(event) {
   chatPending = true;
   chatSend.disabled = true;
   setChatStatus("");
-  queueWs.send(JSON.stringify({ type: "chatSend", name, text }));
+  queueWs.send(JSON.stringify({ type: "chatSend", name, text, clientId }));
 }
 
 chatToggle.addEventListener("click", () => setChatOpen(!chatOpen));
@@ -786,6 +790,12 @@ function connectWs() {
       renderChatUnread();
     } else if (msg.type === "chatMessage") {
       appendChatMessage(msg.message);
+    } else if (msg.type === "chatCleared") {
+      chatMessages = [];
+      chatUnreadCount = 0;
+      renderChatMessages();
+      renderChatUnread();
+      setChatStatus("Tin nhắn đã được làm mới.", "ok");
     } else if (msg.type === "chatSendResult") {
       chatPending = false;
       chatSend.disabled = false;

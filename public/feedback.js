@@ -1,6 +1,7 @@
 const listEl = document.getElementById("feedback-list");
 const toggleEl = document.getElementById("feedback-toggle");
 const chatToggleEl = document.getElementById("chat-toggle");
+const chatClearEl = document.getElementById("chat-clear");
 const statusEl = document.getElementById("page-status");
 let feedbackOn = true;
 let chatOn = true;
@@ -119,6 +120,21 @@ chatToggleEl.onclick = async () => {
   chatToggleEl.disabled = true;
   await updateSettings({ chatOn: !chatOn }, `Đã ${!chatOn ? "bật" : "tắt"} tính năng chat.`);
   chatToggleEl.disabled = false;
+};
+
+chatClearEl.onclick = async () => {
+  if (!window.confirm("Xóa toàn bộ tin nhắn chat hiện tại? Tin nhắn không thể khôi phục.")) return;
+  chatClearEl.disabled = true;
+  try {
+    const res = await fetch("/api/chat", { method: "DELETE" });
+    const data = await res.json();
+    if (!res.ok || !data.ok) throw new Error(data.reason || "Không thể xóa tin nhắn chat.");
+    setStatus(data.cleared ? `Đã xóa ${data.cleared} tin nhắn chat.` : "Chat hiện không có tin nhắn.");
+  } catch (error) {
+    setStatus(error.message || "Không thể xóa tin nhắn chat.", true);
+  } finally {
+    chatClearEl.disabled = false;
+  }
 };
 
 load();
