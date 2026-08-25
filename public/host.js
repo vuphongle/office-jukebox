@@ -13,6 +13,7 @@ let cooldownSeconds = 15;
 let eventContext = "";
 let hostToken = null; // mã điều khiển WS (chỉ cấp cho trang host đã xác thực)
 let ws = null;
+let draggedQueueId = null;
 
 // ---- Kết nối WebSocket ------------------------------------------------
 function sendAuth() {
@@ -53,6 +54,77 @@ function connectWs() {
 }
 function send(obj) {
   if (ws && ws.readyState === 1) ws.send(JSON.stringify(obj));
+}
+
+// ---- Kéo-thả hàng đợi -------------------------------------------------
+function queueItemFromEvent(event) {
+  const target = event.target;
+  if (!(target instanceof Element)) return null;
+  const item = target.closest("#queue li[data-id]");
+  return item && item.parentElement === document.getElementById("queue") ? item : null;
+}
+
+function clearQueueDragState() {
+  const ul = document.getElementById("queue");
+  if (ul) {
+    ul.querySelectorAll(".q-dragging, .q-drop-before, .q-drop-after").forEach((item) => {
+      item.classList.remove("q-dragging", "q-drop-before", "q-drop-after");
+    });
+  }
+  draggedQueueId = null;
+}
+
+function dropBeforeId(target, event) {
+  const rect = target.getBoundingClientRect();
+  const dropAfter = event.clientY >= rect.top + rect.height / 2;
+  const anchor = dropAfter ? target.nextElementSibling : target;
+  return anchor?.dataset.id || null;
+}
+
+function wireQueueDrag() {
+  const ul = document.getElementById("queue");
+
+  ul.addEventListener("dragstart", (event) => {
+    const item = queueItemFromEvent(event);
+    const source = event.target instanceof Element ? event.target : null;
+    if (!item || source?.closest("button")) {
+      event.preventDefault();
+      return;
+    }
+
+    draggedQueueId = item.dataset.id;
+    if (event.dataTransfer) {
+      event.dataTransfer.effectAllowed = "move";
+      event.dataTransfer.setData("text/plain", draggedQueueId);
+    }
+    requestAnimationFrame(() => {
+      if (draggedQueueId === item.dataset.id) item.classList.add("q-dragging");
+    });
+  });
+
+  ul.addEventListener("dragover", (event) => {
+    const target = queueItemFromEvent(event);
+    if (!draggedQueueId || !target || target.dataset.id === draggedQueueId) return;
+
+    event.preventDefault();
+    if (event.dataTransfer) event.dataTransfer.dropEffect = "move";
+    ul.querySelectorAll(".q-drop-before, .q-drop-after").forEach((item) => {
+      item.classList.remove("q-drop-before", "q-drop-after");
+    });
+    const rect = target.getBoundingClientRect();
+    target.classList.add(event.clientY >= rect.top + rect.height / 2 ? "q-drop-after" : "q-drop-before");
+  });
+
+  ul.addEventListener("drop", (event) => {
+    const target = queueItemFromEvent(event);
+    if (!draggedQueueId || !target || target.dataset.id === draggedQueueId) return;
+
+    event.preventDefault();
+    send({ type: "reorder", id: draggedQueueId, beforeId: dropBeforeId(target, event) });
+    clearQueueDragState();
+  });
+
+  ul.addEventListener("dragend", clearQueueDragState);
 }
 
 // ---- API IFrame YouTube ----------------------------------------------
@@ -150,6 +222,9 @@ function render() {
   const queue = latestState.queue || [];
   document.getElementById("queue-count").textContent = queue.length;
   const ul = document.getElementById("queue");
+  // Server state is authoritative. Cancel a drag if another state update
+  // rebuilds the list while the pointer is still down.
+  clearQueueDragState();
   ul.innerHTML = "";
   if (queue.length === 0) {
     ul.innerHTML = '<li class="q-empty">Hàng đợi đang trống — quét mã QR để thêm bài hát.</li>';
@@ -157,10 +232,14 @@ function render() {
   }
   for (const item of queue) {
     const li = document.createElement("li");
+    li.className = "q-item";
+    li.dataset.id = item.id;
+    li.draggable = true;
     const thumb = item.thumbnail
       ? `<img src="${item.thumbnail}" alt="" />`
       : '<img src="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22/%3E" alt="" />';
     li.innerHTML = `
+      <span class="q-drag-handle" title="Kéo để sắp xếp" aria-hidden="true">⠿</span>
       ${thumb}
       <div class="q-meta">
         <div class="q-title"></div>
@@ -294,4 +373,5 @@ document.getElementById("start-btn").onclick = () => {
 
 loadInfo();
 wireControls();
+wireQueueDrag();
 connectWs();

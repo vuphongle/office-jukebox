@@ -93,4 +93,35 @@ export class JukeboxState {
     [this.queue[i], this.queue[j]] = [this.queue[j], this.queue[i]];
     this._emit();
   }
+
+  // Đưa một mục tới ngay trước beforeId; beforeId null/undefined = đưa xuống cuối.
+  // Dùng id của mục làm mốc thay vì index để không bị lệch khi queue đổi realtime.
+  reorder(id, beforeId = null) {
+    if (typeof id !== "string") return false;
+    if (beforeId !== null && beforeId !== undefined && typeof beforeId !== "string") return false;
+    if (beforeId === id) return false;
+
+    const i = this.queue.findIndex((s) => s.id === id);
+    if (i === -1) return false;
+    if (beforeId !== null && beforeId !== undefined && !this.queue.some((s) => s.id === beforeId)) {
+      return false;
+    }
+
+    const [item] = this.queue.splice(i, 1);
+    const j = beforeId === null || beforeId === undefined
+      ? this.queue.length
+      : this.queue.findIndex((s) => s.id === beforeId);
+
+    // The anchor was checked above, but restore safely if the state changes
+    // unexpectedly while this operation is being prepared.
+    if (j < 0) {
+      this.queue.splice(i, 0, item);
+      return false;
+    }
+
+    this.queue.splice(j, 0, item);
+    if (j === i) return false;
+    this._emit();
+    return true;
+  }
 }
