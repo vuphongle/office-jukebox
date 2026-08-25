@@ -2,7 +2,7 @@
 <html lang="vi">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Chọn bài hát · Thêm bài hát</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -13,6 +13,7 @@
   <header>
     <h1>Chọn bài hát</h1>
     <div class="h-sub">Thêm bài hát</div>
+    <p class="desktop-intro">Tìm kiếm, khám phá và thêm bài hát vào hàng đợi của sự kiện.</p>
   </header>
 
   <div id="now-playing" class="now-playing hidden"></div>
@@ -44,12 +45,14 @@
   </section>
 
   <button id="back-to-explore" class="back-to-explore hidden">← Quay lại khám phá</button>
-  <div id="status" class="status hidden"></div>
+  <div id="status" class="status hidden" role="status" aria-live="polite"></div>
   <ul id="results"></ul>
   <section id="youtube-link-tool" class="youtube-link-tool">
     <div class="youtube-link-head">
       <div class="youtube-link-copy">
-        <span class="youtube-link-icon" aria-hidden="true">▶</span>
+        <span class="youtube-link-icon" aria-hidden="true">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z" /></svg>
+        </span>
         <div>
           <strong>Không tìm thấy bài bạn muốn?</strong>
           <span>Dán link YouTube để thêm trực tiếp</span>
@@ -70,7 +73,7 @@
           <div id="youtube-link-title" class="r-title"></div>
           <div id="youtube-link-sub" class="r-sub"></div>
         </div>
-        <button id="youtube-link-add" class="add-btn" type="button" title="Thêm bài hát">+</button>
+        <button id="youtube-link-add" class="add-btn" type="button" title="Thêm bài hát" aria-label="Thêm bài hát">+</button>
       </div>
     </div>
   </section>
@@ -85,7 +88,9 @@
         <h2>Góp ý <small>Cho ban tổ chức</small></h2>
         <p>Chia sẻ ý tưởng, báo lỗi hoặc điều bạn muốn cải thiện.</p>
       </div>
-      <span class="feedback-mark" aria-hidden="true">✦</span>
+      <span class="feedback-mark" aria-hidden="true">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M12 3l1.35 5.65L19 10l-5.65 1.35L12 17l-1.35-5.65L5 10l5.65-1.35L12 3z" /><path d="M19 16l.55 2.45L22 19l-2.45.55L19 22l-.55-2.45L16 19l2.45-.55L19 16z" /></svg>
+      </span>
     </div>
     <form id="feedback-form" class="feedback-form">
       <input id="feedback-name" type="text" placeholder="Tên của bạn" autocomplete="name" maxlength="40" required />

@@ -37,3 +37,60 @@ h1 { margin: 0; color: var(--text-hi); font: 700 clamp(32px, 6vw, 48px)/1.15 var
 .delete-btn:hover { border-color: oklch(68% .18 32 / .5); color: var(--red); }
 .empty { padding: 28px 0 12px; color: var(--muted); text-align: center; font-size: 14px; }
 @media (max-width: 560px) { .feedback-admin { width: min(100% - 28px, 920px); padding-top: 24px; } .page-head { align-items: flex-start; flex-direction: column; margin-top: 26px; } .toggle { align-self: stretch; } .stats { gap: 8px; } .stats article { padding: 14px 12px; } .stats strong { font-size: 23px; } .feedback-list-card { padding: 16px; } }
+
+/* ---- Shared event-jukebox polish ------------------------------------- */
+html { color-scheme: dark; }
+button, a { touch-action: manipulation; }
+button:focus-visible, a:focus-visible {
+  outline: 3px solid oklch(80% 0.14 85 / 0.85);
+  outline-offset: 3px;
+}
+body { position: relative; isolation: isolate; overflow-x: hidden; }
+body::before, body::after {
+  content: "";
+  position: fixed;
+  z-index: -1;
+  border-radius: 50%;
+  pointer-events: none;
+  filter: blur(80px);
+}
+body::before { width: 46vw; height: 46vw; max-width: 700px; max-height: 700px; top: -20vw; left: -12vw; background: oklch(42% 0.12 320 / 0.15); }
+body::after { width: 34vw; height: 34vw; max-width: 520px; max-height: 520px; right: -10vw; bottom: -14vw; background: oklch(62% 0.13 55 / 0.09); }
+.feedback-admin { width: min(1180px, calc(100% - 48px)); padding: 34px 0 72px; }
+.back-link { display: inline-flex; align-items: center; min-height: 36px; transition: color 180ms ease, transform 180ms ease; }
+.back-link:hover { transform: translateX(-2px); }
+.page-head { margin-top: 30px; }
+.intro { max-width: 62ch; line-height: 1.6; }
+.toggle { transition: background 180ms ease, border-color 180ms ease, color 180ms ease, transform 180ms ease, box-shadow 180ms ease; }
+.toggle:hover { transform: translateY(-1px); box-shadow: 0 10px 24px rgba(0, 0, 0, 0.18); }
+.toggle:active { transform: translateY(1px) scale(0.98); }
+.stats { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; margin-top: 10px; }
+.stats article { min-height: 112px; padding: 20px; background: linear-gradient(145deg, oklch(24% 0.04 325), oklch(20% 0.03 325)); box-shadow: 0 14px 30px rgba(0, 0, 0, 0.16); transition: transform 200ms ease, border-color 200ms ease, box-shadow 200ms ease; }
+.stats article:hover { transform: translateY(-2px); border-color: oklch(80% 0.14 85 / 0.25); box-shadow: 0 18px 36px rgba(0, 0, 0, 0.23); }
+.stats strong { font-variant-numeric: tabular-nums; }
+.feedback-list-card { padding: 24px; background: linear-gradient(145deg, oklch(23% 0.04 325), oklch(19% 0.03 325)); box-shadow: 0 18px 42px rgba(0, 0, 0, 0.2); }
+.list-head { min-height: 30px; }
+.list-head h2 { font-size: 22px; }
+.feedback-list { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.feedback-item { min-width: 0; background: oklch(100% 0 0 / 0.045); transition: transform 180ms ease, border-color 180ms ease, background 180ms ease; animation: feedback-card-enter 360ms cubic-bezier(0.22, 1, 0.36, 1) both; }
+.feedback-item:hover { transform: translateY(-2px); border-color: oklch(80% 0.14 85 / 0.25); background: oklch(100% 0 0 / 0.07); }
+.feedback-item:nth-child(2) { animation-delay: 35ms; }
+.feedback-item:nth-child(3) { animation-delay: 70ms; }
+.feedback-item:nth-child(4) { animation-delay: 105ms; }
+.delete-btn { transition: background 180ms ease, border-color 180ms ease, color 180ms ease, transform 180ms ease; }
+.delete-btn:hover { transform: scale(1.06); }
+.empty { grid-column: 1 / -1; padding: 48px 20px; border: 1px dashed var(--line); border-radius: 14px; background: oklch(100% 0 0 / 0.025); }
+@keyframes feedback-card-enter { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+
+@media (max-width: 760px) {
+  .feedback-admin { width: min(100% - 28px, 920px); padding-bottom: 48px; }
+  .feedback-list { grid-template-columns: 1fr; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

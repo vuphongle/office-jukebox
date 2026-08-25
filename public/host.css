@@ -1,5 +1,5 @@
 /* Trang host (máy chiếu) — triển khai giao diện máy phát nhạc sự kiện:
-   sân khấu màu mận tối, vàng = đang phát/bộ lọc bật, đỏ cam = số lượng/âm lượng,
+   sân khấu màu mận tối, vàng = đang phát/bộ lọc bật, đỏ cam = số lượng/thao tác,
    Noto Serif cho tiêu đề, dễ đọc từ xa trong không gian tối. */
 
 :root {
@@ -376,3 +376,52 @@ html, body {
 .q-remove { cursor: pointer; }
 .q-remove:hover { background: oklch(68% 0.18 32 / 0.15); color: var(--red); }
 .q-empty { color: var(--muted); padding: 0.8rem 0; font: 400 14px/1.5 var(--sans); }
+
+/* ---- Web polish -------------------------------------------------------
+   Keep the projection layout and controls intact while giving the host view
+   the same calm, high-contrast event surface as guest and feedback pages. */
+html { color-scheme: dark; }
+button, a { touch-action: manipulation; }
+button:focus-visible, a:focus-visible, input:focus-visible {
+  outline: 3px solid oklch(80% 0.14 85 / 0.85);
+  outline-offset: 3px;
+}
+#stage {
+  width: min(100%, 1680px);
+  margin: 0 auto;
+  grid-template-columns: minmax(0, 1fr) clamp(340px, 27vw, 440px);
+  gap: clamp(1.4rem, 2.4vw, 2.5rem);
+  padding: clamp(1.4rem, 3vw, 3rem);
+}
+#player-wrap {
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.28);
+  transition: border-color 220ms ease, box-shadow 220ms ease;
+}
+#player-wrap:hover { border-color: oklch(80% 0.14 85 / 0.2); box-shadow: 0 28px 70px rgba(0, 0, 0, 0.36); }
+#controls { gap: 12px; }
+#controls button { transition: background 180ms ease, border-color 180ms ease, color 180ms ease, transform 180ms ease, box-shadow 180ms ease; }
+#controls button:hover { transform: translateY(-1px); }
+#controls button:active { transform: translateY(1px) scale(0.98); }
+#controls button.pill { border-color: oklch(100% 0 0 / 0.12); }
+.sidebar { gap: clamp(1rem, 1.8vw, 1.4rem); }
+.qr-card, .queue-card { box-shadow: 0 18px 42px rgba(0, 0, 0, 0.18); transition: border-color 220ms ease, box-shadow 220ms ease; }
+.qr-card:hover, .queue-card:hover { border-color: oklch(80% 0.14 85 / 0.22); box-shadow: 0 22px 48px rgba(0, 0, 0, 0.26); }
+.qr-frame { box-shadow: 0 0 0 8px oklch(94% 0.02 85 / 0.05), 0 12px 30px rgba(0, 0, 0, 0.24); }
+.q-remove { transition: background 180ms ease, color 180ms ease, transform 180ms ease; }
+.q-remove:hover { transform: scale(1.06); }
+
+@media (max-width: 1100px) and (min-width: 701px) {
+  #stage { grid-template-columns: minmax(0, 1fr) 320px; padding: 1.5rem; }
+  #now-title { font-size: 36px; }
+  #controls button.pill { padding: 0 13px; font-size: 13px; }
+  .qr-card { padding: 20px; }
+  .qr-frame { width: 170px; height: 170px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

@@ -327,7 +327,7 @@ function resultCard(r) {
       <div class="r-title"></div>
       <div class="r-sub"></div>
     </div>
-    <button class="add-btn" title="Thêm bài hát">+</button>`;
+    <button class="add-btn" title="Thêm bài hát" aria-label="Thêm bài hát">+</button>`;
   li.querySelector(".r-title").textContent = r.title;
   li.querySelector(".r-sub").textContent = r.channel + (r.duration ? ` · ${r.duration}` : "");
   const btn = li.querySelector(".add-btn");
@@ -643,7 +643,7 @@ function renderQueue(state) {
       <span class="q-num">${i + 1}</span>
       <img src="${item.thumbnail || NO_THUMB}" alt="" loading="lazy" />
       <div class="q-text"><div class="t-row"><span class="t"></span></div><div class="s"></div><div class="q-eta"></div></div>
-      <button class="q-remove-own hidden" type="button" title="Xóa bài của bạn">×</button>`;
+      <button class="q-remove-own hidden" type="button" title="Xóa bài của bạn" aria-label="Xóa bài của bạn">×</button>`;
     li.querySelector(".t").textContent = item.title;
     li.querySelector(".s").textContent = item.channel;
     li.querySelector(".q-eta").textContent = formatEstimatedStart(item.estimatedStartAt);

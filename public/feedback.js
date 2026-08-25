@@ -38,6 +38,7 @@ function render(data) {
     del.className = "delete-btn";
     del.type = "button";
     del.title = "Xóa góp ý";
+    del.setAttribute("aria-label", "Xóa góp ý");
     del.textContent = "×";
     del.onclick = () => deleteFeedback(item.id);
     const head = document.createElement("div");
