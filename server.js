@@ -150,7 +150,7 @@ app.get("/api/browse", async (req, res) => {
     const fetched =
       q === "__vn_hits"
         ? await fetchVietnamChartHits({ limit: 40 })
-        : await searchYouTube(q, { limit: 40 });
+        : await searchYouTube(q, { limit: 40, mode: "songs" });
     const results = fetched
       .filter((r) => durationSeconds(r.duration) <= MAX_SINGLE_SECONDS)
       .slice(0, 20);

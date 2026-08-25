@@ -103,6 +103,11 @@ hình.
 | `POST /api/request` | Rào chắn → kiểm tra khả năng phát → (bộ lọc AI tùy chọn) → thêm vào hàng đợi |
 | WebSocket `/` | Phát trạng thái hàng đợi; truyền các điều khiển của người phụ trách |
 
+Tìm kiếm trực tiếp ưu tiên context Việt Nam giống YouTube Music web để các bài
+nằm ở đầu kết quả gần với lúc người dùng tìm trên web. Nếu kết quả không đủ,
+máy chủ bổ sung bằng truy vấn lọc "Songs"; các tab khám phá vẫn chỉ dùng truy
+vấn "Songs" và không dùng cookie đăng nhập của người dùng.
+
 **Máy chủ quản lý hàng đợi** (`src/state.js`). Trang máy chiếu chỉ là trình
 phát: khi một bài kết thúc hoặc gặp lỗi, trang báo cho máy chủ, máy chủ đưa bài
 tiếp theo lên và phát trạng thái mới cho mọi người. Các thiết lập trên trang máy

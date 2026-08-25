@@ -8,8 +8,7 @@ nguồn trong kho này.
 Một jukebox QR trên máy chiếu dành cho các sự kiện: trang người phụ trách
 (`/`) được chiếu và phát video YouTube; khách quét mã QR trên màn hình để mở
 `/guest` bằng điện thoại, tìm kiếm/duyệt YouTube và xếp bài hát vào hàng đợi.
-Toàn bộ dùng JavaScript thuần — không framework, không bundler, không TypeScript,
-không có bài kiểm thử.
+Toàn bộ dùng JavaScript thuần — không framework, không bundler, không TypeScript.
 
 ## Lệnh
 
@@ -19,10 +18,11 @@ Dùng **bun** (không dùng npm):
 bun install
 cp .env.example .env   # giá trị mặc định dùng được; kiểm duyệt đang tắt
 bun start              # chạy server.js trên cổng 45416
+bun run test           # chạy test Node tích hợp sẵn
 bun run check-llm      # xác minh LLM_API_KEY và liệt kê model khả dụng
 ```
 
-Không có bước lint, build hoặc test. Xác minh thay đổi bằng cách chạy máy chủ và
+Không có bước lint hoặc build. Xác minh thay đổi bằng test và chạy máy chủ để
 kiểm tra cả hai trang (`/` và `/guest`).
 
 ## Kiến trúc
@@ -46,19 +46,17 @@ khởi động lại sẽ xóa hàng đợi.
 
 **YouTube không cần khóa API** (`src/youtube.js`): tìm kiếm gọi InnerTube API
 nội bộ của YouTube Music (điểm cuối JSON mà ứng dụng web
-`music.youtube.com` sử dụng), được lọc theo danh mục "Songs" — chỉ trả về kết
-quả âm nhạc (phần lớn là bản âm thanh có ảnh bìa, không phải video ca nhạc)
-kèm siêu dữ liệu nghệ sĩ thực tế; các `videoIds` này phát được trong iframe
-YouTube thông thường. Chi tiết video để kiểm duyệt lấy từ
-`ytInitialPlayerResponse` trên trang xem. Cookie `SOCS/CONSENT` giúp tránh
-trang yêu cầu đồng ý của EU. Nếu tìm kiếm hỏng, hãy nghi ngờ thay đổi API hoặc
-schema của InnerTube. `/api/browse` (các tab thể loại/chip ca sĩ trên trang
-khách) dùng cùng cơ chế tìm kiếm nhưng được lưu bộ nhớ đệm 30 phút cho mỗi truy
-vấn và lọc chỉ các đĩa đơn (≤10 phút) để dự phòng các bản phát trực tiếp hoặc
-bản tuyển tập quá dài. Truy vấn sentinel `__vn_hits` (lần tải đầu tiên của tab
-Tất cả) trả về bảng xếp hạng âm nhạc Việt Nam hiện tại của YouTube thay vì tìm
-kiếm văn bản, vì tìm kiếm văn bản xếp hạng theo mức khớp tiêu đề chứ không theo
-độ phổ biến tại địa phương.
+`music.youtube.com` sử dụng). `/api/search` ưu tiên context giống web tại Việt Nam
+(`hl=vi`, `gl=VN`) để giữ thứ hạng bài hát trên web gần nhất có thể, giữ bài hát
+và video ca nhạc chính thức, rồi bổ sung kết quả bằng bộ lọc "Songs" khi cần.
+`/api/browse` vẫn dùng riêng bộ lọc "Songs" và được lưu bộ nhớ đệm 30 phút cho
+mỗi truy vấn; nó lọc các đĩa đơn ≤10 phút để loại bản phát trực tiếp hoặc bản
+tuyển tập quá dài. Các `videoIds` vẫn phát trong iframe YouTube thông thường.
+Chi tiết video để kiểm duyệt lấy từ `ytInitialPlayerResponse` trên trang xem.
+Cookie `SOCS/CONSENT` giúp tránh trang yêu cầu đồng ý của EU. Nếu tìm kiếm hỏng,
+hãy nghi ngờ thay đổi API hoặc schema của InnerTube. Truy vấn sentinel `__vn_hits`
+(lần tải đầu tiên của tab Tất cả) trả về bảng xếp hạng âm nhạc Việt Nam hiện tại
+của YouTube thay vì tìm kiếm văn bản.
 
 **Kiểm duyệt: cho phép tiếp tục hay từ chối khi lỗi** (`src/moderation.js`) —
 đây là sự phân biệt có chủ ý, phải giữ nguyên:
