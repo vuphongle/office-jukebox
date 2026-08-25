@@ -14,7 +14,7 @@
 <body>
   <header>
     <div class="brand-heading">
-      <img class="brand-icon" src="/assets/favicon.png" alt="Laztar" />
+      <img class="brand-logo" src="/assets/logo.png" alt="Laztar" />
       <div>
         <h1>Chọn bài hát</h1>
         <div class="h-sub">Thêm bài hát</div>
@@ -53,7 +53,15 @@
 
   <button id="back-to-explore" class="back-to-explore hidden">← Quay lại khám phá</button>
   <div id="status" class="status hidden" role="status" aria-live="polite"></div>
-  <ul id="results"></ul>
+  <div id="results-area">
+    <ul id="results"></ul>
+    <ul id="results-skeleton" class="skeleton-results hidden" aria-hidden="true">
+      <li><span class="skeleton-thumb"></span><span class="skeleton-meta"><span class="skeleton-line skeleton-title"></span><span class="skeleton-line skeleton-sub"></span></span><span class="skeleton-action"></span></li>
+      <li><span class="skeleton-thumb"></span><span class="skeleton-meta"><span class="skeleton-line skeleton-title"></span><span class="skeleton-line skeleton-sub"></span></span><span class="skeleton-action"></span></li>
+      <li><span class="skeleton-thumb"></span><span class="skeleton-meta"><span class="skeleton-line skeleton-title"></span><span class="skeleton-line skeleton-sub"></span></span><span class="skeleton-action"></span></li>
+      <li><span class="skeleton-thumb"></span><span class="skeleton-meta"><span class="skeleton-line skeleton-title"></span><span class="skeleton-line skeleton-sub"></span></span><span class="skeleton-action"></span></li>
+    </ul>
+  </div>
   <section id="youtube-link-tool" class="youtube-link-tool">
     <div class="youtube-link-head">
       <div class="youtube-link-copy">
