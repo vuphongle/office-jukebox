@@ -413,6 +413,16 @@ app.delete("/api/feedback/:id", requireHostAuth, (req, res) => {
   res.json({ ok: true });
 });
 
+app.delete("/api/chat", requireHostAuth, (_req, res) => {
+  const cleared = chatMessages.length;
+  chatMessages.length = 0;
+  const message = JSON.stringify({ type: "chatCleared" });
+  for (const client of wss.clients) {
+    if (client.readyState === 1) client.send(message);
+  }
+  res.json({ ok: true, cleared });
+});
+
 // Cloudflare ghi đè no-cache bằng TTL trình duyệt 4 giờ cho .js/.css, khiến các
 // trang đang mở chạy script cũ sau khi triển khai. Gắn phiên bản vào URL asset
 // để phá cache: mỗi lần khởi động (= mỗi lần triển khai) HTML trỏ tới URL mới.
@@ -511,6 +521,7 @@ wss.on("connection", (ws) => {
         id: randomUUID(),
         name: parsed.name,
         text: parsed.text,
+        senderId: (msg.clientId || "").toString().slice(0, 64),
         createdAt: new Date().toISOString(),
       };
       pushRecentChat(chatMessages, message);

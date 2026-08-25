@@ -20,6 +20,8 @@ h1 { margin: 0; color: var(--text-hi); font: 700 clamp(32px, 6vw, 48px)/1.15 var
 .intro { margin: 9px 0 0; color: var(--muted); font-size: 14px; }
 .toggle { min-width: 126px; height: 44px; padding: 0 17px; border: 1px solid var(--line); border-radius: 999px; background: var(--fill); color: var(--warm); font-weight: 700; }
 .toggle.on { border-color: var(--gold); background: var(--gold); color: var(--gold-ink); }
+.clear-toggle { border-color: oklch(68% .18 32 / .5); color: oklch(78% .12 32); }
+.clear-toggle:hover { border-color: var(--red); color: var(--text-hi); }
 .page-status { min-height: 24px; margin-top: 20px; color: var(--muted); font-size: 13px; }
 .page-status.bad { color: oklch(76% .13 30); }
 .stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-top: 4px; }
