@@ -99,7 +99,8 @@ function requireHostAuth(req, res, next) {
   const b64 = (req.headers.authorization || "").split(" ")[1] || "";
   const pass = Buffer.from(b64, "base64").toString().split(":").slice(1).join(":");
   if (pass === HOST_PASSWORD) return next();
-  res.set("WWW-Authenticate", 'Basic realm="Hệ thống âm nhạc sự kiện"').status(401).send("Yêu cầu mật khẩu.");
+  // HTTP headers must be ASCII; keep the localized message in the response body.
+  res.set("WWW-Authenticate", 'Basic realm="Event Music Host"').status(401).send("Yêu cầu mật khẩu.");
 }
 app.use("/host.html", requireHostAuth); // bản tĩnh không được bỏ qua bảo vệ của "/"
 
