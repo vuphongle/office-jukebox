@@ -1,6 +1,7 @@
 // Trang dành cho khách trên điện thoại: tìm kiếm YouTube, chọn bài hát và theo dõi hàng đợi trực tiếp.
 
 const resultsEl = document.getElementById("results");
+const resultsSkeletonEl = document.getElementById("results-skeleton");
 const statusEl = document.getElementById("status");
 const toastsEl = document.getElementById("toasts");
 const qEl = document.getElementById("q");
@@ -234,7 +235,7 @@ async function startBrowse(queries) {
 async function loadMoreSongs() {
   const gen = browse.gen;
   moreBtn.disabled = true;
-  setStatus("Đang tải bài hát…");
+  setLoading(true, "Đang tải bài hát…");
   try {
     while (browse.idx < browse.queries.length) {
       const q = browse.queries[browse.idx++];
@@ -247,15 +248,20 @@ async function loadMoreSongs() {
       if (fresh.length === 0) continue; // biến thể này toàn kết quả trùng — thử biến thể tiếp theo
       for (const r of fresh) browse.seen.add(r.videoId);
       fresh = shuffleArray(fresh); // không hiển thị cùng một thứ tự mỗi lần (A4)
+      setLoading(false);
       setStatus("");
       appendResults(fresh);
       break;
     }
-    if (browse.gen === gen && browse.seen.size === 0) {
-      setStatus("Không tìm thấy bài hát — hãy thử danh mục khác.");
+    if (browse.gen === gen) {
+      setLoading(false);
+      if (browse.seen.size === 0) setStatus("Không tìm thấy bài hát — hãy thử danh mục khác.");
     }
   } catch (err) {
-    if (browse.gen === gen) setStatus("😕 " + err.message);
+    if (browse.gen === gen) {
+      setLoading(false);
+      setStatus("😕 " + err.message);
+    }
   } finally {
     if (browse.gen === gen) {
       moreBtn.disabled = false;
@@ -280,19 +286,26 @@ document.getElementById("search-form").addEventListener("submit", (e) => {
 async function doSearch(q) {
   if (!q) return backToExplore(); // gửi biểu mẫu trống sẽ khôi phục mục khám phá
 
+  const gen = ++browse.gen; // không cho yêu cầu cũ ghi đè kết quả tìm kiếm mới nhất
   qEl.blur();
   resultsEl.innerHTML = "";
   sugSection.classList.add("hidden"); // ẩn mục khám phá khi bắt đầu tìm kiếm
   moreBtn.classList.add("hidden");
   backToExploreBtn.classList.remove("hidden");
-  setStatus("Đang tìm kiếm…");
+  setLoading(true, "Đang tìm kiếm…");
   try {
     const res = await fetch("/api/search?q=" + encodeURIComponent(q));
+    if (browse.gen !== gen) return;
     const data = await res.json();
+    if (browse.gen !== gen) return;
     if (!res.ok) throw new Error(data.error || "Tìm kiếm thất bại.");
+    setLoading(false);
     renderResults(data.results || []);
   } catch (err) {
-    setStatus("😕 " + err.message);
+    if (browse.gen === gen) {
+      setLoading(false);
+      setStatus("😕 " + err.message);
+    }
   }
 }
 
@@ -310,9 +323,27 @@ function backToExplore() {
 backToExploreBtn.onclick = backToExplore;
 
 function setStatus(text) {
-  if (!text) return statusEl.classList.add("hidden");
+  statusEl.classList.remove("loading-status");
+  if (!text) {
+    statusEl.textContent = "";
+    return statusEl.classList.add("hidden");
+  }
   statusEl.textContent = text;
   statusEl.classList.remove("hidden");
+}
+
+function setLoading(isLoading, label = "Đang tải…") {
+  resultsSkeletonEl.classList.toggle("hidden", !isLoading);
+  resultsEl.setAttribute("aria-busy", isLoading ? "true" : "false");
+  if (!isLoading) {
+    statusEl.classList.remove("loading-status");
+    statusEl.textContent = "";
+    statusEl.classList.add("hidden");
+    return;
+  }
+  statusEl.textContent = label;
+  statusEl.classList.remove("hidden");
+  statusEl.classList.add("loading-status");
 }
 
 // Ảnh thay thế cho hình thu nhỏ bị thiếu — thẻ <img src=""> trống sẽ gửi yêu cầu
