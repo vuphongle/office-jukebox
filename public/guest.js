@@ -1,4 +1,313 @@
-// Trang dành cho khách trên điện thoại: tìm kiếm YouTube, chọn bài hát và theo dõi hàng đợi trực tiếp.
+let currentUser = null;
+let currentActiveDrop = null;
+
+// --- Authentication & User State -------------------------------------------
+async function fetchMe() {
+  try {
+    const res = await fetch("/api/me");
+    const data = await res.json();
+    if (data.ok && data.authenticated && data.user) {
+      currentUser = data.user;
+      renderUserAuthBar();
+      if (currentUser.displayName && !nameEl.value.trim()) {
+        nameEl.value = currentUser.displayName;
+        localStorage.setItem("guestName", currentUser.displayName);
+        if (feedbackName && !feedbackName.value.trim()) feedbackName.value = currentUser.displayName;
+      }
+      checkActivePointDrop();
+    } else {
+      currentUser = null;
+      renderUserAuthBar();
+    }
+  } catch {
+    currentUser = null;
+    renderUserAuthBar();
+  }
+}
+
+function renderUserAuthBar() {
+  const bar = document.getElementById("user-auth-bar");
+  if (!bar) return;
+  if (currentUser) {
+    bar.innerHTML = `
+      <div class="user-profile-badge">
+        <span class="user-name"><strong>${escapeHtml(currentUser.displayName || currentUser.username)}</strong></span>
+        <span id="user-points-pill" class="user-points-pill" title="Xem lịch sử / Điểm danh">${currentUser.pointsBalance} 🪙</span>
+        <span id="user-streak-pill" class="user-streak-pill" title="Điểm danh streak">🔥 ${currentUser.currentStreak}d</span>
+        <button id="user-logout-btn" class="user-logout-btn" type="button">Thoát</button>
+      </div>
+    `;
+    document.getElementById("user-points-pill")?.addEventListener("click", openCheckinModal);
+    document.getElementById("user-streak-pill")?.addEventListener("click", openCheckinModal);
+    document.getElementById("user-logout-btn")?.addEventListener("click", handleLogout);
+  } else {
+    bar.innerHTML = `
+      <button id="open-auth-btn" class="auth-pill-btn" type="button">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path><circle cx="12" cy="7" r="4"></circle></svg>
+        Đăng nhập / Đăng ký
+      </button>
+    `;
+    document.getElementById("open-auth-btn")?.addEventListener("click", () => openAuthModal("login"));
+  }
+}
+
+// --- Auth Modal Handlers --------------------------------------------------
+let authMode = "login"; // "login" | "register"
+
+function openAuthModal(mode = "login") {
+  authMode = mode;
+  const modal = document.getElementById("auth-modal");
+  const title = document.getElementById("auth-modal-title");
+  const tabLogin = document.getElementById("auth-tab-login");
+  const tabRegister = document.getElementById("auth-tab-register");
+  const nameField = document.getElementById("auth-display-name-field");
+  const submitBtn = document.getElementById("auth-submit-btn");
+  const errorEl = document.getElementById("auth-error-msg");
+
+  errorEl.classList.add("hidden");
+  errorEl.textContent = "";
+
+  if (mode === "login") {
+    title.textContent = "Đăng nhập tài khoản";
+    tabLogin.classList.add("active");
+    tabRegister.classList.remove("active");
+    nameField.classList.add("hidden");
+    submitBtn.textContent = "Đăng nhập ngay";
+  } else {
+    title.textContent = "Đăng ký thành viên mới";
+    tabLogin.classList.remove("active");
+    tabRegister.classList.add("active");
+    nameField.classList.remove("hidden");
+    submitBtn.textContent = "Đăng ký tài khoản";
+  }
+
+  modal.classList.remove("hidden");
+  document.getElementById("auth-username").focus();
+}
+
+function closeAuthModal() {
+  document.getElementById("auth-modal").classList.add("hidden");
+}
+
+document.getElementById("auth-modal-close")?.addEventListener("click", closeAuthModal);
+document.getElementById("auth-tab-login")?.addEventListener("click", () => openAuthModal("login"));
+document.getElementById("auth-tab-register")?.addEventListener("click", () => openAuthModal("register"));
+
+document.getElementById("auth-form")?.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const username = document.getElementById("auth-username").value.trim();
+  const password = document.getElementById("auth-password").value;
+  const displayName = document.getElementById("auth-display-name").value.trim();
+  const errorEl = document.getElementById("auth-error-msg");
+  const submitBtn = document.getElementById("auth-submit-btn");
+
+  errorEl.classList.add("hidden");
+  submitBtn.disabled = true;
+  submitBtn.textContent = "Đang xử lý…";
+
+  const endpoint = authMode === "login" ? "/api/auth/login" : "/api/auth/register";
+  const payload = authMode === "login" ? { username, password } : { username, password, displayName };
+
+  try {
+    const res = await fetch(endpoint, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    const data = await res.json();
+    if (data.ok) {
+      currentUser = data.user;
+      closeAuthModal();
+      renderUserAuthBar();
+      toast("ok", "👋", `Xin chào, ${currentUser.displayName || currentUser.username}!`);
+      if (currentUser.displayName) {
+        nameEl.value = currentUser.displayName;
+        localStorage.setItem("guestName", currentUser.displayName);
+      }
+      checkActivePointDrop();
+    } else {
+      errorEl.textContent = data.reason || "Lỗi xác thực, vui lòng thử lại.";
+      errorEl.classList.remove("hidden");
+    }
+  } catch (err) {
+    errorEl.textContent = "Lỗi kết nối mạng: " + err.message;
+    errorEl.classList.remove("hidden");
+  } finally {
+    submitBtn.disabled = false;
+    submitBtn.textContent = authMode === "login" ? "Đăng nhập ngay" : "Đăng ký tài khoản";
+  }
+});
+
+async function handleLogout() {
+  try {
+    await fetch("/api/auth/logout", { method: "POST" });
+  } catch {}
+  currentUser = null;
+  renderUserAuthBar();
+  toast("info", "👋", "Đã đăng xuất tài khoản.");
+}
+
+// --- Daily Check-in & Streak Modal ----------------------------------------
+function openCheckinModal() {
+  if (!currentUser) {
+    openAuthModal("login");
+    return;
+  }
+  const modal = document.getElementById("checkin-modal");
+  document.getElementById("modal-streak-count").textContent = currentUser.currentStreak || 0;
+  document.getElementById("checkin-greeting").textContent = `Xin chào ${currentUser.displayName || currentUser.username}!`;
+
+  const streak = currentUser.currentStreak || 0;
+  const cycle = streak % 30;
+  document.getElementById("ms-3").classList.toggle("achieved", cycle >= 3);
+  document.getElementById("ms-7").classList.toggle("achieved", cycle >= 7);
+  document.getElementById("ms-14").classList.toggle("achieved", cycle >= 14);
+  document.getElementById("ms-30").classList.toggle("achieved", cycle === 0 && streak > 0);
+
+  const checkinBtn = document.getElementById("do-checkin-btn");
+  if (currentUser.checkedInToday) {
+    checkinBtn.disabled = true;
+    checkinBtn.textContent = "✓ Bạn đã điểm danh hôm nay rồi";
+    document.getElementById("checkin-status-text").textContent = "Hãy quay lại vào ngày mai để duy trì streak nhé!";
+  } else {
+    checkinBtn.disabled = false;
+    checkinBtn.textContent = "✨ Điểm Danh Nhận Điểm (+1 🪙)";
+    document.getElementById("checkin-status-text").textContent = "Điểm danh mỗi ngày để nhận điểm vote bài hát và mở khóa mốc thưởng!";
+  }
+
+  modal.classList.remove("hidden");
+}
+
+function closeCheckinModal() {
+  document.getElementById("checkin-modal").classList.add("hidden");
+}
+
+document.getElementById("checkin-modal-close")?.addEventListener("click", closeCheckinModal);
+
+document.getElementById("do-checkin-btn")?.addEventListener("click", async () => {
+  const btn = document.getElementById("do-checkin-btn");
+  btn.disabled = true;
+  btn.textContent = "Đang điểm danh…";
+
+  try {
+    const res = await fetch("/api/me/checkin", { method: "POST" });
+    const data = await res.json();
+    if (data.ok) {
+      currentUser.pointsBalance = data.pointsBalance;
+      currentUser.currentStreak = data.streak;
+      currentUser.checkedInToday = true;
+
+      let msg = `+${data.pointsAwarded} điểm danh ngày`;
+      if (data.bonusAwarded > 0) {
+        msg += ` và +${data.bonusAwarded} thưởng mốc ${data.milestoneHit} ngày! 🎉`;
+      }
+      toast("ok", "🔥", "Điểm danh thành công!", { sub: msg });
+      openCheckinModal();
+      renderUserAuthBar();
+    } else {
+      toast("bad", "!", data.reason || "Không thể điểm danh.");
+      btn.disabled = false;
+    }
+  } catch (err) {
+    toast("bad", "⚠️", "Lỗi kết nối: " + err.message);
+    btn.disabled = false;
+  }
+});
+
+// --- Claimable Point Drops ------------------------------------------------
+async function checkActivePointDrop() {
+  if (!currentUser) return;
+  try {
+    const res = await fetch("/api/me/point-drops/active");
+    const data = await res.json();
+    if (data.ok && data.activeDrop) {
+      showPointDropBanner(data.activeDrop);
+    } else {
+      hidePointDropBanner();
+    }
+  } catch {}
+}
+
+function showPointDropBanner(drop) {
+  currentActiveDrop = drop;
+  const banner = document.getElementById("point-drop-banner");
+  if (!banner) return;
+  document.getElementById("drop-banner-title").textContent = drop.title;
+  document.getElementById("drop-banner-sub").textContent = `+${drop.points} điểm quà tặng realtime từ BTC`;
+  banner.classList.remove("hidden");
+}
+
+function hidePointDropBanner() {
+  currentActiveDrop = null;
+  document.getElementById("point-drop-banner")?.classList.add("hidden");
+}
+
+document.getElementById("drop-claim-btn")?.addEventListener("click", async () => {
+  if (!currentUser) {
+    openAuthModal("login");
+    return;
+  }
+  if (!currentActiveDrop) return;
+
+  const btn = document.getElementById("drop-claim-btn");
+  btn.disabled = true;
+  btn.textContent = "Đang nhận…";
+
+  try {
+    const res = await fetch(`/api/me/point-drops/${currentActiveDrop.id}/claim`, { method: "POST" });
+    const data = await res.json();
+    if (data.ok) {
+      currentUser.pointsBalance = data.pointsBalance;
+      renderUserAuthBar();
+      toast("ok", "🎁", `Nhận thành công +${data.pointsClaimed} điểm!`);
+      hidePointDropBanner();
+    } else {
+      toast("bad", "!", data.reason || "Không thể nhận quà tặng này.");
+      hidePointDropBanner();
+    }
+  } catch (err) {
+    toast("bad", "⚠️", "Lỗi: " + err.message);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "Nhận ngay";
+  }
+});
+
+// --- Song Voting ----------------------------------------------------------
+window.voteSong = async function (itemId) {
+  if (!currentUser) {
+    openAuthModal("login");
+    return;
+  }
+  if (currentUser.pointsBalance < 1) {
+    toast("bad", "🪙", "Bạn không đủ điểm để vote!", { sub: "Hãy điểm danh hàng ngày hoặc chờ airdrop từ BTC." });
+    openCheckinModal();
+    return;
+  }
+
+  try {
+    const res = await fetch(`/api/queue/${itemId}/vote`, { method: "POST" });
+    const data = await res.json();
+    if (data.ok) {
+      currentUser.pointsBalance = data.pointsBalance;
+      renderUserAuthBar();
+      toast("ok", "❤️", "Đã vote thành công!", { sub: `Số dư còn lại: ${currentUser.pointsBalance} 🪙` });
+    } else {
+      toast("bad", "!", data.reason || "Không thể vote cho bài hát này.");
+    }
+  } catch (err) {
+    toast("bad", "⚠️", "Lỗi kết nối: " + err.message);
+  }
+};
+
+function escapeHtml(str) {
+  if (!str) return "";
+  return String(str)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
 
 const resultsEl = document.getElementById("results");
 const resultsSkeletonEl = document.getElementById("results-skeleton");
@@ -815,6 +1124,17 @@ function connectWs() {
       } else {
         setChatStatus(msg.reason || "Không thể gửi tin nhắn.", "bad");
       }
+    } else if (msg.type === "pointDropAvailable") {
+      showPointDropBanner(msg.drop);
+      toast("info", "🎁", "Có đợt quà tặng điểm mới từ BTC!");
+    } else if (msg.type === "airdropDirect") {
+      if (currentUser) {
+        currentUser.pointsBalance += msg.points;
+        renderUserAuthBar();
+        toast("ok", "🚀", `Bạn vừa nhận được airdrop +${msg.points} điểm!`, { sub: msg.title });
+      }
+    } else if (msg.type === "voteResult") {
+      if (!msg.ok) toast("bad", "!", msg.reason || "Lỗi vote bài hát");
     } else if (msg.type === "removeOwnResult") {
       pendingRemovals.delete(msg.id);
       if (msg.ok) toast("ok", "✓", "Đã xóa khỏi hàng đợi.");
@@ -863,10 +1183,26 @@ function renderQueue(state) {
   const myIds = loadMyRequestIds();
   queue.forEach((item, i) => {
     const li = document.createElement("li");
+    const voteCount = item.voteScore || 0;
+    const isPinned = item.pinned === true;
+
     li.innerHTML = `
       <span class="q-num">${i + 1}</span>
       <img src="${item.thumbnail || NO_THUMB}" alt="" loading="lazy" />
-      <div class="q-text"><div class="t-row"><span class="t"></span></div><div class="s"></div><div class="q-requester"></div><div class="q-eta"></div></div>
+      <div class="q-text">
+        <div class="t-row">
+          <span class="t"></span>
+          ${isPinned ? '<span class="q-pinned-badge">📌 Ghim</span>' : ""}
+        </div>
+        <div class="s"></div>
+        <div class="q-requester"></div>
+        <div class="q-eta"></div>
+      </div>
+      <div class="q-vote-wrap">
+        <button class="q-vote-btn" type="button" title="Vote để đẩy bài hát lên đầu (Tốn 1 điểm)" onclick="voteSong('${item.id}')">
+          ❤️ <span>${voteCount}</span>
+        </button>
+      </div>
       <button class="q-remove-own hidden" type="button" title="Xóa bài của bạn" aria-label="Xóa bài của bạn">×</button>`;
     li.querySelector(".t").textContent = item.title;
     updateMarqueeTitle(li.querySelector(".t"));
@@ -906,6 +1242,7 @@ renderSingers();
 selectGenre("All"); // hiển thị tab và tải bài hát thật khi mở trang
 renderRequestSettings();
 renderFeedback();
+fetchMe();
 connectWs();
 setInterval(() => {
   if (lastQueueState) renderQueue(lastQueueState);

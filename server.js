@@ -2,12 +2,13 @@
 //
 //   /        -> trang host (chiếu trang này; hiển thị QR + trình phát + hàng đợi)
 //   /guest   -> trang khách (điện thoại mở trang này qua mã QR)
+//   /admin   -> bảng điều khiển quản trị (thành viên, airdrop, điểm, góp ý, chat)
 //
 // Quy trình khi khách yêu cầu bài hát:
 //   1. rào chắn           — thời gian chờ, trùng lặp, giới hạn hàng đợi
 //   2. checkPlayable()    — từ chối video đã xóa/riêng tư/không tồn tại
 //   3. moderate()         — phán quyết LLM tùy chọn cho sự kiện này (fail-open)
-//   4. state.add()        — thêm vào hàng đợi; phát tới mọi client qua WebSocket
+//   4. state.add()        — thêm vào hàng đợi (SQLite SSOT); phát tới mọi client qua WebSocket
 
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from "node:fs";
 import { randomUUID } from "node:crypto";
@@ -35,6 +36,24 @@ import {
   pushRecentChat,
 } from "./src/chat.js";
 
+import { initDb } from "./src/db.js";
+import { UserRepository } from "./src/repositories/userRepository.js";
+import { SessionRepository } from "./src/repositories/sessionRepository.js";
+import { LedgerRepository } from "./src/repositories/ledgerRepository.js";
+import { QueueRepository } from "./src/repositories/queueRepository.js";
+import { DropRepository } from "./src/repositories/dropRepository.js";
+import {
+  createAuthMiddleware,
+  hashPassword,
+  verifyPassword,
+  generateSessionToken,
+  setSessionCookie,
+  clearSessionCookie,
+  requireAuth,
+  requireAdmin,
+} from "./src/auth.js";
+import { performCheckin, getLocalDate } from "./src/checkin.js";
+
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 // --- Bộ nạp .env tối giản (không phụ thuộc) -------------------------------
@@ -50,15 +69,20 @@ if (existsSync(envPath)) {
 
 const PORT = parseInt(process.env.PORT || "45416", 10);
 const LAN_IP = detectLanIp(process.env.HOST_IP);
-// PUBLIC_URL (ví dụ https://grad-din-music.hangton.net) được ưu tiên khi ứng dụng
-// chạy sau reverse proxy. Nếu không có, dùng IP LAN + port.
 const PUBLIC_BASE = (process.env.PUBLIC_URL || "").replace(/\/+$/, "");
 const GUEST_URL = PUBLIC_BASE ? `${PUBLIC_BASE}/guest` : `http://${LAN_IP}:${PORT}/guest`;
+
+// --- Khởi tạo SQLite Database & Repositories (SSOT) -----------------------
+const db = initDb();
+const userRepo = new UserRepository(db);
+const sessionRepo = new SessionRepository(db);
+const ledgerRepo = new LedgerRepository(db);
+const queueRepo = new QueueRepository(db);
+const dropRepo = new DropRepository(db);
+
+const state = new JukeboxState(db);
+
 // --- Cài đặt host được lưu bền vững ----------------------------------------
-// Bộ lọc bật/tắt, chế độ kiểm duyệt, thời gian chờ và bối cảnh sự kiện đều có thể
-// chỉnh trực tiếp từ trang host và được lưu qua các lần khởi động lại trong
-// data/settings.json (docker-compose gắn ./data làm volume). Giá trị .env chỉ
-// khởi tạo cho lần chạy đầu tiên.
 const DATA_DIR = path.join(__dirname, "data");
 const SETTINGS_PATH = path.join(DATA_DIR, "settings.json");
 const FEEDBACK_PATH = path.join(DATA_DIR, "feedback.json");
@@ -69,28 +93,22 @@ try {
   /* lần chạy đầu tiên — dùng .env bên dưới */
 }
 
-// Bộ lọc (kiểm duyệt LLM): khi BẬT nhưng chưa cấu hình API key, kiểm duyệt sẽ
-// fail-open (chấp thuận mọi thứ) — không gây hại.
 let filterOn =
   savedSettings.filterOn ?? String(process.env.ENABLE_MODERATION || "").toLowerCase() === "true";
-// "strict" = chỉ nội dung an toàn cho gia đình; "default" = chặn nội dung không
-// phải âm nhạc/rõ ràng/không phù hợp.
 let moderationMode =
   savedSettings.moderationMode ??
   ((process.env.MODERATION_MODE || "").toLowerCase() === "strict" ? "strict" : "default");
-// Bối cảnh sự kiện cho LLM kiểm duyệt ("đây là loại sự kiện nào?") — một bản
-// triển khai phục vụ nhiều địa điểm. Rỗng = dùng mặc định tích hợp trong moderation.js.
 let eventContext = savedSettings.eventContext ?? (process.env.EVENT_CONTEXT || "");
-// Thời gian chờ request theo từng khách (giây, 0 = tắt).
 let cooldownSeconds = savedSettings.cooldownSeconds ?? 15;
-// Giới hạn số bài sắp phát: tắt hoặc một trong các mốc UX định sẵn.
 const QUEUE_LIMIT_STEPS = [5, 10, 15, 20];
 let queueLimitOn = savedSettings.queueLimitOn ?? false;
 let queueLimit = QUEUE_LIMIT_STEPS.includes(savedSettings.queueLimit) ? savedSettings.queueLimit : 10;
-// Một host có thể không muốn hiện tên người yêu cầu; khi bật, guest phải nhập tên.
 let requireName = savedSettings.requireName ?? false;
 let feedbackOn = savedSettings.feedbackOn ?? true;
 let chatOn = savedSettings.chatOn ?? true;
+let voteSortOn = savedSettings.voteSortOn ?? true;
+state.voteSortOn = voteSortOn;
+
 const chatMessages = [];
 const chatLastSentAt = new WeakMap();
 
@@ -108,7 +126,7 @@ function saveSettings() {
     writeFileSync(
       SETTINGS_PATH,
       JSON.stringify(
-        { filterOn, moderationMode, eventContext, cooldownSeconds, queueLimitOn, queueLimit, requireName, feedbackOn, chatOn },
+        { filterOn, moderationMode, eventContext, cooldownSeconds, queueLimitOn, queueLimit, requireName, feedbackOn, chatOn, voteSortOn },
         null,
         2
       )
@@ -138,40 +156,218 @@ function feedbackStats() {
 }
 
 const app = express();
-app.set("trust proxy", true); // chạy sau reverse proxy — req.ip cần đọc X-Forwarded-For
+app.set("trust proxy", true);
 app.use(express.json());
+app.use(createAuthMiddleware(db));
 
-// --- Xác thực host (tùy chọn) ---------------------------------------------
-// HOST_PASSWORD trong .env bảo vệ trang máy chiếu (Basic Auth) và các điều khiển
-// của trang (token theo mỗi lần khởi động được trang host gửi qua WebSocket).
-// Khách không bao giờ cần mật khẩu này. Bỏ trống = mở trang host, phù hợp mạng
-// LAN đáng tin cậy.
+// --- Xác thực host (Basic Auth hoặc Admin Session) ------------------------
 const HOST_PASSWORD = process.env.HOST_PASSWORD || "";
 const hostToken = randomUUID();
+
 function requireHostAuth(req, res, next) {
+  if (req.user && req.user.role === "admin" && req.user.status === "active") {
+    return next();
+  }
   if (!HOST_PASSWORD) return next();
   const b64 = (req.headers.authorization || "").split(" ")[1] || "";
   const pass = Buffer.from(b64, "base64").toString().split(":").slice(1).join(":");
   if (pass === HOST_PASSWORD) return next();
-  // HTTP headers must be ASCII; keep the localized message in the response body.
   res.set("WWW-Authenticate", 'Basic realm="Event Music Host"').status(401).send("Yêu cầu mật khẩu.");
 }
-app.use("/host.html", requireHostAuth); // bản tĩnh không được bỏ qua bảo vệ của "/"
+
+function requireAdminPermission(req, res, next) {
+  if (req.user && req.user.role === "admin" && req.user.status === "active") {
+    return next();
+  }
+  // Cho phép Basic Auth Host vào xem trang admin nếu có HOST_PASSWORD
+  if (HOST_PASSWORD) {
+    const b64 = (req.headers.authorization || "").split(" ")[1] || "";
+    const pass = Buffer.from(b64, "base64").toString().split(":").slice(1).join(":");
+    if (pass === HOST_PASSWORD) return next();
+  }
+  if (!req.user) {
+    return res.status(401).json({ ok: false, reason: "Vui lòng đăng nhập tài khoản quản trị." });
+  }
+  return res.status(403).json({ ok: false, reason: "Yêu cầu quyền Quản trị viên." });
+}
+
+app.use("/host.html", requireHostAuth);
 app.use("/feedback.html", requireHostAuth);
+app.use("/admin.html", requireHostAuth);
 
 app.use(
   express.static(path.join(__dirname, "public"), {
-    // Buộc xác thực lại ở mỗi lần tải (304 nhanh qua ETag). Nếu không, iOS Safari
-    // có thể giữ JS/CSS cũ sau khi triển khai.
     setHeaders: (res) => res.setHeader("Cache-Control", "no-cache"),
   })
 );
 
-const state = new JukeboxState();
+// --- API XÁC THỰC & THÀNH VIÊN --------------------------------------------
 
-// --- API HTTP -------------------------------------------------------------
+app.post("/api/auth/register", (req, res) => {
+  const { username, password, displayName } = req.body || {};
+  if (!username || typeof username !== "string" || username.trim().length < 3 || username.trim().length > 30) {
+    return res.status(400).json({ ok: false, reason: "Tên đăng nhập phải từ 3 đến 30 ký tự." });
+  }
+  if (!/^[a-zA-Z0-9_]+$/.test(username.trim())) {
+    return res.status(400).json({ ok: false, reason: "Tên đăng nhập chỉ chứa chữ cái, số và dấu gạch dưới." });
+  }
+  if (!password || typeof password !== "string" || password.length < 6) {
+    return res.status(400).json({ ok: false, reason: "Mật khẩu phải có tối thiểu 6 ký tự." });
+  }
 
-// Khởi tạo trang host: URL của khách + mã QR trỏ tới URL đó.
+  const existing = userRepo.findByUsername(username.trim());
+  if (existing) {
+    return res.status(409).json({ ok: false, reason: "Tên đăng nhập đã tồn tại." });
+  }
+
+  const passwordHash = hashPassword(password);
+  const user = userRepo.create({
+    username: username.trim(),
+    passwordHash,
+    displayName: (displayName || username).trim().slice(0, 40),
+    role: "user",
+  });
+
+  const token = generateSessionToken();
+  const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
+  sessionRepo.create(user.id, token, expiresAt);
+  setSessionCookie(res, token, req);
+
+  res.json({
+    ok: true,
+    user: {
+      id: user.id,
+      username: user.username,
+      displayName: user.display_name,
+      role: user.role,
+      pointsBalance: user.points_balance,
+      currentStreak: user.current_streak,
+    },
+  });
+});
+
+app.post("/api/auth/login", (req, res) => {
+  const { username, password } = req.body || {};
+  if (!username || !password) {
+    return res.status(400).json({ ok: false, reason: "Vui lòng nhập tên đăng nhập và mật khẩu." });
+  }
+
+  const user = userRepo.findByUsername(username);
+  if (!user || !verifyPassword(password, user.password_hash)) {
+    return res.status(401).json({ ok: false, reason: "Tên đăng nhập hoặc mật khẩu không chính xác." });
+  }
+
+  if (user.status === "blocked") {
+    return res.status(403).json({ ok: false, reason: "Tài khoản của bạn đã bị khóa." });
+  }
+
+  const token = generateSessionToken();
+  const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
+  sessionRepo.create(user.id, token, expiresAt);
+  setSessionCookie(res, token, req);
+
+  res.json({
+    ok: true,
+    user: {
+      id: user.id,
+      username: user.username,
+      displayName: user.display_name,
+      role: user.role,
+      pointsBalance: user.points_balance,
+      currentStreak: user.current_streak,
+    },
+  });
+});
+
+app.post("/api/auth/logout", (req, res) => {
+  if (req.sessionToken) {
+    sessionRepo.delete(req.sessionToken);
+  }
+  clearSessionCookie(res, req);
+  res.json({ ok: true });
+});
+
+app.get("/api/me", (req, res) => {
+  if (!req.user) {
+    return res.json({ ok: true, authenticated: false, user: null });
+  }
+
+  const today = getLocalDate();
+  const hasCheckedInToday = req.user.lastCheckinDate === today;
+  const activeDrop = dropRepo.getActiveClaimableDrop();
+  const alreadyClaimedDrop = activeDrop ? dropRepo.hasUserClaimed(activeDrop.id, req.user.id) : false;
+
+  res.json({
+    ok: true,
+    authenticated: true,
+    user: {
+      id: req.user.id,
+      username: req.user.username,
+      displayName: req.user.displayName,
+      role: req.user.role,
+      status: req.user.status,
+      pointsBalance: req.user.pointsBalance,
+      currentStreak: req.user.currentStreak,
+      hasCheckedInToday,
+      activeClaimableDrop: activeDrop && !alreadyClaimedDrop ? { id: activeDrop.id, title: activeDrop.title, points: activeDrop.points } : null,
+    },
+  });
+});
+
+// --- API ĐIỂM DANH & QUÀ TẶNG (POINT DROPS) -------------------------------
+
+app.post("/api/me/checkin", requireAuth, (req, res) => {
+  try {
+    const result = performCheckin(db, req.user.id);
+    res.json(result);
+  } catch (err) {
+    res.status(400).json({ ok: false, reason: err.message });
+  }
+});
+
+app.get("/api/me/points/history", requireAuth, (req, res) => {
+  const page = Math.max(1, parseInt(req.query.page || "1", 10));
+  const limit = Math.min(100, Math.max(1, parseInt(req.query.limit || "20", 10)));
+  const offset = (page - 1) * limit;
+
+  const result = ledgerRepo.listByUser(req.user.id, { limit, offset });
+  res.json({ ok: true, page, limit, total: result.total, ledger: result.ledger });
+});
+
+app.get("/api/me/point-drops/active", (req, res) => {
+  const drop = dropRepo.getActiveClaimableDrop();
+  if (!drop) return res.json({ ok: true, drop: null, alreadyClaimed: false });
+
+  const alreadyClaimed = req.user ? dropRepo.hasUserClaimed(drop.id, req.user.id) : false;
+  res.json({
+    ok: true,
+    drop: { id: drop.id, title: drop.title, points: drop.points, createdAt: drop.created_at },
+    alreadyClaimed,
+  });
+});
+
+app.post("/api/me/point-drops/:dropId/claim", requireAuth, (req, res) => {
+  try {
+    const result = dropRepo.claimDrop(req.params.dropId, req.user.id);
+    res.json({ ok: true, ...result });
+  } catch (err) {
+    res.status(400).json({ ok: false, reason: err.message });
+  }
+});
+
+// --- API BÌNH CHỌN (VOTING) ------------------------------------------------
+
+app.post("/api/queue/:itemId/vote", requireAuth, (req, res) => {
+  try {
+    const result = state.vote(req.params.itemId, req.user.id);
+    res.json({ ok: true, ...result });
+  } catch (err) {
+    res.status(400).json({ ok: false, reason: err.message });
+  }
+});
+
+// --- API HỆ THỐNG & YOUTUBE -----------------------------------------------
+
 app.get("/api/info", async (_req, res) => {
   try {
     const qr = await QRCode.toDataURL(GUEST_URL, { width: 480, margin: 1 });
@@ -186,23 +382,18 @@ app.get("/api/info", async (_req, res) => {
       requireName,
       feedbackOn,
       chatOn,
+      voteSortOn,
     });
   } catch {
     res.status(500).json({ error: "Không thể tạo mã QR." });
   }
 });
 
-// Khám phá/duyệt: cùng cách tìm kiếm YouTube nhưng có cache. Các tab thể loại và
-// chip ca sĩ trên trang khách đều dùng các query định sẵn, nên một lần lấy dữ liệu
-// phục vụ mọi khách trong TTL thay vì gọi YouTube cho từng lần chạm.
-const browseCache = new Map(); // query -> { at, results }
+const browseCache = new Map();
 const BROWSE_TTL_MS = 30 * 60 * 1000;
-
-// Duyệt chỉ dành cho bài đơn: video tổng hợp "100 bài hát" dài một giờ vẫn qua
-// bộ lọc tìm kiếm chỉ-video của YouTube, nhưng một bài đơn không dài như vậy.
 const MAX_SINGLE_SECONDS = 10 * 60;
 function durationSeconds(d) {
-  if (!d || !/^[\d:]+$/.test(d)) return Infinity; // "LIVE"/không rõ → không phải bài đơn
+  if (!d || !/^[\d:]+$/.test(d)) return Infinity;
   return d.split(":").reduce((acc, part) => acc * 60 + Number(part), 0);
 }
 
@@ -212,7 +403,6 @@ app.get("/api/browse", async (req, res) => {
   const hit = browseCache.get(q);
   if (hit && Date.now() - hit.at < BROWSE_TTL_MS) return res.json({ results: hit.results });
   try {
-    // "__vn_hits" is the All-tab sentinel: use the Vietnam chart instead of text search.
     const fetched =
       q === "__vn_hits"
         ? await fetchVietnamChartHits({ limit: 40 })
@@ -229,12 +419,7 @@ app.get("/api/browse", async (req, res) => {
   }
 });
 
-// Kiểm soát spam: mỗi khách chỉ được một request trong mỗi khoảng thời gian chờ
-// (cooldownSeconds). Khóa dựa trên IP + clientId cố định của trang khách — tại sự
-// kiện, phần lớn khách dùng chung một IP NAT của Wi-Fi địa điểm, nên chỉ dùng IP
-// sẽ khiến cả buổi tiệc dùng chung thời gian chờ. (clientId do client chọn, nên
-// người phá rối có chủ ý vẫn có thể đổi nó — nút xóa của host là lớp bảo vệ cuối.)
-const lastRequestAt = new Map(); // "ip|clientId" -> thời điểm của lần thử cuối
+const lastRequestAt = new Map();
 function pruneLastRequestAt() {
   if (lastRequestAt.size <= 500) return;
   const cutoff = Date.now() - cooldownSeconds * 1000;
@@ -257,7 +442,6 @@ app.get("/api/search", async (req, res) => {
   }
 });
 
-// Nhận link YouTube do khách tự dán, lấy metadata để hiển thị trước khi thêm.
 app.post("/api/youtube/resolve", async (req, res) => {
   const rawUrl = typeof req.body?.url === "string" ? req.body.url.trim() : "";
   if (!rawUrl) return res.status(400).json({ ok: false, reason: "Vui lòng dán link YouTube." });
@@ -280,17 +464,14 @@ app.post("/api/youtube/resolve", async (req, res) => {
   res.json({ ok: true, song });
 });
 
-// Khởi tạo trang host, phần 2: token điều khiển WS (được bảo vệ bằng Basic Auth,
-// chỉ trang host đã xác thực mới lấy được token).
 app.get("/api/host-token", requireHostAuth, (_req, res) => {
   res.json({ token: HOST_PASSWORD ? hostToken : "" });
 });
 
-// Khách yêu cầu bài hát.
 app.post("/api/request", async (req, res) => {
   const { videoId, title, channel, duration, thumbnail, name, clientId } = req.body || {};
   const requesterId = (clientId || "").toString().slice(0, 64);
-  const requesterName = (name || "").toString().trim().slice(0, 40);
+  const requesterName = (name || req.user?.displayName || "").toString().trim().slice(0, 40);
   if (requireName && !requesterName) {
     return res.json({ ok: false, reason: "Vui lòng nhập tên để thêm bài hát." });
   }
@@ -300,7 +481,6 @@ app.post("/api/request", async (req, res) => {
     const waitMs = cooldownSeconds * 1000 - (Date.now() - last);
     if (waitMs > 0) {
       const retryIn = Math.ceil(waitMs / 1000);
-      // retryIn cho phép trang khách hiển thị đồng hồ đếm ngược trực tiếp.
       return res.json({ ok: false, reason: `Vui lòng chờ — thử lại sau ${retryIn} giây.`, retryIn });
     }
   }
@@ -313,27 +493,20 @@ app.post("/api/request", async (req, res) => {
     return res.json({ ok: false, reason: "Hàng đợi đã đầy — vui lòng thử lại sau khi phát bớt bài." });
   }
 
-  // Từ chối thêm lại bài hát đang phát hoặc đã có trong hàng đợi.
   if (state.has(videoId)) {
     return res.json({ ok: false, reason: "Bài hát này đã có trong hàng đợi!" });
   }
 
-  // Chỉ bắt đầu tính thời gian chờ từ đây: các bước kiểm tra phía trên không tốn
-  // tài nguyên và không nên khóa khách (ví dụ sau khi chạm vào bài trùng), còn
-  // mọi bước bên dưới đều gọi YouTube và có thể gọi LLM — đó là phần cần bảo vệ.
   lastRequestAt.set(floodKey, Date.now());
   pruneLastRequestAt();
 
-  // 1. Video có thực sự phát được không?
   const playable = await checkPlayable(videoId);
   if (!playable.ok) {
     return res.json({ ok: false, reason: playable.reason });
   }
 
-  // 2. Bộ lọc (kiểm duyệt LLM) — chỉ chạy khi được bật. Bổ sung category /
-  //    isFamilySafe / description của video rồi hỏi LLM. Fail-open.
   if (filterOn) {
-    const details = await fetchVideoDetails(videoId); // cố gắng tối đa, có thể là null
+    const details = await fetchVideoDetails(videoId);
     const verdict = await moderate({ title, channel }, details, {
       strict: moderationMode === "strict",
       ...(eventContext ? { eventContext } : {}),
@@ -343,9 +516,6 @@ app.post("/api/request", async (req, res) => {
     }
   }
 
-  // Các bước kiểm tra ở trên là async: request khác có thể đã lấp đầy queue
-  // trong lúc chờ YouTube/LLM. Kiểm tra lại ngay trước khi mutate state để
-  // không vượt giới hạn khi nhiều guest gửi đồng thời.
   if (state.queue.length >= MAX_QUEUE_LENGTH || (queueLimitOn && state.queue.length >= queueLimit)) {
     return res.json({ ok: false, reason: "Hàng đợi đã đầy — vui lòng thử lại sau khi phát bớt bài." });
   }
@@ -353,7 +523,6 @@ app.post("/api/request", async (req, res) => {
     return res.json({ ok: false, reason: "Bài hát này đã có trong hàng đợi!" });
   }
 
-  // 3. Thêm vào hàng đợi.
   const { item, position } = state.add({
     videoId,
     title,
@@ -362,11 +531,136 @@ app.post("/api/request", async (req, res) => {
     thumbnail,
     addedBy: requesterName,
     requesterId,
+    userId: req.user?.id || null,
   });
   res.json({ ok: true, reason: "Đã thêm!", position, id: item.id });
 });
 
-// --- Góp ý ---------------------------------------------------------------
+// --- API QUẢN TRỊ ADMIN (/api/admin/*) --------------------------------------
+
+app.get("/api/admin/users", requireAdminPermission, (req, res) => {
+  const search = (req.query.search || "").toString().trim();
+  const status = (req.query.status || "").toString().trim();
+  const page = Math.max(1, parseInt(req.query.page || "1", 10));
+  const limit = Math.min(100, Math.max(1, parseInt(req.query.limit || "50", 10)));
+  const offset = (page - 1) * limit;
+
+  const result = userRepo.listUsers({ search, status, limit, offset });
+  res.json({ ok: true, page, limit, ...result });
+});
+
+app.post("/api/admin/users/:id/points", requireAdminPermission, (req, res) => {
+  const delta = parseInt(req.body?.delta, 10);
+  const reason = (req.body?.reason || "").toString().trim();
+  if (Number.isNaN(delta) || delta === 0) {
+    return res.status(400).json({ ok: false, reason: "Số điểm thay đổi không hợp lệ." });
+  }
+  if (!reason) {
+    return res.status(400).json({ ok: false, reason: "Vui lòng nhập lý do điều chỉnh điểm." });
+  }
+
+  try {
+    const actorId = req.user?.id || null;
+    const result = userRepo.updatePoints(req.params.id, delta, {
+      type: "admin_adjustment",
+      actorUserId: actorId,
+      reason,
+    });
+    res.json({ ok: true, ...result });
+  } catch (err) {
+    res.status(400).json({ ok: false, reason: err.message });
+  }
+});
+
+app.patch("/api/admin/users/:id", requireAdminPermission, (req, res) => {
+  const { status, role } = req.body || {};
+  try {
+    let user = userRepo.findById(req.params.id);
+    if (!user) return res.status(404).json({ ok: false, reason: "Không tìm thấy người dùng." });
+
+    if (status && ["active", "blocked"].includes(status)) {
+      user = userRepo.updateStatus(req.params.id, status);
+    }
+    if (role && ["user", "admin"].includes(role)) {
+      user = userRepo.updateRole(req.params.id, role);
+    }
+    res.json({ ok: true, user });
+  } catch (err) {
+    res.status(400).json({ ok: false, reason: err.message });
+  }
+});
+
+app.get("/api/admin/users/:id/ledger", requireAdminPermission, (req, res) => {
+  const page = Math.max(1, parseInt(req.query.page || "1", 10));
+  const limit = Math.min(100, Math.max(1, parseInt(req.query.limit || "50", 10)));
+  const offset = (page - 1) * limit;
+
+  const result = ledgerRepo.listByUser(req.params.id, { limit, offset });
+  res.json({ ok: true, page, limit, ...result });
+});
+
+app.post("/api/admin/point-drops", requireAdminPermission, (req, res) => {
+  const { type, title, points } = req.body || {};
+  const numPoints = parseInt(points, 10);
+  if (Number.isNaN(numPoints) || numPoints <= 0) {
+    return res.status(400).json({ ok: false, reason: "Số điểm phải lớn hơn 0." });
+  }
+
+  const actorId = req.user?.id || (userRepo.findByUsername("admin")?.id || null);
+
+  if (type === "direct") {
+    const reason = (title || "Airdrop từ Ban Quản Trị").trim();
+    const result = dropRepo.createDirectAirdrop({ points: numPoints, reason, createdByUserId: actorId });
+
+    // WebSocket broadcast airdrop event
+    const msg = JSON.stringify({ type: "airdropDirect", points: numPoints, reason });
+    for (const client of wss.clients) {
+      if (client.readyState === 1) client.send(msg);
+    }
+
+    return res.json({ ok: true, type: "direct", ...result });
+  }
+
+  if (type === "claimable") {
+    if (!title || !title.trim()) {
+      return res.status(400).json({ ok: false, reason: "Vui lòng nhập tiêu đề đợt nhận điểm." });
+    }
+    const drop = dropRepo.createClaimableDrop({ title: title.trim(), points: numPoints, createdByUserId: actorId });
+
+    // WebSocket broadcast claimable drop event
+    const msg = JSON.stringify({ type: "pointDropAvailable", drop: { id: drop.id, title: drop.title, points: drop.points } });
+    for (const client of wss.clients) {
+      if (client.readyState === 1) client.send(msg);
+    }
+
+    return res.json({ ok: true, type: "claimable", drop });
+  }
+
+  res.status(400).json({ ok: false, reason: "Hình thức phát điểm không hợp lệ." });
+});
+
+app.get("/api/admin/point-drops", requireAdminPermission, (req, res) => {
+  const page = Math.max(1, parseInt(req.query.page || "1", 10));
+  const limit = Math.min(100, Math.max(1, parseInt(req.query.limit || "50", 10)));
+  const offset = (page - 1) * limit;
+
+  const result = dropRepo.listDrops({ limit, offset });
+  res.json({ ok: true, page, limit, ...result });
+});
+
+app.get("/api/admin/ledger", requireAdminPermission, (req, res) => {
+  const search = (req.query.search || "").toString().trim();
+  const type = (req.query.type || "").toString().trim();
+  const page = Math.max(1, parseInt(req.query.page || "1", 10));
+  const limit = Math.min(100, Math.max(1, parseInt(req.query.limit || "50", 10)));
+  const offset = (page - 1) * limit;
+
+  const result = ledgerRepo.listAll({ search, type, limit, offset });
+  res.json({ ok: true, page, limit, ...result });
+});
+
+// --- GÓP Ý & CHAT ---------------------------------------------------------
+
 const feedbackLastSubmittedAt = new Map();
 app.post("/api/feedback", (req, res) => {
   if (!feedbackOn) return res.status(403).json({ ok: false, reason: "Tính năng góp ý hiện đang tắt." });
@@ -385,11 +679,11 @@ app.post("/api/feedback", (req, res) => {
   res.json({ ok: true });
 });
 
-app.get("/api/feedback", requireHostAuth, (_req, res) => {
+app.get("/api/feedback", requireAdminPermission, (_req, res) => {
   res.json({ feedbackOn, chatOn, stats: feedbackStats(), items: feedbackItems });
 });
 
-app.patch("/api/feedback/settings", requireHostAuth, (req, res) => {
+app.patch("/api/feedback/settings", requireAdminPermission, (req, res) => {
   const hasFeedbackSetting = typeof req.body?.on === "boolean";
   const hasChatSetting = typeof req.body?.chatOn === "boolean";
   if (!hasFeedbackSetting && !hasChatSetting) {
@@ -411,7 +705,7 @@ app.patch("/api/feedback/settings", requireHostAuth, (req, res) => {
   res.json({ ok: true, feedbackOn, chatOn });
 });
 
-app.delete("/api/feedback/:id", requireHostAuth, (req, res) => {
+app.delete("/api/feedback/:id", requireAdminPermission, (req, res) => {
   const before = feedbackItems.length;
   feedbackItems = feedbackItems.filter((item) => item.id !== req.params.id);
   if (feedbackItems.length === before) return res.status(404).json({ ok: false, reason: "Không tìm thấy góp ý." });
@@ -419,7 +713,7 @@ app.delete("/api/feedback/:id", requireHostAuth, (req, res) => {
   res.json({ ok: true });
 });
 
-app.delete("/api/chat", requireHostAuth, (_req, res) => {
+app.delete("/api/chat", requireAdminPermission, (_req, res) => {
   const cleared = chatMessages.length;
   chatMessages.length = 0;
   const message = JSON.stringify({ type: "chatCleared" });
@@ -429,35 +723,41 @@ app.delete("/api/chat", requireHostAuth, (_req, res) => {
   res.json({ ok: true, cleared });
 });
 
-// Cloudflare ghi đè no-cache bằng TTL trình duyệt 4 giờ cho .js/.css, khiến các
-// trang đang mở chạy script cũ sau khi triển khai. Gắn phiên bản vào URL asset
-// để phá cache: mỗi lần khởi động (= mỗi lần triển khai) HTML trỏ tới URL mới.
+// --- PHỤC VỤ TRANG HTML ---------------------------------------------------
+
 const BOOT_ID = Date.now().toString(36);
 function versionedPage(name) {
-  return readFileSync(path.join(__dirname, "public", name), "utf8").replace(
-    /(href|src)="\/((?:guest|host|feedback)\.(?:css|js))"/g,
+  const filePath = path.join(__dirname, "public", name);
+  if (!existsSync(filePath)) return `<!DOCTYPE html><html><body><h1>${name} not found</h1></body></html>`;
+  return readFileSync(filePath, "utf8").replace(
+    /(href|src)="\/((?:guest|host|feedback|admin)\.(?:css|js))"/g,
     `$1="/$2?v=${BOOT_ID}"`
   );
 }
+
 const HOST_PAGE = versionedPage("host.html");
 const GUEST_PAGE = versionedPage("guest.html");
+const ADMIN_PAGE = versionedPage("admin.html");
 const FEEDBACK_PAGE = versionedPage("feedback.html");
 
-// Trang host nằm tại "/".
 app.get("/", requireHostAuth, (_req, res) => {
   res.set("Cache-Control", "no-cache").type("html").send(HOST_PAGE);
 });
 
-// Trang khách — mã QR trỏ tới đây (không có phần mở rộng nên static không phục vụ).
 app.get("/guest", (_req, res) => {
   res.set("Cache-Control", "no-cache").type("html").send(GUEST_PAGE);
+});
+
+app.get("/admin", requireHostAuth, (_req, res) => {
+  res.set("Cache-Control", "no-cache").type("html").send(ADMIN_PAGE);
 });
 
 app.get("/feedback", requireHostAuth, (_req, res) => {
   res.set("Cache-Control", "no-cache").type("html").send(FEEDBACK_PAGE);
 });
 
-// --- WebSocket: đồng bộ hàng đợi thời gian thực + điều khiển host ------------
+// --- WebSocket: ĐỒNG BỘ REALTIME & ĐIỀU KHIỂN HOST ------------------------
+
 const server = http.createServer(app);
 const wss = new WebSocketServer({ server });
 
@@ -474,8 +774,10 @@ function stateMessage() {
     requireName,
     feedbackOn,
     chatOn,
+    voteSortOn,
   });
 }
+
 function broadcastState() {
   const msg = stateMessage();
   for (const client of wss.clients) {
@@ -485,11 +787,9 @@ function broadcastState() {
 state.onChange = broadcastState;
 
 wss.on("connection", (ws) => {
-  // Không có mật khẩu thì mọi socket đều có thể điều khiển (mạng LAN đáng tin);
-  // nếu có, chỉ socket xác thực bằng token host mới được phép.
   ws.isHost = !HOST_PASSWORD;
+  ws.userId = null;
 
-  // Gửi trạng thái hiện tại ngay khi kết nối.
   ws.send(stateMessage());
   if (chatOn && chatMessages.length) {
     ws.send(JSON.stringify({ type: "chatHistory", messages: chatMessages }));
@@ -503,10 +803,23 @@ wss.on("connection", (ws) => {
     } catch {
       return;
     }
+
     if (msg.type === "auth") {
       if (!HOST_PASSWORD || msg.token === hostToken) ws.isHost = true;
       return;
     }
+
+    if (msg.type === "authSession") {
+      if (msg.token) {
+        const session = sessionRepo.findValid(msg.token);
+        if (session) {
+          ws.userId = session.user_id;
+          if (session.role === "admin") ws.isHost = true;
+        }
+      }
+      return;
+    }
+
     if (msg.type === "chatSend") {
       if (!chatOn) {
         ws.send(JSON.stringify({ type: "chatSendResult", ok: false, reason: "Tính năng chat hiện đang tắt." }));
@@ -545,10 +858,10 @@ wss.on("connection", (ws) => {
       ws.send(JSON.stringify({ type: "chatSendResult", ok: true, id: message.id }));
       return;
     }
-    // Guest được xóa mục của chính mình; server đối chiếu clientId lưu trong item.
+
     if (msg.type === "removeOwn") {
       const id = typeof msg.id === "string" ? msg.id : "";
-      const removed = state.removeOwned(id, (msg.clientId || "").toString().slice(0, 64));
+      const removed = state.removeOwned(id, (msg.clientId || "").toString().slice(0, 64), ws.userId);
       ws.send(JSON.stringify({
         type: "removeOwnResult",
         id,
@@ -557,16 +870,17 @@ wss.on("connection", (ws) => {
       }));
       return;
     }
-    if (!ws.isHost) return; // mọi loại message khác đều là điều khiển của host
+
+    if (!ws.isHost) return;
+
     switch (msg.type) {
-      case "ended": // trình phát host đã phát xong một bài
-      case "error": // trình phát host không thể phát (tắt nhúng/bị khóa theo vùng)
-        if (msg.type === "error") {
-          console.warn(`[host] mã lỗi phát ${msg.code} trên ${msg.videoId} — bỏ qua`);
-        } else {
-          console.log(`[host] đã phát xong ${msg.videoId}`);
-        }
+      case "ended":
+        console.log(`[host] đã phát xong ${msg.videoId}`);
         state.advance(msg.videoId);
+        break;
+      case "error":
+        console.warn(`[host] mã lỗi phát ${msg.code} trên ${msg.videoId} — bỏ qua & hoàn điểm`);
+        state.advance(msg.videoId, { isError: true });
         break;
       case "skip":
         state.skip();
@@ -580,27 +894,32 @@ wss.on("connection", (ws) => {
       case "reorder":
         state.reorder(msg.id, msg.beforeId);
         break;
-      case "setFilter": // host chuyển bộ lọc nội dung: off / on / strict
+      case "unpin":
+        state.unpin(msg.id);
+        break;
+      case "setVoteSort":
+        voteSortOn = !!msg.on;
+        state.setVoteSort(voteSortOn);
+        saveSettings();
+        broadcastState();
+        break;
+      case "setFilter":
         filterOn = !!msg.on;
         if (msg.mode === "strict" || msg.mode === "default") moderationMode = msg.mode;
-        console.log(`[host] bộ lọc ${filterOn ? `BẬT (${moderationMode})` : "TẮT"}`);
         saveSettings();
         broadcastState();
         break;
       case "setCooldown": {
-        // host điều chỉnh thời gian chờ request theo khách (0 = tắt)
         const s = Math.round(Number(msg.seconds));
         if (Number.isFinite(s) && s >= 0 && s <= 300) {
           cooldownSeconds = s;
-          console.log(`[host] đã đặt thời gian chờ request là ${s ? s + " giây" : "TẮT"}`);
           saveSettings();
           broadcastState();
         }
         break;
       }
-      case "setEventContext": // host mô tả địa điểm/dịp tổ chức cho bộ lọc
+      case "setEventContext":
         eventContext = (msg.context || "").toString().slice(0, 300);
-        console.log(`[host] đã đặt bối cảnh sự kiện: ${eventContext || "(mặc định)"}`);
         saveSettings();
         broadcastState();
         break;
@@ -608,14 +927,12 @@ wss.on("connection", (ws) => {
         const nextLimit = Number(msg.limit);
         if (typeof msg.on === "boolean") queueLimitOn = msg.on;
         if (QUEUE_LIMIT_STEPS.includes(nextLimit)) queueLimit = nextLimit;
-        console.log(`[host] giới hạn hàng đợi ${queueLimitOn ? `BẬT (${queueLimit})` : "TẮT"}`);
         saveSettings();
         broadcastState();
         break;
       }
       case "setRequireName":
         requireName = !!msg.on;
-        console.log(`[host] bắt buộc nhập tên ${requireName ? "BẬT" : "TẮT"}`);
         saveSettings();
         broadcastState();
         break;
@@ -627,6 +944,7 @@ server.listen(PORT, "0.0.0.0", () => {
   console.log("\n  🎶  Hệ thống âm nhạc sự kiện đang chạy\n");
   console.log(`  Máy chiếu (host) : http://localhost:${PORT}/`);
   console.log(`  Khách quét QR    : ${GUEST_URL}`);
+  console.log(`  Quản trị (admin) : http://localhost:${PORT}/admin`);
   console.log(
     `  Bộ lọc           : ${filterOn ? `BẬT (${moderationMode})` : "TẮT"} (đổi từ trang host) · ` +
       `LLM ${moderationConfigured() ? "đã cấu hình" : "CHƯA CẤU HÌNH — bộ lọc chấp thuận tất cả"}`

@@ -14,6 +14,7 @@ let eventContext = "";
 let queueLimitOn = false;
 let queueLimit = 10;
 let requireName = false;
+let voteSortOn = true;
 let hostToken = null; // mã điều khiển WS (chỉ cấp cho trang host đã xác thực)
 let ws = null;
 let draggedQueueId = null;
@@ -49,12 +50,14 @@ function connectWs() {
       if (typeof msg.queueLimitOn === "boolean") queueLimitOn = msg.queueLimitOn;
       if (typeof msg.queueLimit === "number") queueLimit = msg.queueLimit;
       if (typeof msg.requireName === "boolean") requireName = msg.requireName;
+      if (typeof msg.voteSortOn === "boolean") voteSortOn = msg.voteSortOn;
       render();
       renderFilter();
       renderCooldown();
       renderContext();
       renderQueueLimit();
       renderRequireName();
+      renderVoteSort();
       syncPlayer();
     }
   };
@@ -275,17 +278,30 @@ function render() {
     const thumb = item.thumbnail
       ? `<img src="${item.thumbnail}" alt="" />`
       : '<img src="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22/%3E" alt="" />';
+
+    const isPinned = item.pinned === true;
+    const voteScore = item.voteScore || 0;
+
     li.innerHTML = `
       <span class="q-drag-handle" title="Kéo để sắp xếp" aria-hidden="true">⠿</span>
       ${thumb}
       <div class="q-meta">
-        <div class="q-title"></div>
+        <div class="q-title-row">
+          <div class="q-title"></div>
+          ${isPinned ? '<span class="q-pinned-badge" title="Bài do host ghim vị trí">📌 Ghim</span>' : ''}
+          ${voteScore > 0 ? `<span class="q-vote-badge" title="${voteScore} lượt vote">❤️ ${voteScore}</span>` : ''}
+        </div>
         <div class="q-sub"></div>
       </div>
+      ${isPinned ? '<button class="q-unpin" title="Bỏ ghim">✕ Ghim</button>' : ''}
       <button class="q-remove" title="Xóa">✕</button>`;
     li.querySelector(".q-title").textContent = item.title;
     updateMarqueeTitle(li.querySelector(".q-title"));
     li.querySelector(".q-sub").textContent = item.addedBy ? `Yêu cầu: ${item.addedBy}` : item.channel;
+
+    if (isPinned) {
+      li.querySelector(".q-unpin").onclick = () => send({ type: "unpin", id: item.id });
+    }
     li.querySelector(".q-remove").onclick = () => send({ type: "remove", id: item.id });
     ul.appendChild(li);
   }
@@ -329,6 +345,13 @@ function renderContext() {
   const input = document.getElementById("context-input");
   // Không ghi đè nội dung host đang nhập bằng dữ liệu phát lại từ máy chủ.
   if (document.activeElement !== input) input.value = eventContext;
+}
+
+function renderVoteSort() {
+  const btn = document.getElementById("vote-sort-toggle");
+  if (!btn) return;
+  btn.innerHTML = `<span>Xếp theo vote: ${voteSortOn ? "Bật" : "Tắt"}</span>`;
+  btn.classList.toggle("on", voteSortOn);
 }
 
 const PAUSE_SVG =
@@ -375,6 +398,9 @@ function wireControls() {
   };
   document.getElementById("require-name-toggle").onclick = () => {
     send({ type: "setRequireName", on: !requireName });
+  };
+  document.getElementById("vote-sort-toggle").onclick = () => {
+    send({ type: "setVoteSort", on: !voteSortOn });
   };
   // Trình chỉnh sửa bối cảnh sự kiện: nút Bối cảnh hiện ô nhập; nút Lưu gửi nội dung.
   const ctxRow = document.getElementById("context-row");

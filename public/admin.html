@@ -1,0 +1,291 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Bảng điều khiển Quản trị · Jukebox</title>
+  <link rel="icon" type="image/png" href="/assets/favicon.png" />
+  <link rel="apple-touch-icon" href="/assets/favicon.png" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Serif:wght@600;700&family=Noto+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/admin.css" />
+</head>
+<body>
+  <main class="admin-app">
+    <div class="top-nav">
+      <a class="back-link" href="/">← Màn hình máy chiếu</a>
+      <div id="admin-user-info" class="admin-user-info"></div>
+    </div>
+
+    <header class="page-head">
+      <div class="page-head-copy">
+        <img class="brand-logo" src="/assets/logo.png" alt="Laztar" />
+        <div>
+          <p class="eyebrow">Hệ thống Jukebox Sự kiện</p>
+          <h1>Bảng điều khiển Quản trị</h1>
+          <p class="intro">Quản lý thành viên, phát điểm airdrop, kiểm toán ledger và điều hành góp ý & chat.</p>
+        </div>
+      </div>
+    </header>
+
+    <!-- Navigation Tabs -->
+    <nav class="admin-tabs" role="tablist">
+      <button id="tab-btn-users" class="tab-btn active" role="tab" aria-selected="true" data-tab="tab-users">
+        👥 Quản lý Thành viên
+      </button>
+      <button id="tab-btn-drops" class="tab-btn" role="tab" aria-selected="false" data-tab="tab-drops">
+        🎁 Phát điểm (Airdrop)
+      </button>
+      <button id="tab-btn-ledger" class="tab-btn" role="tab" aria-selected="false" data-tab="tab-ledger">
+        📜 Lịch sử Ledger
+      </button>
+      <button id="tab-btn-feedback" class="tab-btn" role="tab" aria-selected="false" data-tab="tab-feedback">
+        💬 Góp ý & Chat
+      </button>
+    </nav>
+
+    <div id="global-status" class="global-status" role="status" aria-live="polite"></div>
+
+    <!-- TAB 1: USERS MANAGEMENT -->
+    <section id="tab-users" class="tab-pane active" role="tabpanel">
+      <div class="panel-card">
+        <div class="panel-header">
+          <h2>Danh sách Người dùng</h2>
+          <div class="filter-group">
+            <input id="user-search-input" type="search" placeholder="Tìm theo username hoặc tên…" />
+            <select id="user-status-filter">
+              <option value="">Tất cả trạng thái</option>
+              <option value="active">Đang hoạt động</option>
+              <option value="blocked">Đã bị khóa</option>
+            </select>
+            <button id="user-refresh-btn" class="action-btn">Làm mới</button>
+          </div>
+        </div>
+        <div class="table-responsive">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>Username</th>
+                <th>Tên hiển thị</th>
+                <th>Vai trò</th>
+                <th>Trạng thái</th>
+                <th>Số dư điểm</th>
+                <th>Streak</th>
+                <th>Check-in cuối</th>
+                <th>Hành động</th>
+              </tr>
+            </thead>
+            <tbody id="users-tbody">
+              <tr><td colspan="8" class="text-center">Đang tải dữ liệu…</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="pagination" id="users-pagination"></div>
+      </div>
+    </section>
+
+    <!-- TAB 2: AIRDROPS & POINT DROPS -->
+    <section id="tab-drops" class="tab-pane" role="tabpanel">
+      <div class="grid-2col">
+        <!-- Direct Airdrop Card -->
+        <div class="panel-card">
+          <h2>🎁 Phát Điểm Trực Tiếp (Direct Airdrop)</h2>
+          <p class="card-desc">Cộng điểm ngay lập tức vào tài khoản của toàn bộ thành viên đang hoạt động.</p>
+          <form id="direct-airdrop-form" class="admin-form">
+            <div class="form-group">
+              <label for="direct-points">Số điểm cho mỗi người *</label>
+              <input id="direct-points" type="number" min="1" max="1000" placeholder="Ví dụ: 5" required />
+            </div>
+            <div class="form-group">
+              <label for="direct-reason">Lý do phát điểm *</label>
+              <input id="direct-reason" type="text" maxlength="100" placeholder="Ví dụ: Khai mạc sự kiện 🎉" required />
+            </div>
+            <button id="direct-submit-btn" type="submit" class="submit-btn gold">🚀 Thực hiện Phát Điểm Ngay</button>
+          </form>
+        </div>
+
+        <!-- Claimable Drop Card -->
+        <div class="panel-card">
+          <h2>📦 Tạo Đợt Quà Tặng (Claimable Drop)</h2>
+          <p class="card-desc">Tạo đợt quà tặng realtime hiển thị trên điện thoại khách. Đợt cũ sẽ tự hết hạn.</p>
+          <form id="claimable-drop-form" class="admin-form">
+            <div class="form-group">
+              <label for="claimable-points">Số điểm nhận được *</label>
+              <input id="claimable-points" type="number" min="1" max="1000" placeholder="Ví dụ: 10" required />
+            </div>
+            <div class="form-group">
+              <label for="claimable-title">Tiêu đề quà tặng *</label>
+              <input id="claimable-title" type="text" maxlength="80" placeholder="Ví dụ: Quà quẩy đêm cùng Laztar 🔥" required />
+            </div>
+            <button id="claimable-submit-btn" type="submit" class="submit-btn red">📢 Phát Sóng Quà Tặng Realtime</button>
+          </form>
+        </div>
+      </div>
+
+      <!-- Point Drops History -->
+      <div class="panel-card mt-24">
+        <h2>Lịch sử các Đợt Phát Điểm</h2>
+        <div class="table-responsive">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>Tiêu đề / Lý do</th>
+                <th>Hình thức</th>
+                <th>Điểm</th>
+                <th>Trạng thái</th>
+                <th>Số người nhận</th>
+                <th>Người tạo</th>
+                <th>Thời gian</th>
+              </tr>
+            </thead>
+            <tbody id="drops-tbody">
+              <tr><td colspan="7" class="text-center">Đang tải danh sách…</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="pagination" id="drops-pagination"></div>
+      </div>
+    </section>
+
+    <!-- TAB 3: LEDGER AUDIT LOG -->
+    <section id="tab-ledger" class="tab-pane" role="tabpanel">
+      <div class="panel-card">
+        <div class="panel-header">
+          <h2>Nhật ký Biến động Điểm (Audit Ledger)</h2>
+          <div class="filter-group">
+            <input id="ledger-search-input" type="search" placeholder="Tìm theo user hoặc lý do…" />
+            <select id="ledger-type-filter">
+              <option value="">Tất cả loại giao dịch</option>
+              <option value="daily_checkin">Điểm danh ngày (daily_checkin)</option>
+              <option value="streak_bonus">Thưởng streak (streak_bonus)</option>
+              <option value="vote_spend">Vote bài hát (vote_spend)</option>
+              <option value="vote_refund">Hoàn điểm vote (vote_refund)</option>
+              <option value="admin_adjustment">Admin điều chỉnh (admin_adjustment)</option>
+              <option value="airdrop_direct">Airdrop trực tiếp (airdrop_direct)</option>
+              <option value="point_drop_claim">Nhận quà drop (point_drop_claim)</option>
+            </select>
+            <button id="ledger-refresh-btn" class="action-btn">Làm mới</button>
+          </div>
+        </div>
+        <div class="table-responsive">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>Thời gian</th>
+                <th>Người dùng</th>
+                <th>Biến động</th>
+                <th>Loại giao dịch</th>
+                <th>Lý do / Diễn giải</th>
+                <th>Ref ID</th>
+              </tr>
+            </thead>
+            <tbody id="ledger-tbody">
+              <tr><td colspan="6" class="text-center">Đang tải nhật ký…</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="pagination" id="ledger-pagination"></div>
+      </div>
+    </section>
+
+    <!-- TAB 4: FEEDBACK & CHAT -->
+    <section id="tab-feedback" class="tab-pane" role="tabpanel">
+      <div class="feedback-controls-bar">
+        <div class="stats-grid">
+          <article><strong id="stat-total">—</strong><span>Tổng góp ý</span></article>
+          <article><strong id="stat-today">—</strong><span>Hôm nay</span></article>
+          <article><strong id="stat-week">—</strong><span>7 ngày qua</span></article>
+        </div>
+        <div class="feedback-actions-bar">
+          <button id="feedback-toggle" class="toggle-btn" type="button">Góp ý: Bật</button>
+          <button id="chat-toggle" class="toggle-btn" type="button">Chat: Bật</button>
+          <button id="chat-clear" class="toggle-btn danger" type="button">Xóa sạch Chat</button>
+        </div>
+      </div>
+
+      <div class="grid-2col mt-24">
+        <!-- Live Admin Chat Card -->
+        <div class="panel-card">
+          <div class="chat-header">
+            <h2>💬 Chat với Khách</h2>
+            <span class="admin-badge">ADMIN</span>
+          </div>
+          <div id="admin-chat-messages" class="admin-chat-box"></div>
+          <form id="admin-chat-form" class="admin-chat-form">
+            <input id="admin-chat-name" type="text" placeholder="Tên hiển thị" value="Ban Tổ Chức" maxlength="40" />
+            <div class="chat-input-row">
+              <input id="admin-chat-message" type="text" placeholder="Nhắn gì đó cho cả phòng…" maxlength="280" autocomplete="off" />
+              <button type="submit" class="submit-btn gold">Gửi</button>
+            </div>
+            <div id="admin-chat-status" class="chat-status"></div>
+          </form>
+        </div>
+
+        <!-- Feedback Cards List -->
+        <div class="panel-card">
+          <div class="panel-header">
+            <h2>Ý kiến & Đóng góp từ Khách</h2>
+            <span id="feedback-count" class="badge">0 góp ý</span>
+          </div>
+          <div id="feedback-list" class="feedback-items-scroll"></div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <!-- MODAL: Adjust Points -->
+  <div id="points-modal" class="modal-overlay hidden" role="dialog" aria-modal="true">
+    <div class="modal-card">
+      <div class="modal-head">
+        <h3>Điều chỉnh Điểm cho <span id="modal-target-username"></span></h3>
+        <button id="modal-close-btn" class="close-btn">&times;</button>
+      </div>
+      <form id="adjust-points-form">
+        <div class="form-group">
+          <label>Số dư hiện tại: <strong id="modal-current-balance">0</strong> 🪙</label>
+        </div>
+        <div class="form-group">
+          <label for="adjust-delta">Số điểm cộng hoặc trừ (VD: 5 hoặc -5) *</label>
+          <input id="adjust-delta" type="number" placeholder="5 hoặc -5" required />
+        </div>
+        <div class="form-group">
+          <label for="adjust-reason">Lý do điều chỉnh *</label>
+          <input id="adjust-reason" type="text" maxlength="100" placeholder="Lý do cộng/trừ điểm…" required />
+        </div>
+        <div class="modal-actions">
+          <button type="button" id="modal-cancel-btn" class="cancel-btn">Hủy</button>
+          <button type="submit" class="submit-btn gold">Xác nhận</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- MODAL: User Ledger Drawer -->
+  <div id="user-ledger-modal" class="modal-overlay hidden" role="dialog" aria-modal="true">
+    <div class="modal-card wide">
+      <div class="modal-head">
+        <h3>Lịch sử Điểm của <span id="user-ledger-target"></span></h3>
+        <button id="user-ledger-close-btn" class="close-btn">&times;</button>
+      </div>
+      <div class="table-responsive">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>Thời gian</th>
+              <th>Biến động</th>
+              <th>Loại</th>
+              <th>Lý do</th>
+            </tr>
+          </thead>
+          <tbody id="user-ledger-tbody">
+            <tr><td colspan="4" class="text-center">Đang tải…</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <script src="/admin.js"></script>
+</body>
+</html>

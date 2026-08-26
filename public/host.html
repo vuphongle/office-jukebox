@@ -55,12 +55,13 @@
         <button id="cooldown-toggle" class="pill" title="Thời gian chờ giữa các yêu cầu của từng khách — nhấp để thay đổi">Thời gian chờ</button>
         <button id="queue-limit-toggle" class="pill" title="Giới hạn số bài sắp phát — nhấp để chuyển Tắt, 5, 10, 15, 20">Hàng đợi</button>
         <button id="require-name-toggle" class="pill" title="Bắt buộc khách nhập tên order">Tên order</button>
+        <button id="vote-sort-toggle" class="pill" title="Xếp theo lượt vote của khách — nhấp để bật/tắt">Xếp theo vote: Bật</button>
         <!-- Tạm ẩn khỏi UI theo yêu cầu; tính năng bối cảnh và WebSocket vẫn được giữ nguyên. -->
         <button id="context-toggle" class="pill hidden" title="Bối cảnh sự kiện — cho bộ lọc AI biết đây là loại sự kiện nào">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 21s-6.5-4.3-6.5-10a6.5 6.5 0 0113 0c0 5.7-6.5 10-6.5 10z"></path><circle cx="12" cy="10.5" r="2.4"></circle></svg>
           <span>Bối cảnh</span>
         </button>
-        <a class="pill feedback-link" href="/feedback" target="_blank" rel="noopener noreferrer">Góp ý</a>
+        <a class="pill feedback-link" href="/admin" target="_blank" rel="noopener noreferrer">Quản trị</a>
       </div>
       <div id="context-row" class="context-row hidden">
         <input id="context-input" type="text" maxlength="300"
