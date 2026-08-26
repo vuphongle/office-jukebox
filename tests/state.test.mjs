@@ -82,3 +82,35 @@ test("snapshot hides ownership tokens and estimates upcoming start time", () => 
   assert.ok(snapshot.queue[0].estimatedStartAt <= after + 180_000);
   assert.equal(snapshot.queue[1].estimatedStartAt - snapshot.queue[0].estimatedStartAt, 4 * 60 * 1000);
 });
+
+test("snapshot uses the default duration when duration is missing or invalid", () => {
+  const state = createState();
+  state.add({ videoId: "playing", title: "Playing" });
+  state.add({ videoId: "unknown", title: "Unknown", duration: "LIVE" });
+  state.add({ videoId: "later", title: "Later", duration: "" });
+  state.add({ videoId: "malformed", title: "Malformed", duration: "1:99" });
+
+  const before = Date.now();
+  const snapshot = state.snapshot();
+  const after = Date.now();
+  const [unknown, later, malformed] = snapshot.queue;
+
+  assert.ok(Number.isFinite(unknown.estimatedStartAt));
+  assert.ok(unknown.estimatedStartAt >= before + 209_000);
+  assert.ok(unknown.estimatedStartAt <= after + 210_000);
+  assert.equal(later.estimatedStartAt - unknown.estimatedStartAt, 210_000);
+  assert.equal(malformed.estimatedStartAt - later.estimatedStartAt, 210_000);
+});
+
+test("snapshot exposes the requester name without exposing the requester token", () => {
+  const state = createState();
+  state.add({ videoId: "playing", title: "Playing", addedBy: "Alice", requesterId: "private-a" });
+  state.add({ videoId: "next", title: "Next", addedBy: "Bob", requesterId: "private-b" });
+
+  const snapshot = state.snapshot();
+
+  assert.equal(snapshot.nowPlaying.addedBy, "Alice");
+  assert.equal(snapshot.queue[0].addedBy, "Bob");
+  assert.equal("requesterId" in snapshot.nowPlaying, false);
+  assert.equal("requesterId" in snapshot.queue[0], false);
+});
