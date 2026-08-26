@@ -2,5 +2,9 @@ node_modules/
 .env
 data/
 *.log
+*.db
+*.db-wal
+*.db-shm
+tests/*.db*
 .DS_Store
 .claude/settings.local.json

@@ -7,12 +7,12 @@
   "keywords": ["jukebox", "party", "youtube", "qr-code", "karaoke", "ktv", "event", "music-queue", "self-hosted"],
   "type": "module",
   "engines": {
-    "node": ">=20"
+    "bun": ">=1.1"
   },
   "scripts": {
-    "start": "node server.js",
-    "test": "node --test",
-    "check-llm": "node scripts/check-llm.mjs"
+    "start": "bun server.js",
+    "test": "bun test",
+    "check-llm": "bun scripts/check-llm.mjs"
   },
   "dependencies": {
     "express": "^4.19.2",

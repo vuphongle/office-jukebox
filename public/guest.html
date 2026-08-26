@@ -13,6 +13,14 @@
 </head>
 <body>
   <header>
+    <div class="user-auth-bar" id="user-auth-bar">
+      <!-- Sẽ được điền động bằng JS: Trạng thái Đăng nhập / Người dùng -->
+      <button id="open-auth-btn" class="auth-pill-btn" type="button">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path><circle cx="12" cy="7" r="4"></circle></svg>
+        Đăng nhập / Đăng ký
+      </button>
+    </div>
+
     <div class="brand-heading">
       <img class="brand-logo" src="/assets/logo.png" alt="Laztar" />
       <div>
@@ -22,6 +30,18 @@
     </div>
     <p class="desktop-intro">Tìm kiếm, khám phá và thêm bài hát vào hàng đợi của sự kiện.</p>
   </header>
+
+  <!-- Point Drop Banner (Realtime Claimable Airdrop) -->
+  <div id="point-drop-banner" class="point-drop-banner hidden">
+    <div class="drop-banner-content">
+      <span class="drop-icon">🎁</span>
+      <div class="drop-text">
+        <strong id="drop-banner-title">Quà tặng từ Ban Tổ Chức</strong>
+        <span id="drop-banner-sub">+5 điểm miễn phí cho bạn</span>
+      </div>
+    </div>
+    <button id="drop-claim-btn" class="drop-claim-btn" type="button">Nhận ngay</button>
+  </div>
 
   <div id="now-playing" class="now-playing hidden"></div>
 
@@ -157,6 +177,91 @@
       <div id="chat-status" class="chat-status" role="status" aria-live="polite"></div>
     </div>
   </section>
+
+  <!-- MODAL: Auth Modal (Login / Register) -->
+  <div id="auth-modal" class="guest-modal-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="auth-modal-title">
+    <div class="guest-modal-card">
+      <div class="guest-modal-head">
+        <h3 id="auth-modal-title">Đăng nhập tài khoản</h3>
+        <button id="auth-modal-close" class="modal-x-btn" type="button" aria-label="Đóng cửa sổ đăng nhập">&times;</button>
+      </div>
+
+      <div class="auth-tabs">
+        <button id="auth-tab-login" class="auth-tab-btn active" type="button">Đăng nhập</button>
+        <button id="auth-tab-register" class="auth-tab-btn" type="button">Đăng ký mới</button>
+      </div>
+
+      <form id="auth-form" class="auth-form">
+        <div class="auth-field">
+          <label for="auth-username">Tên đăng nhập / Username *</label>
+          <input id="auth-username" type="text" autocomplete="username" required maxlength="30" placeholder="Chữ cái, số, gạch dưới…" />
+        </div>
+
+        <div id="auth-display-name-field" class="auth-field hidden">
+          <label for="auth-display-name">Tên hiển thị (Tên order của bạn)</label>
+          <input id="auth-display-name" type="text" autocomplete="nickname" maxlength="40" placeholder="VD: Phong Vũ, Linh Đan…" />
+        </div>
+
+        <div class="auth-field">
+          <label for="auth-password">Mật khẩu *</label>
+          <input id="auth-password" type="password" autocomplete="current-password" required minlength="6" placeholder="Tối thiểu 6 ký tự…" />
+        </div>
+
+        <div id="auth-error-msg" class="auth-error-msg hidden" role="alert"></div>
+
+        <div class="auth-actions">
+          <button id="auth-submit-btn" type="submit" class="auth-submit-btn">Đăng nhập ngay</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- MODAL: Check-in & Rewards Drawer -->
+  <div id="checkin-modal" class="guest-modal-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="checkin-modal-title">
+    <div class="guest-modal-card">
+      <div class="guest-modal-head">
+        <h3 id="checkin-modal-title">Điểm danh nhận thưởng</h3>
+        <button id="checkin-modal-close" class="modal-x-btn" type="button" aria-label="Đóng cửa sổ điểm danh">&times;</button>
+      </div>
+
+      <div class="checkin-body">
+        <div class="checkin-streak-hero">
+          <div class="streak-circle">
+            <span class="streak-num" id="modal-streak-count">0</span>
+            <span class="streak-lbl">ngày streak</span>
+          </div>
+          <div class="streak-desc">
+            <h4 id="checkin-greeting">Xin chào bạn!</h4>
+            <p id="checkin-status-text">Điểm danh mỗi ngày để nhận điểm vote bài hát và mở khóa mốc thưởng!</p>
+          </div>
+        </div>
+
+        <!-- Milestones list -->
+        <div class="checkin-milestones">
+          <div class="milestone-step" id="ms-3">
+            <div class="ms-circle">3d</div>
+            <div class="ms-info"><strong>Mốc 3 ngày</strong><span>+2 điểm</span></div>
+          </div>
+          <div class="milestone-step" id="ms-7">
+            <div class="ms-circle">7d</div>
+            <div class="ms-info"><strong>Mốc 7 ngày</strong><span>+5 điểm</span></div>
+          </div>
+          <div class="milestone-step" id="ms-14">
+            <div class="ms-circle">14d</div>
+            <div class="ms-info"><strong>Mốc 14 ngày</strong><span>+10 điểm</span></div>
+          </div>
+          <div class="milestone-step" id="ms-30">
+            <div class="ms-circle">30d</div>
+            <div class="ms-info"><strong>Mốc 30 ngày</strong><span>+20 điểm</span></div>
+          </div>
+        </div>
+
+        <div class="checkin-action-area">
+          <button id="do-checkin-btn" class="do-checkin-btn" type="button">✨ Điểm Danh Nhận Điểm (+1 🪙)</button>
+        </div>
+      </div>
+    </div>
+  </div>
 
   <script src="/guest.js"></script>
 </body>

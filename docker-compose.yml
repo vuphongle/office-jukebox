@@ -11,8 +11,8 @@ services:
     expose:
       - "${PORT:-45416}"
 
-    # Cài đặt trang host (bộ lọc/chế độ/thời gian chờ/bối cảnh sự kiện) được lưu
-    # tại đây qua các lần xây dựng lại và khởi động lại.
+    # SQLite, hàng đợi và cài đặt sự kiện được lưu tại đây qua các lần xây dựng
+    # lại và khởi động lại.
     volumes:
       - ./data:/app/data
 
