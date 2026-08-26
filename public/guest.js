@@ -165,7 +165,7 @@ function openCheckinModal() {
   document.getElementById("ms-30").classList.toggle("achieved", cycle === 0 && streak > 0);
 
   const checkinBtn = document.getElementById("do-checkin-btn");
-  if (currentUser.checkedInToday) {
+  if (currentUser.hasCheckedInToday) {
     checkinBtn.disabled = true;
     checkinBtn.textContent = "✓ Bạn đã điểm danh hôm nay rồi";
     document.getElementById("checkin-status-text").textContent = "Hãy quay lại vào ngày mai để duy trì streak nhé!";
@@ -193,13 +193,13 @@ document.getElementById("do-checkin-btn")?.addEventListener("click", async () =>
     const res = await fetch("/api/me/checkin", { method: "POST" });
     const data = await res.json();
     if (data.ok) {
-      currentUser.pointsBalance = data.pointsBalance;
+      currentUser.pointsBalance = data.newBalance;
       currentUser.currentStreak = data.streak;
-      currentUser.checkedInToday = true;
+      currentUser.hasCheckedInToday = true;
 
       let msg = `+${data.pointsAwarded} điểm danh ngày`;
-      if (data.bonusAwarded > 0) {
-        msg += ` và +${data.bonusAwarded} thưởng mốc ${data.milestoneHit} ngày! 🎉`;
+      if (data.bonusPoints > 0) {
+        msg += ` và +${data.bonusPoints} thưởng mốc streak ngày ${data.streak}! 🎉`;
       }
       toast("ok", "🔥", "Điểm danh thành công!", { sub: msg });
       openCheckinModal();
@@ -220,8 +220,8 @@ async function checkActivePointDrop() {
   try {
     const res = await fetch("/api/me/point-drops/active");
     const data = await res.json();
-    if (data.ok && data.activeDrop) {
-      showPointDropBanner(data.activeDrop);
+    if (data.ok && data.drop && !data.alreadyClaimed) {
+      showPointDropBanner(data.drop);
     } else {
       hidePointDropBanner();
     }
@@ -257,9 +257,9 @@ document.getElementById("drop-claim-btn")?.addEventListener("click", async () =>
     const res = await fetch(`/api/me/point-drops/${currentActiveDrop.id}/claim`, { method: "POST" });
     const data = await res.json();
     if (data.ok) {
-      currentUser.pointsBalance = data.pointsBalance;
+      currentUser.pointsBalance = data.newBalance;
       renderUserAuthBar();
-      toast("ok", "🎁", `Nhận thành công +${data.pointsClaimed} điểm!`);
+      toast("ok", "🎁", `Nhận thành công +${data.pointsReceived} điểm!`);
       hidePointDropBanner();
     } else {
       toast("bad", "!", data.reason || "Không thể nhận quà tặng này.");
@@ -289,7 +289,7 @@ window.voteSong = async function (itemId) {
     const res = await fetch(`/api/queue/${itemId}/vote`, { method: "POST" });
     const data = await res.json();
     if (data.ok) {
-      currentUser.pointsBalance = data.pointsBalance;
+      currentUser.pointsBalance = data.newBalance;
       renderUserAuthBar();
       toast("ok", "❤️", "Đã vote thành công!", { sub: `Số dư còn lại: ${currentUser.pointsBalance} 🪙` });
     } else {
@@ -1131,7 +1131,7 @@ function connectWs() {
       if (currentUser) {
         currentUser.pointsBalance += msg.points;
         renderUserAuthBar();
-        toast("ok", "🚀", `Bạn vừa nhận được airdrop +${msg.points} điểm!`, { sub: msg.title });
+        toast("ok", "🚀", `Bạn vừa nhận được airdrop +${msg.points} điểm!`, { sub: msg.reason });
       }
     } else if (msg.type === "voteResult") {
       if (!msg.ok) toast("bad", "!", msg.reason || "Lỗi vote bài hát");
