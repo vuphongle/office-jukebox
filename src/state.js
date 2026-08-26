@@ -1,5 +1,6 @@
 // Trạng thái hàng đợi — Quản lý trong bộ nhớ kết hợp SQLite SSOT.
-// Hỗ trợ xếp thứ tự đa tầng: pinned DESC, pinned_order ASC, vote_score DESC, queue_sequence ASC.
+// Hỗ trợ xếp thứ tự đa tầng: pinned DESC, pinned_order ASC, vote_score DESC,
+// vote_rank_sequence ASC, queue_sequence ASC.
 // Hoàn điểm 100% khi xóa bài hoặc lỗi phát YouTube (101/150).
 
 import { randomUUID } from "node:crypto";
@@ -41,6 +42,7 @@ export class JukeboxState {
           addedByUserId: active.added_by_user_id || null,
           queueSequence: active.queue_sequence,
           voteScore: active.vote_score || 0,
+          voteRankSequence: active.vote_rank_sequence || 0,
           pinned: active.pinned === 1,
           pinnedOrder: active.pinned_order || 0,
           addedAt: active.added_at,
@@ -61,6 +63,7 @@ export class JukeboxState {
         addedByUserId: row.added_by_user_id || null,
         queueSequence: row.queue_sequence,
         voteScore: row.vote_score || 0,
+        voteRankSequence: row.vote_rank_sequence || 0,
         pinned: row.pinned === 1,
         pinnedOrder: row.pinned_order || 0,
         addedAt: row.added_at,
@@ -142,9 +145,17 @@ export class JukeboxState {
         const aScore = a.voteScore || 0;
         const bScore = b.voteScore || 0;
         if (aScore !== bScore) return bScore - aScore;
+
+        // A song entering an existing score group stays behind songs that
+        // reached that score earlier. It only moves ahead by scoring higher.
+        if (aScore > 0) {
+          const aRank = a.voteRankSequence || 0;
+          const bRank = b.voteRankSequence || 0;
+          if (aRank !== bRank) return aRank - bRank;
+        }
       }
 
-      // 3. queueSequence ASC (added earlier plays earlier)
+      // 4. queueSequence ASC (added earlier plays earlier)
       return (a.queueSequence || 0) - (b.queueSequence || 0);
     });
   }
@@ -188,6 +199,7 @@ export class JukeboxState {
       addedByUserId: userId,
       queueSequence: dbItem ? dbItem.queue_sequence : (this.queue.length ? Math.max(...this.queue.map(q => q.queueSequence || 0)) + 1 : 1),
       voteScore: 0,
+      voteRankSequence: 0,
       pinned: false,
       pinnedOrder: 0,
       addedAt: Date.now(),
@@ -208,6 +220,7 @@ export class JukeboxState {
     const item = this.queue.find((q) => q.id === itemId);
     if (item) {
       item.voteScore = res.voteScore;
+      item.voteRankSequence = res.voteRankSequence;
       this._sortQueue();
       this._emit();
     }

@@ -16,15 +16,21 @@ export class LedgerRepository {
     return id;
   }
 
-  listByUser(userId, { limit = 50, offset = 0 } = {}) {
-    const countRow = this.db.query("SELECT COUNT(*) as total FROM point_ledger WHERE user_id = ?").get(userId);
+  listByUser(userId, { limit = 50, offset = 0, direction = "all" } = {}) {
+    let deltaCondition = "";
+    if (direction === "earned") deltaCondition = " AND delta > 0";
+    if (direction === "spent") deltaCondition = " AND delta < 0";
+
+    const countRow = this.db
+      .query(`SELECT COUNT(*) as total FROM point_ledger WHERE user_id = ?${deltaCondition}`)
+      .get(userId);
     const total = countRow ? countRow.total : 0;
 
     const rows = this.db
       .query(
         `SELECT id, user_id, delta, type, reference_id, actor_user_id, reason, created_at
          FROM point_ledger
-         WHERE user_id = ?
+         WHERE user_id = ?${deltaCondition}
          ORDER BY created_at DESC, rowid DESC
          LIMIT ? OFFSET ?`
       )

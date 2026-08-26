@@ -25,12 +25,17 @@ test("State persistence across server reboots", () => {
   const s1 = state1.add({ videoId: "upcoming1", title: "Upcoming 1" }).item;
   const s2 = state1.add({ videoId: "upcoming2", title: "Upcoming 2" }).item;
 
-  // Vote for upcoming2 -> should become first in queue
+  // upcoming2 reaches score 1 first and moves to the top.
   state1.vote(s2.id, u.id);
+  // upcoming1 reaches the same score later. It must stay behind upcoming2
+  // despite having an earlier queue_sequence.
+  state1.vote(s1.id, u.id);
 
   assert.equal(state1.nowPlaying.videoId, "playing");
   assert.equal(state1.queue[0].videoId, "upcoming2");
   assert.equal(state1.queue[0].voteScore, 1);
+  assert.equal(state1.queue[1].videoId, "upcoming1");
+  assert.equal(state1.queue[1].voteScore, 1);
 
   closeDb();
 
@@ -44,6 +49,7 @@ test("State persistence across server reboots", () => {
   assert.equal(state2.queue[0].videoId, "upcoming2");
   assert.equal(state2.queue[0].voteScore, 1);
   assert.equal(state2.queue[1].videoId, "upcoming1");
+  assert.equal(state2.queue[1].voteScore, 1);
 
   closeDb();
   if (existsSync(TEST_DB_PATH)) unlinkSync(TEST_DB_PATH);

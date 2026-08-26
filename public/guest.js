@@ -32,9 +32,13 @@ function renderUserAuthBar() {
   const bar = document.getElementById("user-auth-bar");
   if (!bar) return;
   if (currentUser) {
+    const avatarLetter = escapeHtml((currentUser.displayName || currentUser.username || "U").trim().charAt(0).toUpperCase());
     bar.innerHTML = `
       <div class="user-profile-badge">
-        <span class="user-name"><strong>${escapeHtml(currentUser.displayName || currentUser.username)}</strong></span>
+        <a class="user-account-link" href="/account" aria-label="Mở trang tài khoản của ${escapeHtml(currentUser.displayName || currentUser.username)}">
+          <span class="user-avatar" aria-hidden="true">${avatarLetter}</span>
+          <span class="user-name"><strong>${escapeHtml(currentUser.displayName || currentUser.username)}</strong></span>
+        </a>
         <span id="user-points-pill" class="user-points-pill" title="Xem lịch sử / Điểm danh">${currentUser.pointsBalance} 🪙</span>
         <span id="user-streak-pill" class="user-streak-pill" title="Điểm danh streak">🔥 ${currentUser.currentStreak}d</span>
         <button id="user-logout-btn" class="user-logout-btn" type="button">Thoát</button>
@@ -64,24 +68,40 @@ function openAuthModal(mode = "login") {
   const tabLogin = document.getElementById("auth-tab-login");
   const tabRegister = document.getElementById("auth-tab-register");
   const nameField = document.getElementById("auth-display-name-field");
+  const confirmField = document.getElementById("auth-confirm-password-field");
+  const confirmInput = document.getElementById("auth-confirm-password");
+  const confirmToggle = document.querySelector('[data-password-toggle="auth-confirm-password"]');
   const submitBtn = document.getElementById("auth-submit-btn");
   const errorEl = document.getElementById("auth-error-msg");
 
   errorEl.classList.add("hidden");
   errorEl.textContent = "";
+  setAuthConfirmError("");
 
   if (mode === "login") {
     title.textContent = "Đăng nhập tài khoản";
     tabLogin.classList.add("active");
     tabRegister.classList.remove("active");
+    tabLogin.setAttribute("aria-selected", "true");
+    tabRegister.setAttribute("aria-selected", "false");
     nameField.classList.add("hidden");
+    confirmField.classList.add("hidden");
+    confirmInput.disabled = true;
+    confirmInput.required = false;
+    confirmToggle.disabled = true;
     submitBtn.textContent = "Đăng nhập ngay";
     document.getElementById("auth-password").setAttribute("autocomplete", "current-password");
   } else {
     title.textContent = "Đăng ký thành viên mới";
     tabLogin.classList.remove("active");
     tabRegister.classList.add("active");
+    tabLogin.setAttribute("aria-selected", "false");
+    tabRegister.setAttribute("aria-selected", "true");
     nameField.classList.remove("hidden");
+    confirmField.classList.remove("hidden");
+    confirmInput.disabled = false;
+    confirmInput.required = true;
+    confirmToggle.disabled = false;
     submitBtn.textContent = "Đăng ký tài khoản";
     document.getElementById("auth-password").setAttribute("autocomplete", "new-password");
   }
@@ -98,15 +118,54 @@ document.getElementById("auth-modal-close")?.addEventListener("click", closeAuth
 document.getElementById("auth-tab-login")?.addEventListener("click", () => openAuthModal("login"));
 document.getElementById("auth-tab-register")?.addEventListener("click", () => openAuthModal("register"));
 
+function setAuthConfirmError(message) {
+  const input = document.getElementById("auth-confirm-password");
+  const error = document.getElementById("auth-confirm-password-error");
+  if (!input || !error) return;
+  error.textContent = message;
+  error.classList.toggle("hidden", !message);
+  input.setAttribute("aria-invalid", String(!!message));
+}
+
+function togglePasswordVisibility(button) {
+  const input = document.getElementById(button.dataset.passwordToggle);
+  if (!input) return;
+  const reveal = input.type === "password";
+  input.type = reveal ? "text" : "password";
+  button.setAttribute("aria-label", reveal ? "Ẩn mật khẩu" : "Hiện mật khẩu");
+  input.focus();
+}
+
+document.querySelectorAll("[data-password-toggle]").forEach((button) => {
+  button.addEventListener("click", () => togglePasswordVisibility(button));
+});
+
+document.getElementById("auth-confirm-password")?.addEventListener("blur", () => {
+  if (authMode !== "register") return;
+  setAuthConfirmError(window.JukeboxAuth.validateRegistrationPassword(
+    document.getElementById("auth-password").value,
+    document.getElementById("auth-confirm-password").value
+  ));
+});
+
 document.getElementById("auth-form")?.addEventListener("submit", async (e) => {
   e.preventDefault();
   const username = document.getElementById("auth-username").value.trim();
   const password = document.getElementById("auth-password").value;
+  const confirmation = document.getElementById("auth-confirm-password").value;
   const displayName = document.getElementById("auth-display-name").value.trim();
   const errorEl = document.getElementById("auth-error-msg");
   const submitBtn = document.getElementById("auth-submit-btn");
 
   errorEl.classList.add("hidden");
+  if (authMode === "register") {
+    const confirmationError = window.JukeboxAuth.validateRegistrationPassword(password, confirmation);
+    setAuthConfirmError(confirmationError);
+    if (confirmationError) {
+      document.getElementById("auth-confirm-password").focus();
+      return;
+    }
+  }
   submitBtn.disabled = true;
   submitBtn.textContent = "Đang xử lý…";
 
@@ -133,10 +192,12 @@ document.getElementById("auth-form")?.addEventListener("submit", async (e) => {
     } else {
       errorEl.textContent = data.reason || "Lỗi xác thực, vui lòng thử lại.";
       errorEl.classList.remove("hidden");
+      errorEl.focus();
     }
   } catch (err) {
     errorEl.textContent = "Lỗi kết nối mạng: " + err.message;
     errorEl.classList.remove("hidden");
+    errorEl.focus();
   } finally {
     submitBtn.disabled = false;
     submitBtn.textContent = authMode === "login" ? "Đăng nhập ngay" : "Đăng ký tài khoản";
@@ -286,16 +347,16 @@ window.voteSong = async function (itemId) {
     openAuthModal("login");
     return;
   }
-  if (currentUser.votedQueueItemIds?.includes(itemId) || pendingVotes.has(itemId)) return;
+  if (pendingVotes.has(itemId)) return;
 
   pendingVotes.add(itemId);
-  if (lastQueueState) renderQueue(lastQueueState);
+  syncVoteButtonState(itemId);
   try {
     const res = await fetch(`/api/queue/${itemId}/vote`, { method: "POST" });
     const data = await res.json();
     if (data.ok) {
       currentUser.pointsBalance = data.newBalance;
-      currentUser.votedQueueItemIds = [...(currentUser.votedQueueItemIds || []), itemId];
+      currentUser.votedQueueItemIds = [...new Set([...(currentUser.votedQueueItemIds || []), itemId])];
       renderUserAuthBar();
       toast("ok", "❤️", "Đã vote thành công!", { sub: `Số dư còn lại: ${currentUser.pointsBalance} 🪙` });
     } else {
@@ -305,9 +366,32 @@ window.voteSong = async function (itemId) {
     toast("bad", "⚠️", "Lỗi kết nối: " + err.message);
   } finally {
     pendingVotes.delete(itemId);
-    if (lastQueueState) renderQueue(lastQueueState);
+    syncVoteButtonState(itemId);
   }
 };
+
+function syncVoteButtonState(itemId) {
+  const row = [...document.querySelectorAll("#queue li[data-id]")]
+    .find((item) => item.dataset.id === itemId);
+  const button = row?.querySelector(".q-vote-btn");
+  if (!button) return;
+
+  const item = lastQueueState?.queue?.find((queueItem) => queueItem.id === itemId);
+  const voteCount = item?.voteScore || 0;
+  const pending = pendingVotes.has(itemId);
+  const hasVoted = currentUser?.votedQueueItemIds?.includes(itemId) === true;
+  const title = hasVoted
+    ? "Vote thêm +1 cho bài hát này (tốn 1 điểm)"
+    : "Vote để đẩy bài hát lên đầu (tốn 1 điểm)";
+
+  button.disabled = pending;
+  button.classList.toggle("has-voted", hasVoted);
+  button.classList.toggle("is-pending", pending);
+  button.setAttribute("aria-busy", String(pending));
+  button.title = title;
+  button.setAttribute("aria-label", title);
+  button.querySelector("span").textContent = `Vote +1 · ${voteCount}`;
+}
 
 function escapeHtml(str) {
   if (!str) return "";
@@ -1150,6 +1234,11 @@ function connectWs() {
         const title = msg.delta > 0 ? `Bạn vừa được hoàn +${msg.delta} điểm.` : "Số dư điểm vừa được cập nhật.";
         toast("info", "🪙", title, { sub: msg.reason || "Dữ liệu đã đồng bộ từ máy chủ." });
       }
+    } else if (msg.type === "profileUpdated") {
+      if (currentUser && msg.displayName) {
+        currentUser.displayName = msg.displayName;
+        renderUserAuthBar();
+      }
     } else if (msg.type === "sessionRevoked") {
       currentUser = null;
       hidePointDropBanner();
@@ -1198,9 +1287,29 @@ function renderQueue(state) {
   limitNotice.classList.toggle("hidden", !limitReached);
   if (limitReached) limitNotice.textContent = `Hàng đợi đã đạt giới hạn ${queueLimit} bài — hãy chờ phát bớt trước khi thêm bài mới.`;
   const ul = document.getElementById("queue");
+  const animateReorder = !window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const previousPositions = animateReorder
+    ? new Map(
+        [...ul.querySelectorAll("li[data-id]")].map((item) => [
+          item.dataset.id,
+          item.getBoundingClientRect().top,
+        ])
+      )
+    : new Map();
   ul.innerHTML = "";
   if (queue.length === 0) {
-    ul.innerHTML = '<li class="q-empty">Chưa có bài hát nào — hãy là người đầu tiên chọn bài!</li>';
+    ul.innerHTML = `
+      <li class="q-empty">
+        <span class="q-empty-icon" aria-hidden="true">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M9 18V5l10-2v13" />
+            <circle cx="6" cy="18" r="3" />
+            <circle cx="16" cy="16" r="3" />
+          </svg>
+        </span>
+        <strong>Hàng đợi đang trống</strong>
+        <span>Chọn một bài hát để mở màn nhé!</span>
+      </li>`;
     return;
   }
   const myIds = loadMyRequestIds();
@@ -1211,11 +1320,12 @@ function renderQueue(state) {
     const hasVoted = currentUser?.votedQueueItemIds?.includes(item.id) === true;
     const votePending = pendingVotes.has(item.id);
     const voteTitle = hasVoted
-      ? "Bạn đã vote cho bài hát này"
+      ? "Vote thêm +1 cho bài hát này (tốn 1 điểm)"
       : currentUser
         ? "Vote để đẩy bài hát lên đầu (tốn 1 điểm)"
         : "Đăng nhập để vote bài hát";
 
+    li.dataset.id = item.id;
     li.innerHTML = `
       <span class="q-num">${i + 1}</span>
       <img src="${item.thumbnail || NO_THUMB}" alt="" loading="lazy" />
@@ -1224,17 +1334,19 @@ function renderQueue(state) {
           <span class="t"></span>
           ${isPinned ? '<span class="q-pinned-badge">Ghim</span>' : ""}
         </div>
-        <div class="s"></div>
-        <div class="q-requester"></div>
+        <div class="q-byline">
+          <span class="s"></span>
+          <span class="q-requester"></span>
+        </div>
         <div class="q-eta"></div>
       </div>
-      <div class="q-vote-wrap">
-        <button class="q-vote-btn${hasVoted ? " has-voted" : ""}" type="button" title="${voteTitle}" aria-label="${voteTitle}" onclick="voteSong('${item.id}')" ${hasVoted || votePending ? "disabled" : ""}>
+      <div class="q-actions">
+        <button class="q-vote-btn${hasVoted ? " has-voted" : ""}${votePending ? " is-pending" : ""}" type="button" title="${voteTitle}" aria-label="${voteTitle}" aria-busy="${votePending}" onclick="voteSong('${item.id}')" ${votePending ? "disabled" : ""}>
           <svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20.8 4.6a5.5 5.5 0 0 0-7.8 0L12 5.6l-1-1a5.5 5.5 0 0 0-7.8 7.8l1 1L12 21l7.8-7.6 1-1a5.5 5.5 0 0 0 0-7.8Z"/></svg>
-          <span>${hasVoted ? "Đã vote" : "Vote +1"} · ${voteCount}</span>
+          <span>Vote +1 · ${voteCount}</span>
         </button>
-      </div>
-      <button class="q-remove-own hidden" type="button" title="Xóa bài của bạn" aria-label="Xóa bài của bạn">×</button>`;
+        <button class="q-remove-own hidden" type="button" title="Xóa bài của bạn" aria-label="Xóa bài của bạn">×</button>
+      </div>`;
     li.querySelector(".t").textContent = item.title;
     updateMarqueeTitle(li.querySelector(".t"));
     li.querySelector(".s").textContent = item.channel;
@@ -1259,6 +1371,22 @@ function renderQueue(state) {
     }
     ul.appendChild(li);
   });
+
+  if (previousPositions.size) {
+    ul.querySelectorAll("li[data-id]").forEach((item) => {
+      const previousTop = previousPositions.get(item.dataset.id);
+      if (previousTop === undefined || typeof item.animate !== "function") return;
+      const deltaY = previousTop - item.getBoundingClientRect().top;
+      if (Math.abs(deltaY) < 1) return;
+      item.animate(
+        [
+          { transform: `translateY(${deltaY}px)` },
+          { transform: "translateY(0)" },
+        ],
+        { duration: 320, easing: "cubic-bezier(0.22, 1, 0.36, 1)" }
+      );
+    });
+  }
 }
 
 function formatEstimatedStart(timestamp) {

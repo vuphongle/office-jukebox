@@ -63,7 +63,7 @@ dùng cho mọi sự kiện.
   thoại đồng bộ; khách nhìn thấy huy hiệu "Bạn" trên các bài hát của mình.
 - 👤 **Tài khoản tùy chọn** — khách vãng lai vẫn dùng toàn bộ luồng chọn bài;
   thành viên có thể đăng ký, điểm danh hằng ngày và tích điểm theo streak.
-- ❤️ **Vote bằng điểm** — mỗi vote tốn một điểm, tự sắp xếp hàng đợi theo bài
+- ❤️ **Vote bằng điểm** — mỗi lần vote tốn một điểm, có thể vote nhiều lần cho cùng bài; bài chỉ vượt nhóm khi có điểm cao hơn
   Host ghim → số vote → thứ tự thêm; điểm được hoàn khi bài bị xóa hoặc lỗi phát.
 - 🎁 **Bảng điều khiển Admin** — quản lý thành viên, điều chỉnh điểm, phát airdrop
   trực tiếp hoặc quà chờ nhận, xem ledger và điều hành góp ý/chat tại `/admin`.

@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 import { scryptSync, randomBytes } from "node:crypto";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const DEFAULT_DB_PATH = path.join(__dirname, "..", "data", "jukebox.db");
+const DEFAULT_DB_PATH = process.env.JUKEBOX_DB_PATH || path.join(__dirname, "..", "data", "jukebox.db");
 
 let globalDb = null;
 
@@ -101,6 +101,7 @@ export function initDb({ dbPath = DEFAULT_DB_PATH, adminUser = process.env.ADMIN
       added_by_user_id TEXT REFERENCES users(id),
       queue_sequence INTEGER NOT NULL,
       vote_score INTEGER NOT NULL DEFAULT 0,
+      vote_rank_sequence INTEGER NOT NULL DEFAULT 0,
       pinned INTEGER NOT NULL DEFAULT 0,
       pinned_order INTEGER NOT NULL DEFAULT 0,
       status TEXT NOT NULL DEFAULT 'queued' CHECK(status IN ('queued', 'playing', 'played', 'removed', 'error')),
@@ -141,6 +142,17 @@ export function initDb({ dbPath = DEFAULT_DB_PATH, adminUser = process.env.ADMIN
       PRIMARY KEY(drop_id, user_id)
     );
   `);
+
+  // Existing databases created before repeat voting need a persistent
+  // tie-breaker for the moment each song reaches its current score.
+  const queueItemColumns = db.query("PRAGMA table_info(queue_items)").all();
+  if (!queueItemColumns.some((column) => column.name === "vote_rank_sequence")) {
+    db.run("ALTER TABLE queue_items ADD COLUMN vote_rank_sequence INTEGER NOT NULL DEFAULT 0");
+  }
+  db.run(
+    `CREATE INDEX IF NOT EXISTS idx_queue_items_vote_order
+     ON queue_items(status, pinned, pinned_order, vote_score DESC, vote_rank_sequence, queue_sequence)`
+  );
 
   // Seed default admin if no admin exists
   const existingAdmin = db.query("SELECT id FROM users WHERE role = 'admin' LIMIT 1").get();
