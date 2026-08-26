@@ -10,9 +10,7 @@ test("Multi-tier queue sorting: pinned > vote_score > sequence", () => {
   const state = new JukeboxState(db);
 
   const u1 = userRepo.create({ username: "u1", passwordHash: "p" });
-  const u2 = userRepo.create({ username: "u2", passwordHash: "p" });
   userRepo.updatePoints(u1.id, 10, { type: "admin_adjustment" });
-  userRepo.updatePoints(u2.id, 10, { type: "admin_adjustment" });
 
   // Add now playing + 3 upcoming songs
   state.add({ videoId: "playing", title: "Playing" });
@@ -27,9 +25,14 @@ test("Multi-tier queue sorting: pinned > vote_score > sequence", () => {
   state.vote(s3.id, u1.id);
   assert.deepEqual(state.queue.map(q => q.id), [s3.id, s1.id, s2.id]);
 
-  // Vote for song2 twice (u1 & u2) -> becomes top
+  // Song2 reaches the same score later, so it stays behind song3 even though
+  // it was added earlier.
   state.vote(s2.id, u1.id);
-  state.vote(s2.id, u2.id);
+  assert.deepEqual(state.queue.map(q => q.id), [s3.id, s2.id, s1.id]);
+
+  // The same user can spend another point. Song2 only moves ahead after its
+  // score becomes strictly higher.
+  state.vote(s2.id, u1.id);
   assert.deepEqual(state.queue.map(q => q.id), [s2.id, s3.id, s1.id]);
 
   // Host pins song1 by reordering it to top
@@ -55,7 +58,8 @@ test("Vote refund when host removes song", () => {
   const s1 = state.add({ videoId: "song1", title: "Song 1" }).item;
 
   state.vote(s1.id, u.id);
-  assert.equal(userRepo.findById(u.id).points_balance, 4);
+  state.vote(s1.id, u.id);
+  assert.equal(userRepo.findById(u.id).points_balance, 3);
   assert.deepEqual(state.queueRepo.listActiveVoteItemIds(u.id), [s1.id]);
 
   // Host removes s1
@@ -66,7 +70,7 @@ test("Vote refund when host removes song", () => {
   assert.equal(userRepo.findById(u.id).points_balance, 5);
   assert.deepEqual(state.queueRepo.listActiveVoteItemIds(u.id), []);
   assert.equal(balanceChange.userId, u.id);
-  assert.equal(balanceChange.pointsRefunded, 1);
+  assert.equal(balanceChange.pointsRefunded, 2);
   assert.equal(balanceChange.newBalance, 5);
 });
 

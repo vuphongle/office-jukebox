@@ -805,6 +805,7 @@ header .desktop-intro { display: none; }
     grid-template-columns: minmax(0, 1fr) 340px;
     grid-template-areas:
       "header queue"
+      "drop queue"
       "now queue"
       "name queue"
       "hint queue"
@@ -905,6 +906,7 @@ header .desktop-intro { display: none; }
     grid-template-columns: minmax(210px, 250px) minmax(0, 1fr) 380px;
     grid-template-areas:
       "header header queue"
+      "drop drop queue"
       "now now queue"
       "name search queue"
       "hint search queue"
@@ -995,15 +997,17 @@ header .desktop-intro { display: none; }
 
 /* Point Drop Banner */
 .point-drop-banner {
-  margin: 14px 0;
-  padding: 12px 16px;
-  border-radius: 16px;
-  background: linear-gradient(135deg, oklch(28% 0.08 325), oklch(20% 0.05 325));
-  border: 1px solid var(--gold);
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 12px;
+  grid-area: drop;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 14px;
+  margin: 14px 0 4px;
+  padding: 16px;
+  border: 1px solid oklch(80% 0.14 85 / 0.5);
+  border-radius: 18px;
+  background:
+    radial-gradient(circle at 100% 0, oklch(80% 0.14 85 / 0.14), transparent 42%),
+    linear-gradient(135deg, oklch(28% 0.08 325), oklch(20% 0.05 325));
   box-shadow: 0 8px 24px rgba(0,0,0,0.3);
   animation: drop-pop 0.3s ease;
 }
@@ -1013,14 +1017,28 @@ header .desktop-intro { display: none; }
 }
 .drop-banner-content {
   display: flex;
+  min-width: 0;
   align-items: center;
-  gap: 10px;
+  gap: 12px;
 }
-.drop-icon { font-size: 24px; }
-.drop-text strong { display: block; font-size: 14px; color: var(--text-hi); }
-.drop-text span { font-size: 12px; color: var(--gold); }
+.drop-icon {
+  width: 44px;
+  height: 44px;
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  border: 1px solid oklch(80% 0.14 85 / 0.28);
+  border-radius: 50%;
+  background: oklch(80% 0.14 85 / 0.1);
+  font-size: 22px;
+}
+.drop-text { min-width: 0; }
+.drop-text strong { display: block; color: var(--text-hi); font: 700 14px/1.4 var(--sans); overflow-wrap: anywhere; }
+.drop-text span { display: block; margin-top: 3px; color: var(--gold); font: 600 12px/1.4 var(--sans); overflow-wrap: anywhere; }
 .drop-claim-btn {
-  padding: 8px 16px;
+  width: 100%;
+  min-height: 44px;
+  padding: 8px 18px;
   border-radius: 12px;
   border: 0;
   background: var(--gold);
@@ -1031,12 +1049,18 @@ header .desktop-intro { display: none; }
   transition: transform 150ms ease;
 }
 .drop-claim-btn:hover { transform: translateY(-1px); }
+@media (min-width: 600px) {
+  .point-drop-banner { grid-template-columns: minmax(0, 1fr) auto; align-items: center; }
+  .drop-claim-btn { width: auto; min-width: 112px; }
+}
 
 /* Queue Voting & Badges */
 .q-vote-btn {
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   gap: 4px;
+  width: 112px;
   min-height: 44px;
   padding: 7px 10px;
   border-radius: 10px;
@@ -1045,21 +1069,28 @@ header .desktop-intro { display: none; }
   color: var(--text);
   font-size: 11px;
   font-weight: 700;
+  font-variant-numeric: tabular-nums;
   cursor: pointer;
-  transition: all 150ms ease;
+  transition: background-color 150ms ease, border-color 150ms ease, color 150ms ease, opacity 150ms ease;
 }
 .q-vote-btn svg { flex-shrink: 0; }
-.q-vote-btn:disabled { cursor: default; opacity: .78; }
+.q-vote-btn:disabled { cursor: default; opacity: 1; }
+.q-vote-btn.is-pending { cursor: wait; }
+.q-vote-btn.is-pending svg { animation: vote-heart-pulse 650ms ease-in-out infinite; }
+@keyframes vote-heart-pulse {
+  50% { opacity: .5; transform: scale(.72); }
+}
 .q-vote-btn:hover {
   background: oklch(68% 0.18 32 / 0.2);
   border-color: var(--red);
   color: var(--red);
 }
 .q-vote-btn.has-voted {
-  background: var(--red);
-  color: var(--red-ink);
-  border-color: var(--red);
+  background: oklch(68% 0.18 32 / 0.14);
+  color: oklch(84% 0.11 35);
+  border-color: oklch(68% 0.18 32 / 0.48);
 }
+.q-vote-btn.has-voted:hover { background: oklch(68% 0.18 32 / 0.24); color: var(--red); }
 @media (min-width: 900px) {
   .q-vote-btn { min-height: 36px; }
 }

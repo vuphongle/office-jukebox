@@ -10,6 +10,13 @@ export class QueueRepository {
     return (row?.maxSeq || 0) + 1;
   }
 
+  getNextVoteRankSequence(eventId = "default_event") {
+    const row = this.db
+      .query("SELECT MAX(vote_rank_sequence) as maxSeq FROM queue_items WHERE event_id = ?")
+      .get(eventId);
+    return (row?.maxSeq || 0) + 1;
+  }
+
   createItem({ videoId, title, channel, duration, thumbnail, addedBy, requesterId, addedByUserId = null, eventId = "default_event" }) {
     const tx = this.db.transaction(() => {
       const id = randomUUID();
@@ -46,7 +53,7 @@ export class QueueRepository {
         .query(
           `SELECT * FROM queue_items
            WHERE event_id = ? AND status = 'queued'
-           ORDER BY pinned DESC, pinned_order ASC, vote_score DESC, queue_sequence ASC`
+           ORDER BY pinned DESC, pinned_order ASC, vote_score DESC, vote_rank_sequence ASC, queue_sequence ASC`
         )
         .all(eventId);
     }
@@ -114,17 +121,32 @@ export class QueueRepository {
       if (!item || item.status !== "queued") throw new Error("Bài hát không còn trong hàng đợi để vote");
 
       const existingVote = this.db
-        .query("SELECT 1 FROM queue_votes WHERE queue_item_id = ? AND user_id = ?")
+        .query("SELECT points_spent, refunded_at FROM queue_votes WHERE queue_item_id = ? AND user_id = ?")
         .get(queueItemId, userId);
-      if (existingVote) throw new Error("Bạn đã vote cho bài hát này rồi");
 
       const now = new Date().toISOString();
-      this.db.run(
-        "INSERT INTO queue_votes (queue_item_id, user_id, points_spent, created_at) VALUES (?, ?, 1, ?)",
-        [queueItemId, userId, now]
-      );
+      if (existingVote && !existingVote.refunded_at) {
+        this.db.run(
+          "UPDATE queue_votes SET points_spent = points_spent + 1 WHERE queue_item_id = ? AND user_id = ?",
+          [queueItemId, userId]
+        );
+      } else if (existingVote) {
+        this.db.run(
+          "UPDATE queue_votes SET points_spent = 1, created_at = ?, refunded_at = NULL WHERE queue_item_id = ? AND user_id = ?",
+          [now, queueItemId, userId]
+        );
+      } else {
+        this.db.run(
+          "INSERT INTO queue_votes (queue_item_id, user_id, points_spent, created_at) VALUES (?, ?, 1, ?)",
+          [queueItemId, userId, now]
+        );
+      }
 
-      this.db.run("UPDATE queue_items SET vote_score = vote_score + 1 WHERE id = ?", [queueItemId]);
+      const voteRankSequence = this.getNextVoteRankSequence(item.event_id);
+      this.db.run(
+        "UPDATE queue_items SET vote_score = vote_score + 1, vote_rank_sequence = ? WHERE id = ?",
+        [voteRankSequence, queueItemId]
+      );
 
       const newBalance = user.points_balance - 1;
       this.db.run("UPDATE users SET points_balance = ?, updated_at = ? WHERE id = ?", [newBalance, now, userId]);
@@ -137,7 +159,11 @@ export class QueueRepository {
       );
 
       const updatedItem = this.findById(queueItemId);
-      return { voteScore: updatedItem.vote_score, newBalance };
+      return {
+        voteScore: updatedItem.vote_score,
+        voteRankSequence: updatedItem.vote_rank_sequence,
+        newBalance,
+      };
     });
 
     return tx.immediate();

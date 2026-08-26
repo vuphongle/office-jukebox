@@ -80,15 +80,19 @@ test("Queue repository voting and refund transactions", () => {
   assert.equal(voteRes.voteScore, 1);
   assert.equal(voteRes.newBalance, 4);
 
-  // Cannot vote twice
-  assert.throws(() => {
-    queueRepo.addVote(song.id, charlie.id);
-  });
+  // The same user can spend another point on the same song.
+  const secondVoteRes = queueRepo.addVote(song.id, charlie.id);
+  assert.equal(secondVoteRes.voteScore, 2);
+  assert.equal(secondVoteRes.newBalance, 3);
+  const storedVote = db
+    .query("SELECT points_spent FROM queue_votes WHERE queue_item_id = ? AND user_id = ?")
+    .get(song.id, charlie.id);
+  assert.equal(storedVote.points_spent, 2);
 
   // Refund
   const refunded = queueRepo.refundVotes(song.id, "Test refund");
   assert.equal(refunded.length, 1);
-  assert.equal(refunded[0].pointsRefunded, 1);
+  assert.equal(refunded[0].pointsRefunded, 2);
   assert.equal(refunded[0].newBalance, 5);
 
   const charlieAfter = userRepo.findById(charlie.id);
