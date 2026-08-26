@@ -261,26 +261,38 @@
 
   <!-- MODAL: Adjust Points -->
   <div id="points-modal" class="modal-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="points-modal-title">
-    <div class="modal-card">
+    <div class="modal-card points-modal-card">
       <div class="modal-head">
-        <h3 id="points-modal-title">Điều chỉnh Điểm cho <span id="modal-target-username"></span></h3>
+        <div class="modal-title-group">
+          <p class="eyebrow">Quản lý số dư</p>
+          <h3 id="points-modal-title">Điều chỉnh điểm</h3>
+          <p id="modal-target-username" class="modal-target-username"></p>
+        </div>
         <button id="modal-close-btn" class="close-btn" type="button" aria-label="Đóng cửa sổ điều chỉnh điểm">&times;</button>
       </div>
-      <form id="adjust-points-form">
-        <div class="form-group">
-          <label>Số dư hiện tại: <strong id="modal-current-balance">0</strong> điểm</label>
+      <form id="adjust-points-form" class="admin-form">
+        <div class="points-balance-card">
+          <span>Số dư hiện tại</span>
+          <strong><span id="modal-current-balance">0</span> điểm</strong>
         </div>
         <div class="form-group">
-          <label for="adjust-delta">Số điểm cộng hoặc trừ (VD: 5 hoặc -5) *</label>
-          <input id="adjust-delta" type="number" placeholder="5 hoặc -5" required />
+          <label for="adjust-delta">Số điểm cộng hoặc trừ *</label>
+          <div class="points-input-shell">
+            <span aria-hidden="true">±</span>
+            <input id="adjust-delta" type="number" placeholder="Nhập 5 hoặc -5" required />
+          </div>
+          <div class="points-input-hints" aria-hidden="true">
+            <span class="is-add">+5 <small>Cộng điểm</small></span>
+            <span class="is-subtract">−5 <small>Trừ điểm</small></span>
+          </div>
         </div>
         <div class="form-group">
           <label for="adjust-reason">Lý do điều chỉnh *</label>
-          <input id="adjust-reason" type="text" maxlength="100" placeholder="Lý do cộng/trừ điểm…" required />
+          <input id="adjust-reason" type="text" maxlength="100" placeholder="Ví dụ: Thưởng hoạt động sự kiện" required />
         </div>
         <div class="modal-actions">
           <button type="button" id="modal-cancel-btn" class="cancel-btn">Hủy</button>
-          <button type="submit" class="submit-btn gold">Xác nhận</button>
+          <button type="submit" class="submit-btn gold">Xác nhận điều chỉnh</button>
         </div>
       </form>
     </div>

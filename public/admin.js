@@ -241,7 +241,7 @@ async function loadUsers() {
 
 window.openPointsModal = function (userId, username, currentBalance) {
   selectedUserId = userId;
-  document.getElementById("modal-target-username").textContent = `@${username}`;
+  document.getElementById("modal-target-username").textContent = `Tài khoản @${username}`;
   document.getElementById("modal-current-balance").textContent = currentBalance;
   document.getElementById("adjust-delta").value = "";
   document.getElementById("adjust-reason").value = "";

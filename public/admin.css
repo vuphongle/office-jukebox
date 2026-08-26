@@ -485,6 +485,14 @@ h1 {
   background: var(--card-elevated);
   box-shadow: 0 20px 48px rgba(0,0,0,0.5);
 }
+.points-modal-card {
+  width: min(520px, calc(100% - 32px));
+  padding: 28px;
+  border-color: oklch(80% 0.14 85 / 0.22);
+  background:
+    radial-gradient(circle at 100% 0, oklch(80% 0.14 85 / 0.08), transparent 38%),
+    var(--card-elevated);
+}
 .modal-card.wide { width: min(720px, calc(100% - 32px)); }
 .modal-head {
   display: flex;
@@ -493,6 +501,11 @@ h1 {
   margin-bottom: 18px;
 }
 .modal-head h3 { margin: 0; font-size: 16px; color: var(--text-hi); }
+.modal-title-group { min-width: 0; }
+.modal-title-group .eyebrow { margin-bottom: 5px; }
+.points-modal-card .modal-head { align-items: flex-start; margin-bottom: 20px; }
+.points-modal-card .modal-head h3 { font: 700 22px/1.25 var(--serif); }
+.modal-target-username { margin: 5px 0 0; color: var(--muted); font-size: 12px; }
 .close-btn {
   width: 44px;
   height: 44px;
@@ -519,6 +532,44 @@ h1 {
   cursor: pointer;
 }
 
+.points-balance-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 14px 16px;
+  border: 1px solid var(--line);
+  border-radius: 13px;
+  background: oklch(100% 0 0 / 0.045);
+}
+.points-balance-card { margin-bottom: 18px; }
+.points-balance-card span { color: var(--muted); font-size: 12px; }
+.points-balance-card strong { color: var(--gold); font-size: 17px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.points-input-shell { position: relative; }
+.points-input-shell > span {
+  position: absolute;
+  z-index: 1;
+  left: 13px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--gold);
+  font-size: 17px;
+  font-weight: 800;
+  pointer-events: none;
+}
+.points-modal-card .points-input-shell input { padding-left: 40px; font-size: 16px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.points-modal-card .points-input-shell input[type="number"] { appearance: textfield; }
+.points-modal-card .points-input-shell input[type="number"]::-webkit-inner-spin-button,
+.points-modal-card .points-input-shell input[type="number"]::-webkit-outer-spin-button { margin: 0; appearance: none; }
+.points-input-hints { display: flex; gap: 8px; margin-top: 8px; }
+.points-input-hints > span { display: inline-flex; align-items: center; gap: 5px; padding: 5px 8px; border-radius: 8px; font-size: 11px; font-weight: 800; }
+.points-input-hints small { color: var(--muted); font-size: 10px; font-weight: 500; }
+.points-input-hints .is-add { background: oklch(75% 0.16 145 / 0.1); color: var(--green); }
+.points-input-hints .is-subtract { background: oklch(68% 0.18 32 / 0.1); color: var(--red); }
+.points-modal-card .admin-form .form-group { margin-bottom: 15px; }
+.points-modal-card .modal-actions { padding-top: 2px; border-top: 0; }
+.points-modal-card .modal-actions .submit-btn { min-width: 168px; }
+
 @media (max-width: 768px) {
   .admin-app { width: min(100% - 24px, 1240px); padding-top: 16px; }
   .top-nav { align-items: flex-start; gap: 12px; }
@@ -533,6 +584,7 @@ h1 {
   .stats-grid article { flex: 1; text-align: center; }
   .feedback-actions-bar { width: 100%; }
   .feedback-actions-bar .toggle-btn { flex: 1; }
+  .points-modal-card { padding: 22px; }
 }
 
 @media (prefers-reduced-motion: reduce) {

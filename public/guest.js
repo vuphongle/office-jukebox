@@ -1200,7 +1200,18 @@ function renderQueue(state) {
   const ul = document.getElementById("queue");
   ul.innerHTML = "";
   if (queue.length === 0) {
-    ul.innerHTML = '<li class="q-empty">Chưa có bài hát nào — hãy là người đầu tiên chọn bài!</li>';
+    ul.innerHTML = `
+      <li class="q-empty">
+        <span class="q-empty-icon" aria-hidden="true">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M9 18V5l10-2v13" />
+            <circle cx="6" cy="18" r="3" />
+            <circle cx="16" cy="16" r="3" />
+          </svg>
+        </span>
+        <strong>Hàng đợi đang trống</strong>
+        <span>Chọn một bài hát để mở màn nhé!</span>
+      </li>`;
     return;
   }
   const myIds = loadMyRequestIds();
@@ -1224,17 +1235,19 @@ function renderQueue(state) {
           <span class="t"></span>
           ${isPinned ? '<span class="q-pinned-badge">Ghim</span>' : ""}
         </div>
-        <div class="s"></div>
-        <div class="q-requester"></div>
+        <div class="q-byline">
+          <span class="s"></span>
+          <span class="q-requester"></span>
+        </div>
         <div class="q-eta"></div>
       </div>
-      <div class="q-vote-wrap">
+      <div class="q-actions">
         <button class="q-vote-btn${hasVoted ? " has-voted" : ""}" type="button" title="${voteTitle}" aria-label="${voteTitle}" onclick="voteSong('${item.id}')" ${hasVoted || votePending ? "disabled" : ""}>
           <svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20.8 4.6a5.5 5.5 0 0 0-7.8 0L12 5.6l-1-1a5.5 5.5 0 0 0-7.8 7.8l1 1L12 21l7.8-7.6 1-1a5.5 5.5 0 0 0 0-7.8Z"/></svg>
           <span>${hasVoted ? "Đã vote" : "Vote +1"} · ${voteCount}</span>
         </button>
-      </div>
-      <button class="q-remove-own hidden" type="button" title="Xóa bài của bạn" aria-label="Xóa bài của bạn">×</button>`;
+        <button class="q-remove-own hidden" type="button" title="Xóa bài của bạn" aria-label="Xóa bài của bạn">×</button>
+      </div>`;
     li.querySelector(".t").textContent = item.title;
     updateMarqueeTitle(li.querySelector(".t"));
     li.querySelector(".s").textContent = item.channel;
