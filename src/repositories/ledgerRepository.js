@@ -25,12 +25,23 @@ export class LedgerRepository {
         `SELECT id, user_id, delta, type, reference_id, actor_user_id, reason, created_at
          FROM point_ledger
          WHERE user_id = ?
-         ORDER BY created_at DESC
+         ORDER BY created_at DESC, rowid DESC
          LIMIT ? OFFSET ?`
       )
       .all(userId, limit, offset);
 
     return { total, ledger: rows };
+  }
+
+  findByUserId(userId) {
+    return this.db
+      .query(
+        `SELECT id, user_id, delta, type, reference_id, actor_user_id, reason, created_at
+         FROM point_ledger
+         WHERE user_id = ?
+         ORDER BY created_at DESC, rowid DESC`
+      )
+      .all(userId);
   }
 
   listAll({ search = "", type = "", limit = 50, offset = 0 } = {}) {
@@ -62,7 +73,7 @@ export class LedgerRepository {
          FROM point_ledger pl
          JOIN users u ON pl.user_id = u.id
          ${where}
-         ORDER BY pl.created_at DESC
+         ORDER BY pl.created_at DESC, pl.rowid DESC
          LIMIT ? OFFSET ?`
       )
       .all(...params, limit, offset);

@@ -26,7 +26,7 @@ export function initDb({ dbPath = DEFAULT_DB_PATH, adminUser = process.env.ADMIN
   db.run("PRAGMA busy_timeout = 5000;");
 
   // Run DDL Migrations
-  db.run(`
+  db.exec(`
     CREATE TABLE IF NOT EXISTS users (
       id TEXT PRIMARY KEY,
       username TEXT UNIQUE NOT NULL COLLATE NOCASE,

@@ -24,12 +24,12 @@ test("Database initialization and user repository CRUD", () => {
   assert.equal(user1.points_balance, 0);
 
   // Points update with ledger
-  const { user: updatedUser, ledgerId } = userRepo.updatePoints(user1.id, 10, {
+  const res = userRepo.updatePoints(user1.id, 10, {
     type: "admin_adjustment",
     reason: "Thưởng khởi đầu",
   });
-  assert.equal(updatedUser.points_balance, 10);
-  assert.ok(ledgerId);
+  assert.equal(res.points_balance, 10);
+  assert.ok(res.ledgerId);
 
   // Cannot subtract more points than available (CHECK constraint & validation)
   assert.throws(() => {

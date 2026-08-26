@@ -305,6 +305,19 @@ export class JukeboxState {
       return false;
     }
 
+    // No-op check: already at the end when beforeId is null/undefined
+    if ((beforeId === null || beforeId === undefined) && i === this.queue.length - 1) {
+      return false;
+    }
+
+    // No-op check: already immediately before beforeId
+    if (beforeId !== null && beforeId !== undefined) {
+      const targetIdx = this.queue.findIndex((s) => s.id === beforeId);
+      if (i === targetIdx - 1) {
+        return false;
+      }
+    }
+
     const [item] = this.queue.splice(i, 1);
     const j = beforeId === null || beforeId === undefined
       ? this.queue.length

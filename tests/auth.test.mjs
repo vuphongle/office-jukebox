@@ -74,14 +74,16 @@ test("User registration, authentication and session lifecycle", () => {
   const blockedAuth = sessionRepo.findActiveUserByToken(session.token);
   assert.equal(blockedAuth, null);
 
-  // Unblock
+  // Unblock & create new session
   userRepo.updateStatus(user.id, "active");
-  const unblockedAuth = sessionRepo.findActiveUserByToken(session.token);
+  const newSession = sessionRepo.create(user.id);
+  const unblockedAuth = sessionRepo.findActiveUserByToken(newSession.token);
   assert.ok(unblockedAuth);
+  assert.equal(unblockedAuth.username, "testuser");
 
   // 5. Delete session (Logout)
-  sessionRepo.deleteByToken(session.token);
-  assert.equal(sessionRepo.findActiveUserByToken(session.token), null);
+  sessionRepo.deleteByToken(newSession.token);
+  assert.equal(sessionRepo.findActiveUserByToken(newSession.token), null);
 
   closeDb();
   if (existsSync(TEST_DB_PATH)) unlinkSync(TEST_DB_PATH);

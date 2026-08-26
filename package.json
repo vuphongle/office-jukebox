@@ -10,9 +10,9 @@
     "node": ">=20"
   },
   "scripts": {
-    "start": "node server.js",
-    "test": "node --test",
-    "check-llm": "node scripts/check-llm.mjs"
+    "start": "bun server.js",
+    "test": "bun test",
+    "check-llm": "bun scripts/check-llm.mjs"
   },
   "dependencies": {
     "express": "^4.19.2",

@@ -51,7 +51,7 @@ export class UserRepository {
         [ledgerId, userId, delta, type, referenceId, actorUserId, reason, now]
       );
 
-      return { user: { ...user, points_balance: newBalance }, ledgerId };
+      return { ...user, points_balance: newBalance, ledgerId };
     });
 
     return tx();

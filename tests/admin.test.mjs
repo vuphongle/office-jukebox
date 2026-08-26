@@ -53,16 +53,19 @@ test("Admin User Management & Direct Points Adjustment", () => {
 
   closeDb();
   if (existsSync(TEST_DB_PATH)) unlinkSync(TEST_DB_PATH);
+  if (existsSync(`${TEST_DB_PATH}-wal`)) unlinkSync(`${TEST_DB_PATH}-wal`);
+  if (existsSync(`${TEST_DB_PATH}-shm`)) unlinkSync(`${TEST_DB_PATH}-shm`);
 });
 
 test("Admin Direct Airdrop & Claimable Point Drops", () => {
-  if (existsSync(TEST_DB_PATH)) unlinkSync(TEST_DB_PATH);
+  const TEST_DB_PATH_2 = path.join(__dirname, "test-admin-drop.db");
+  if (existsSync(TEST_DB_PATH_2)) unlinkSync(TEST_DB_PATH_2);
 
-  const db = initDb({ dbPath: TEST_DB_PATH });
+  const db = initDb({ dbPath: TEST_DB_PATH_2 });
   const userRepo = new UserRepository(db);
   const dropRepo = new DropRepository(db);
 
-  const admin = userRepo.create({ username: "boss", passwordHash: "h", role: "admin" });
+  const admin = userRepo.findByUsername("admin");
   const u1 = userRepo.create({ username: "user_a", passwordHash: "h" });
   const u2 = userRepo.create({ username: "user_b", passwordHash: "h" });
 
@@ -73,7 +76,7 @@ test("Admin Direct Airdrop & Claimable Point Drops", () => {
     createdBy: admin.id,
   });
 
-  assert.equal(directResult.userCount, 3); // boss, user_a, user_b
+  assert.equal(directResult.userCount, 3); // admin, user_a, user_b
 
   const u1After = userRepo.findById(u1.id);
   const u2After = userRepo.findById(u2.id);
@@ -127,5 +130,7 @@ test("Admin Direct Airdrop & Claimable Point Drops", () => {
   assert.equal(claim2.newBalance, 35);
 
   closeDb();
-  if (existsSync(TEST_DB_PATH)) unlinkSync(TEST_DB_PATH);
+  if (existsSync(TEST_DB_PATH_2)) unlinkSync(TEST_DB_PATH_2);
+  if (existsSync(`${TEST_DB_PATH_2}-wal`)) unlinkSync(`${TEST_DB_PATH_2}-wal`);
+  if (existsSync(`${TEST_DB_PATH_2}-shm`)) unlinkSync(`${TEST_DB_PATH_2}-shm`);
 });
