@@ -3,7 +3,16 @@ import assert from "node:assert/strict";
 import { initDb, closeDb } from "../src/db.js";
 import { UserRepository } from "../src/repositories/userRepository.js";
 import { SessionRepository } from "../src/repositories/sessionRepository.js";
-import { hashPassword, verifyPassword, parseCookies, getSessionTokenFromCookieHeader, requireAdmin } from "../src/auth.js";
+import {
+  hashPassword,
+  hashPasswordAsync,
+  verifyPassword,
+  verifyPasswordAsync,
+  parseCookies,
+  getSessionTokenFromCookieHeader,
+  requireAdmin,
+} from "../src/auth.js";
+import { canUseHostControls, refreshSocketIdentity } from "../src/socketAuth.js";
 import { unlinkSync, existsSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -19,6 +28,13 @@ test("Password hashing and verification with scrypt", () => {
   assert.equal(verifyPassword(plain, hash), true);
   assert.equal(verifyPassword("WrongPassword", hash), false);
   assert.equal(verifyPassword("", hash), false);
+});
+
+test("Async password hashing keeps public auth work off the request thread", async () => {
+  const hash = await hashPasswordAsync("AsyncSecret123!");
+  assert.equal(await verifyPasswordAsync("AsyncSecret123!", hash), true);
+  assert.equal(await verifyPasswordAsync("wrong", hash), false);
+  assert.equal(await verifyPasswordAsync("anything", "invalid"), false);
 });
 
 test("Cookie parsing helper", () => {
@@ -118,4 +134,28 @@ test("User registration, authentication and session lifecycle", () => {
 
   closeDb();
   if (existsSync(TEST_DB_PATH)) unlinkSync(TEST_DB_PATH);
+});
+
+test("WebSocket identity is revalidated after role and session changes", () => {
+  const db = initDb({ dbPath: ":memory:" });
+  const userRepo = new UserRepository(db);
+  const sessionRepo = new SessionRepository(db);
+  const user = userRepo.create({ username: "socket-admin", passwordHash: "p", role: "admin" });
+  const session = sessionRepo.create(user.id);
+  const socket = { sessionToken: session.token, hostAuthenticated: false };
+
+  let currentSession = refreshSocketIdentity(socket, sessionRepo);
+  assert.equal(socket.isAdmin, true);
+  assert.equal(canUseHostControls(socket, currentSession), true);
+
+  userRepo.updateRole(user.id, "user");
+  currentSession = refreshSocketIdentity(socket, sessionRepo);
+  assert.equal(socket.isAdmin, false);
+  assert.equal(canUseHostControls(socket, currentSession), false);
+
+  userRepo.updateStatus(user.id, "blocked");
+  assert.equal(refreshSocketIdentity(socket, sessionRepo), null);
+  assert.equal(socket.userId, null);
+
+  closeDb();
 });

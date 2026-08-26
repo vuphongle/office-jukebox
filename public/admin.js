@@ -634,15 +634,8 @@ function initWebSocket() {
   const proto = location.protocol === "https:" ? "wss" : "ws";
   ws = new WebSocket(`${proto}://${location.host}`);
 
-  ws.onopen = async () => {
+  ws.onopen = () => {
     document.getElementById("admin-chat-status").textContent = "Đã kết nối phòng chat";
-    try {
-      const res = await fetch("/api/host-token");
-      const data = await res.json();
-      if (data.token) {
-        ws.send(JSON.stringify({ type: "auth", token: data.token }));
-      }
-    } catch {}
   };
 
   ws.onmessage = (e) => {
@@ -653,7 +646,15 @@ function initWebSocket() {
       return;
     }
 
-    if (msg.type === "chatHistory") {
+    if (msg.type === "sessionRevoked") {
+      if (ws) {
+        ws.onclose = null;
+        ws.close();
+        ws = null;
+      }
+      adminUser = null;
+      showLoginGate(msg.reason || "Phiên quản trị không còn hiệu lực.");
+    } else if (msg.type === "chatHistory") {
       const box = document.getElementById("admin-chat-messages");
       if (box) {
         box.innerHTML = msg.messages.map(renderChatMessage).join("");

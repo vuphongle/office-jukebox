@@ -51,7 +51,7 @@ test("reorder can append and ignores invalid or no-op requests", () => {
   assert.equal(changes, 1);
 });
 
-test("host move pins the moved song and unpin restores natural ordering", () => {
+test("host move keeps pinned items as a contiguous prefix", () => {
   const state = createState();
   add(state, "now-playing");
   const second = add(state, "second");
@@ -59,10 +59,14 @@ test("host move pins the moved song and unpin restores natural ordering", () => 
 
   state.move(second.id, "down");
   assert.equal(second.pinned, true);
+  assert.equal(state.queue[0].pinned, true);
   assert.deepEqual(queueIds(state), ["third", "second"]);
 
   state.unpin(second.id);
   assert.equal(second.pinned, false);
+  assert.deepEqual(queueIds(state), ["third", "second"]);
+
+  state.unpin(state.queue[0].id);
   assert.deepEqual(queueIds(state), ["second", "third"]);
 });
 

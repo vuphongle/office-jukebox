@@ -1,4 +1,4 @@
-import { scryptSync, randomBytes, timingSafeEqual } from "node:crypto";
+import { scrypt, scryptSync, randomBytes, timingSafeEqual } from "node:crypto";
 import { UserRepository } from "./repositories/userRepository.js";
 import { SessionRepository } from "./repositories/sessionRepository.js";
 
@@ -16,6 +16,30 @@ export function verifyPassword(password, storedHash) {
   const [salt, originalHash] = storedHash.split(":");
   const testHash = scryptSync(password, salt, 64).toString("hex");
   return timingSafeEqual(Buffer.from(testHash, "utf8"), Buffer.from(originalHash, "utf8"));
+}
+
+function scryptAsync(password, salt) {
+  return new Promise((resolve, reject) => {
+    scrypt(password, salt, 64, (err, derivedKey) => {
+      if (err) reject(err);
+      else resolve(derivedKey);
+    });
+  });
+}
+
+export async function hashPasswordAsync(password) {
+  const salt = randomBytes(16).toString("hex");
+  const hash = await scryptAsync(password, salt);
+  return `${salt}:${hash.toString("hex")}`;
+}
+
+export async function verifyPasswordAsync(password, storedHash) {
+  if (!storedHash || !storedHash.includes(":")) return false;
+  const [salt, originalHash] = storedHash.split(":");
+  const expected = Buffer.from(originalHash, "hex");
+  if (!salt || expected.length !== 64) return false;
+  const actual = await scryptAsync(password, salt);
+  return timingSafeEqual(actual, expected);
 }
 
 export function generateSessionToken() {

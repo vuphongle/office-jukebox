@@ -17,6 +17,7 @@ export class JukeboxState {
     this.history = []; // các mục đã phát (mới nhất ở cuối), có giới hạn
     this.voteSortOn = true;
     this.onChange = () => {};
+    this.onBalanceChange = () => {};
 
     if (this.db) {
       this.initFromDb();
@@ -227,8 +228,9 @@ export class JukeboxState {
     const finishedItem = this.nowPlaying;
     const nextItem = this.queue[0] || null;
     const transitionedAt = Date.now();
+    let refunds = [];
     if (this.queueRepo) {
-      this.queueRepo.finishAndStart({
+      refunds = this.queueRepo.finishAndStart({
         finishedId: finishedItem?.id || null,
         finalStatus: isError ? "error" : "played",
         nextId: nextItem?.id || null,
@@ -244,6 +246,7 @@ export class JukeboxState {
     this.nowPlaying = this.queue.shift() || null;
     if (this.nowPlaying) this.nowPlaying.startedAt = transitionedAt;
     this._emit();
+    this._emitBalanceChanges(refunds, "Hoàn điểm do lỗi phát video YouTube");
   }
 
   // Điều khiển host: bỏ qua bài hiện tại bất kể bài nào đang phát.
@@ -255,9 +258,12 @@ export class JukeboxState {
   remove(id) {
     const index = this.queue.findIndex((item) => item.id === id);
     if (index === -1) return;
-    if (this.queueRepo) this.queueRepo.removeAndRefund(id, "Host xóa bài khỏi hàng đợi");
+    const refunds = this.queueRepo
+      ? this.queueRepo.removeAndRefund(id, "Host xóa bài khỏi hàng đợi")
+      : [];
     this.queue.splice(index, 1);
     this._emit();
+    this._emitBalanceChanges(refunds, "Hoàn điểm do bài hát bị xóa khỏi hàng đợi");
   }
 
   // Xóa một mục sắp phát khi clientId trùng với người đã thêm mục đó (hoặc userId).
@@ -267,9 +273,12 @@ export class JukeboxState {
       (item) => item.id === id && (item.requesterId === requesterId || (userId && item.addedByUserId === userId))
     );
     if (index === -1) return false;
-    if (this.queueRepo) this.queueRepo.removeAndRefund(id, "Người yêu cầu tự xóa bài");
+    const refunds = this.queueRepo
+      ? this.queueRepo.removeAndRefund(id, "Người yêu cầu tự xóa bài")
+      : [];
     this.queue.splice(index, 1);
     this._emit();
+    this._emitBalanceChanges(refunds, "Hoàn điểm do bài hát bị xóa khỏi hàng đợi");
     return true;
   }
 
@@ -279,9 +288,8 @@ export class JukeboxState {
     if (i === -1) return;
     const j = dir === "up" ? i - 1 : i + 1;
     if (j < 0 || j >= this.queue.length) return;
-    const movedItem = this.queue[i];
     [this.queue[i], this.queue[j]] = [this.queue[j], this.queue[i]];
-    movedItem.pinned = true;
+    this._pinThroughIndex(j);
     this._syncPinnedOrder();
     this._emit();
   }
@@ -322,7 +330,7 @@ export class JukeboxState {
     }
 
     this.queue.splice(j, 0, item);
-    item.pinned = true;
+    this._pinThroughIndex(j);
     this._syncPinnedOrder();
     this._emit();
     return true;
@@ -356,6 +364,20 @@ export class JukeboxState {
       }
     }
     if (this.queueRepo && pinnedItems.length) this.queueRepo.reorderPinned(pinnedItems);
+  }
+
+  // Pinned items form one contiguous prefix. Pinning the whole prefix preserves
+  // the host's explicit order both in memory and after SQLite reload/sorting.
+  _pinThroughIndex(index) {
+    for (let i = 0; i <= index; i++) {
+      this.queue[i].pinned = true;
+    }
+  }
+
+  _emitBalanceChanges(changes, reason) {
+    for (const change of changes || []) {
+      this.onBalanceChange({ ...change, reason });
+    }
   }
 }
 

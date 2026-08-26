@@ -59,10 +59,15 @@ test("Vote refund when host removes song", () => {
   assert.deepEqual(state.queueRepo.listActiveVoteItemIds(u.id), [s1.id]);
 
   // Host removes s1
+  let balanceChange = null;
+  state.onBalanceChange = (change) => { balanceChange = change; };
   state.remove(s1.id);
   // Points refunded 100%
   assert.equal(userRepo.findById(u.id).points_balance, 5);
   assert.deepEqual(state.queueRepo.listActiveVoteItemIds(u.id), []);
+  assert.equal(balanceChange.userId, u.id);
+  assert.equal(balanceChange.pointsRefunded, 1);
+  assert.equal(balanceChange.newBalance, 5);
 });
 
 test("Vote refund when YouTube error occurs on playing song", () => {

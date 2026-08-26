@@ -187,6 +187,7 @@ export class QueueRepository {
         "UPDATE users SET points_balance = points_balance + ?, updated_at = ? WHERE id = ?",
         [vote.points_spent, now, vote.user_id]
       );
+      const updatedUser = this.db.query("SELECT points_balance FROM users WHERE id = ?").get(vote.user_id);
 
       this.db.run(
         "UPDATE queue_votes SET refunded_at = ? WHERE queue_item_id = ? AND user_id = ?",
@@ -200,7 +201,11 @@ export class QueueRepository {
         [ledgerId, vote.user_id, vote.points_spent, queueItemId, reason, now]
       );
 
-      refunded.push({ userId: vote.user_id, pointsRefunded: vote.points_spent });
+      refunded.push({
+        userId: vote.user_id,
+        pointsRefunded: vote.points_spent,
+        newBalance: updatedUser.points_balance,
+      });
     }
 
     return refunded;
@@ -225,13 +230,14 @@ export class QueueRepository {
 
   finishAndStart({ finishedId, finalStatus = "played", nextId = null, finishedAt = Date.now(), startedAt = Date.now(), refundReason = "" }) {
     const tx = this.db.transaction(() => {
+      let refunds = [];
       if (finishedId) {
         this.db.run(
           "UPDATE queue_items SET status = ?, finished_at = ? WHERE id = ? AND status = 'playing'",
           [finalStatus, finishedAt, finishedId]
         );
         if (finalStatus === "error") {
-          this._refundVotesUnsafe(finishedId, refundReason || "Lỗi phát video YouTube");
+          refunds = this._refundVotesUnsafe(finishedId, refundReason || "Lỗi phát video YouTube");
         }
       }
       if (nextId) {
@@ -240,7 +246,8 @@ export class QueueRepository {
           [startedAt, nextId]
         );
       }
+      return refunds;
     });
-    tx.immediate();
+    return tx.immediate();
   }
 }

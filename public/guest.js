@@ -286,11 +286,6 @@ window.voteSong = async function (itemId) {
     openAuthModal("login");
     return;
   }
-  if (currentUser.pointsBalance < 1) {
-    toast("bad", "🪙", "Bạn không đủ điểm để vote!", { sub: "Hãy điểm danh hàng ngày hoặc chờ airdrop từ BTC." });
-    openCheckinModal();
-    return;
-  }
   if (currentUser.votedQueueItemIds?.includes(itemId) || pendingVotes.has(itemId)) return;
 
   pendingVotes.add(itemId);
@@ -1148,6 +1143,19 @@ function connectWs() {
         renderUserAuthBar();
         toast("ok", "🚀", `Bạn vừa nhận được airdrop +${msg.points} điểm!`, { sub: msg.reason });
       }
+    } else if (msg.type === "balanceUpdated") {
+      if (currentUser && Number.isSafeInteger(msg.newBalance)) {
+        currentUser.pointsBalance = msg.newBalance;
+        renderUserAuthBar();
+        const title = msg.delta > 0 ? `Bạn vừa được hoàn +${msg.delta} điểm.` : "Số dư điểm vừa được cập nhật.";
+        toast("info", "🪙", title, { sub: msg.reason || "Dữ liệu đã đồng bộ từ máy chủ." });
+      }
+    } else if (msg.type === "sessionRevoked") {
+      currentUser = null;
+      hidePointDropBanner();
+      renderUserAuthBar();
+      if (lastQueueState) renderQueue(lastQueueState);
+      toast("bad", "!", msg.reason || "Phiên đăng nhập không còn hiệu lực.");
     } else if (msg.type === "voteResult") {
       if (!msg.ok) toast("bad", "!", msg.reason || "Lỗi vote bài hát");
     } else if (msg.type === "removeOwnResult") {

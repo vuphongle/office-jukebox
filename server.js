@@ -44,8 +44,8 @@ import { QueueRepository } from "./src/repositories/queueRepository.js";
 import { DropRepository } from "./src/repositories/dropRepository.js";
 import {
   createAuthMiddleware,
-  hashPassword,
-  verifyPassword,
+  hashPasswordAsync,
+  verifyPasswordAsync,
   generateSessionToken,
   setSessionCookie,
   clearSessionCookie,
@@ -53,6 +53,8 @@ import {
   requireAuth,
   requireAdmin,
 } from "./src/auth.js";
+import { createFixedWindowRateLimiter } from "./src/rateLimit.js";
+import { canUseHostControls, refreshSocketIdentity } from "./src/socketAuth.js";
 import { performCheckin, getLocalDate } from "./src/checkin.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -191,7 +193,32 @@ app.use(
 
 // --- API XÁC THỰC & THÀNH VIÊN --------------------------------------------
 
-app.post("/api/auth/register", (req, res) => {
+const loginIpLimit = createFixedWindowRateLimiter({
+  windowMs: 15 * 60 * 1000,
+  max: 60,
+  key: (req) => req.ip,
+  reason: "Có quá nhiều lần đăng nhập từ mạng này. Vui lòng thử lại sau.",
+});
+const loginUsernameLimit = createFixedWindowRateLimiter({
+  windowMs: 15 * 60 * 1000,
+  max: 10,
+  key: (req) => (req.body?.username || "").toString().trim().toLowerCase(),
+  reason: "Tên đăng nhập này đã được thử quá nhiều lần. Vui lòng thử lại sau.",
+});
+const registerIpLimit = createFixedWindowRateLimiter({
+  windowMs: 60 * 60 * 1000,
+  max: 20,
+  key: (req) => req.ip,
+  reason: "Mạng này đã tạo quá nhiều tài khoản. Vui lòng thử lại sau.",
+});
+const registerGlobalLimit = createFixedWindowRateLimiter({
+  windowMs: 60 * 60 * 1000,
+  max: 300,
+  key: () => "global",
+  reason: "Hệ thống đang tạm giới hạn đăng ký mới. Vui lòng thử lại sau.",
+});
+
+app.post("/api/auth/register", registerIpLimit, registerGlobalLimit, async (req, res) => {
   const { username, password, displayName } = req.body || {};
   if (!username || typeof username !== "string" || username.trim().length < 3 || username.trim().length > 30) {
     return res.status(400).json({ ok: false, reason: "Tên đăng nhập phải từ 3 đến 30 ký tự." });
@@ -212,7 +239,7 @@ app.post("/api/auth/register", (req, res) => {
   }
 
   try {
-    const passwordHash = hashPassword(password);
+    const passwordHash = await hashPasswordAsync(password);
     const registration = db.transaction(() => {
       const user = userRepo.create({
         username: username.trim(),
@@ -247,42 +274,47 @@ app.post("/api/auth/register", (req, res) => {
   }
 });
 
-app.post("/api/auth/login", (req, res) => {
+app.post("/api/auth/login", loginIpLimit, loginUsernameLimit, async (req, res) => {
   const { username, password } = req.body || {};
   if (typeof username !== "string" || typeof password !== "string" || !username.trim() || !password) {
     return res.status(400).json({ ok: false, reason: "Vui lòng nhập tên đăng nhập và mật khẩu." });
   }
 
-  const user = userRepo.findByUsername(username);
-  if (!user || !verifyPassword(password, user.password_hash)) {
-    return res.status(401).json({ ok: false, reason: "Tên đăng nhập hoặc mật khẩu không chính xác." });
+  try {
+    const user = userRepo.findByUsername(username);
+    if (!user || !(await verifyPasswordAsync(password, user.password_hash))) {
+      return res.status(401).json({ ok: false, reason: "Tên đăng nhập hoặc mật khẩu không chính xác." });
+    }
+
+    if (user.status === "blocked") {
+      return res.status(403).json({ ok: false, reason: "Tài khoản của bạn đã bị khóa." });
+    }
+
+    const token = generateSessionToken();
+    const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
+    sessionRepo.create(user.id, token, expiresAt);
+    setSessionCookie(res, token, req);
+
+    res.json({
+      ok: true,
+      user: {
+        id: user.id,
+        username: user.username,
+        displayName: user.display_name,
+        role: user.role,
+        pointsBalance: user.points_balance,
+        currentStreak: user.current_streak,
+      },
+    });
+  } catch {
+    res.status(500).json({ ok: false, reason: "Không thể đăng nhập lúc này." });
   }
-
-  if (user.status === "blocked") {
-    return res.status(403).json({ ok: false, reason: "Tài khoản của bạn đã bị khóa." });
-  }
-
-  const token = generateSessionToken();
-  const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
-  sessionRepo.create(user.id, token, expiresAt);
-  setSessionCookie(res, token, req);
-
-  res.json({
-    ok: true,
-    user: {
-      id: user.id,
-      username: user.username,
-      displayName: user.display_name,
-      role: user.role,
-      pointsBalance: user.points_balance,
-      currentStreak: user.current_streak,
-    },
-  });
 });
 
 app.post("/api/auth/logout", (req, res) => {
   if (req.sessionToken) {
     sessionRepo.delete(req.sessionToken);
+    revokeSessionSocket(req.sessionToken, "Phiên đăng nhập đã kết thúc.");
   }
   clearSessionCookie(res, req);
   res.json({ ok: true });
@@ -466,8 +498,9 @@ app.post("/api/youtube/resolve", async (req, res) => {
   res.json({ ok: true, song });
 });
 
-app.get("/api/host-token", requireHostAuth, (_req, res) => {
-  res.json({ token: HOST_PASSWORD ? hostToken : "" });
+app.get("/api/host-token", requireHostAuth, (req, res) => {
+  const isAdminSession = req.user?.role === "admin" && req.user?.status === "active";
+  res.json({ token: HOST_PASSWORD && !isAdminSession ? hostToken : "" });
 });
 
 app.post("/api/request", async (req, res) => {
@@ -568,6 +601,7 @@ app.post("/api/admin/users/:id/points", requireAdmin, (req, res) => {
       actorUserId: actorId,
       reason,
     });
+    notifyUserBalance(req.params.id, result.points_balance, { delta, reason });
     res.json({ ok: true, ...result });
   } catch (err) {
     res.status(400).json({ ok: false, reason: err.message });
@@ -586,11 +620,17 @@ app.patch("/api/admin/users/:id", requireAdmin, (req, res) => {
       return res.status(400).json({ ok: false, reason: "Bạn không thể tự hạ quyền tài khoản quản trị đang đăng nhập." });
     }
 
+    const shouldRevoke = (status === "blocked" && user.status !== "blocked") ||
+      (role === "user" && user.role === "admin");
     if (status && ["active", "blocked"].includes(status)) {
       user = userRepo.updateStatus(req.params.id, status);
     }
     if (role && ["user", "admin"].includes(role)) {
       user = userRepo.updateRole(req.params.id, role);
+    }
+    if (shouldRevoke) {
+      sessionRepo.deleteByUserId(req.params.id);
+      revokeUserSockets(req.params.id, "Quyền truy cập của tài khoản đã thay đổi.");
     }
     res.json({ ok: true, user });
   } catch (err) {
@@ -794,12 +834,43 @@ function broadcastState() {
 }
 state.onChange = broadcastState;
 
+function notifyUserBalance(userId, newBalance, { delta = 0, reason = "" } = {}) {
+  const msg = JSON.stringify({ type: "balanceUpdated", newBalance, delta, reason });
+  for (const client of wss.clients) {
+    if (client.readyState !== 1) continue;
+    const session = refreshSocketIdentity(client, sessionRepo);
+    if (session?.user_id === userId) client.send(msg);
+  }
+}
+
+function revokeSessionSocket(sessionToken, reason) {
+  for (const client of wss.clients) {
+    if (client.sessionToken === sessionToken) revokeSocket(client, reason);
+  }
+}
+
+function revokeUserSockets(userId, reason) {
+  for (const client of wss.clients) {
+    if (client.userId === userId) revokeSocket(client, reason);
+  }
+}
+
+function revokeSocket(client, reason) {
+  if (client.readyState === 1) client.send(JSON.stringify({ type: "sessionRevoked", reason }));
+  client.sessionToken = null;
+  client.userId = null;
+  client.isAdmin = false;
+  client.close(4003, "Session revoked");
+}
+
+state.onBalanceChange = ({ userId, newBalance, pointsRefunded, reason }) => {
+  notifyUserBalance(userId, newBalance, { delta: pointsRefunded, reason });
+};
+
 wss.on("connection", (ws, request) => {
-  const sessionToken = getSessionTokenFromCookieHeader(request.headers.cookie);
-  const session = sessionToken ? sessionRepo.findValid(sessionToken) : null;
-  ws.userId = session?.user_id || null;
-  ws.isAdmin = session?.role === "admin";
-  ws.isHost = !HOST_PASSWORD || ws.isAdmin;
+  ws.sessionToken = getSessionTokenFromCookieHeader(request.headers.cookie);
+  ws.hostAuthenticated = !HOST_PASSWORD;
+  refreshSocketIdentity(ws, sessionRepo);
 
   ws.send(stateMessage());
   if (chatOn && chatMessages.length) {
@@ -815,20 +886,10 @@ wss.on("connection", (ws, request) => {
       return;
     }
 
-    if (msg.type === "auth") {
-      if (!HOST_PASSWORD || msg.token === hostToken) ws.isHost = true;
-      return;
-    }
+    const currentSession = refreshSocketIdentity(ws, sessionRepo);
 
-    if (msg.type === "authSession") {
-      if (msg.token) {
-        const session = sessionRepo.findValid(msg.token);
-        if (session) {
-          ws.userId = session.user_id;
-          ws.isAdmin = session.role === "admin";
-          if (ws.isAdmin) ws.isHost = true;
-        }
-      }
+    if (msg.type === "auth") {
+      if (!HOST_PASSWORD || msg.token === hostToken) ws.hostAuthenticated = true;
       return;
     }
 
@@ -838,7 +899,7 @@ wss.on("connection", (ws, request) => {
         return;
       }
       const isAdmin = msg.admin === true;
-      if (isAdmin && !ws.isAdmin) {
+      if (isAdmin && currentSession?.role !== "admin") {
         ws.send(JSON.stringify({ type: "chatSendResult", ok: false, reason: "Bạn không có quyền gửi tin nhắn admin." }));
         return;
       }
@@ -883,7 +944,7 @@ wss.on("connection", (ws, request) => {
       return;
     }
 
-    if (!ws.isHost) return;
+    if (!canUseHostControls(ws, currentSession)) return;
 
     switch (msg.type) {
       case "ended":

@@ -89,6 +89,7 @@ test("Queue repository voting and refund transactions", () => {
   const refunded = queueRepo.refundVotes(song.id, "Test refund");
   assert.equal(refunded.length, 1);
   assert.equal(refunded[0].pointsRefunded, 1);
+  assert.equal(refunded[0].newBalance, 5);
 
   const charlieAfter = userRepo.findById(charlie.id);
   assert.equal(charlieAfter.points_balance, 5);
