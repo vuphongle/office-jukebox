@@ -153,8 +153,17 @@ window.onYouTubeIframeAPIReady = function () {
         if (e.data === YT.PlayerState.ENDED) {
           send({ type: "ended", videoId: currentVideoId });
         }
+        if (e.data === YT.PlayerState.PLAYING) {
+          clearTimeout(playbackWatchdog);
+          hidePlaybackRecovery();
+        }
         updatePlayPauseIcon();
       },
+      // Không phải profile trình duyệt nào cũng cho phép phát có
+      // tiếng khi bài đầu tiên đến sau lần nhấp Bắt đầu. YouTube
+      // báo riêng trường hợp này; yêu cầu một thao tác người dùng
+      // mới thay vì để server kẹt ở bài "Đang phát".
+      onAutoplayBlocked: () => showPlaybackRecovery(),
       onError: (e) => {
         // 101/150 = chủ sở hữu không cho phép nhúng; 100 = đã gỡ; 2 = mã không hợp lệ.
         console.warn("Lỗi trình phát", e.data, "ở", currentVideoId);
@@ -171,8 +180,10 @@ function syncPlayer() {
   const idle = document.getElementById("idle");
 
   if (!np) {
+    clearTimeout(playbackWatchdog);
     currentVideoId = null;
     if (player.stopVideo) player.stopVideo();
+    hidePlaybackRecovery();
     idle.classList.remove("hidden");
     return;
   }
@@ -189,6 +200,16 @@ function syncPlayer() {
 // video vừa tải không bắt đầu phát sau 20 giây (và không chỉ đang tạm dừng),
 // báo lỗi để máy chủ bỏ qua và chuyển sang bài tiếp theo.
 let playbackWatchdog = null;
+function showPlaybackRecovery() {
+  if (!started || !latestState.nowPlaying) return;
+  clearTimeout(playbackWatchdog);
+  document.getElementById("playback-recovery").classList.remove("hidden");
+}
+
+function hidePlaybackRecovery() {
+  document.getElementById("playback-recovery").classList.add("hidden");
+}
+
 function armPlaybackWatchdog(videoId) {
   clearTimeout(playbackWatchdog);
   playbackWatchdog = setTimeout(() => {
@@ -217,6 +238,7 @@ window.addEventListener("pageshow", (e) => {
   clearTimeout(playbackWatchdog);
   started = false;
   currentVideoId = null;
+  hidePlaybackRecovery();
   document.getElementById("start-overlay").classList.remove("hidden");
   document.getElementById("stage").classList.add("hidden");
 });
@@ -367,6 +389,17 @@ function updatePlayPauseIcon() {
 
 // ---- Điều khiển -------------------------------------------------------
 function wireControls() {
+  document.getElementById("resume-playback").onclick = () => {
+    const np = latestState.nowPlaying;
+    if (!playerReady || !np) return;
+    hidePlaybackRecovery();
+    currentVideoId = np.videoId;
+    // Lặp lại cả load và play ngay trong thao tác nhấp. Lệnh load
+    // trước đó có thể đã bị browser chặn hoàn toàn.
+    player.loadVideoById(np.videoId);
+    player.playVideo();
+    armPlaybackWatchdog(np.videoId);
+  };
   document.getElementById("playpause").onclick = () => {
     if (!playerReady) return;
     const s = player.getPlayerState();
