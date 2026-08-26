@@ -32,9 +32,13 @@ function renderUserAuthBar() {
   const bar = document.getElementById("user-auth-bar");
   if (!bar) return;
   if (currentUser) {
+    const avatarLetter = escapeHtml((currentUser.displayName || currentUser.username || "U").trim().charAt(0).toUpperCase());
     bar.innerHTML = `
       <div class="user-profile-badge">
-        <span class="user-name"><strong>${escapeHtml(currentUser.displayName || currentUser.username)}</strong></span>
+        <a class="user-account-link" href="/account" aria-label="Mở trang tài khoản của ${escapeHtml(currentUser.displayName || currentUser.username)}">
+          <span class="user-avatar" aria-hidden="true">${avatarLetter}</span>
+          <span class="user-name"><strong>${escapeHtml(currentUser.displayName || currentUser.username)}</strong></span>
+        </a>
         <span id="user-points-pill" class="user-points-pill" title="Xem lịch sử / Điểm danh">${currentUser.pointsBalance} 🪙</span>
         <span id="user-streak-pill" class="user-streak-pill" title="Điểm danh streak">🔥 ${currentUser.currentStreak}d</span>
         <button id="user-logout-btn" class="user-logout-btn" type="button">Thoát</button>
@@ -64,24 +68,40 @@ function openAuthModal(mode = "login") {
   const tabLogin = document.getElementById("auth-tab-login");
   const tabRegister = document.getElementById("auth-tab-register");
   const nameField = document.getElementById("auth-display-name-field");
+  const confirmField = document.getElementById("auth-confirm-password-field");
+  const confirmInput = document.getElementById("auth-confirm-password");
+  const confirmToggle = document.querySelector('[data-password-toggle="auth-confirm-password"]');
   const submitBtn = document.getElementById("auth-submit-btn");
   const errorEl = document.getElementById("auth-error-msg");
 
   errorEl.classList.add("hidden");
   errorEl.textContent = "";
+  setAuthConfirmError("");
 
   if (mode === "login") {
     title.textContent = "Đăng nhập tài khoản";
     tabLogin.classList.add("active");
     tabRegister.classList.remove("active");
+    tabLogin.setAttribute("aria-selected", "true");
+    tabRegister.setAttribute("aria-selected", "false");
     nameField.classList.add("hidden");
+    confirmField.classList.add("hidden");
+    confirmInput.disabled = true;
+    confirmInput.required = false;
+    confirmToggle.disabled = true;
     submitBtn.textContent = "Đăng nhập ngay";
     document.getElementById("auth-password").setAttribute("autocomplete", "current-password");
   } else {
     title.textContent = "Đăng ký thành viên mới";
     tabLogin.classList.remove("active");
     tabRegister.classList.add("active");
+    tabLogin.setAttribute("aria-selected", "false");
+    tabRegister.setAttribute("aria-selected", "true");
     nameField.classList.remove("hidden");
+    confirmField.classList.remove("hidden");
+    confirmInput.disabled = false;
+    confirmInput.required = true;
+    confirmToggle.disabled = false;
     submitBtn.textContent = "Đăng ký tài khoản";
     document.getElementById("auth-password").setAttribute("autocomplete", "new-password");
   }
@@ -98,15 +118,54 @@ document.getElementById("auth-modal-close")?.addEventListener("click", closeAuth
 document.getElementById("auth-tab-login")?.addEventListener("click", () => openAuthModal("login"));
 document.getElementById("auth-tab-register")?.addEventListener("click", () => openAuthModal("register"));
 
+function setAuthConfirmError(message) {
+  const input = document.getElementById("auth-confirm-password");
+  const error = document.getElementById("auth-confirm-password-error");
+  if (!input || !error) return;
+  error.textContent = message;
+  error.classList.toggle("hidden", !message);
+  input.setAttribute("aria-invalid", String(!!message));
+}
+
+function togglePasswordVisibility(button) {
+  const input = document.getElementById(button.dataset.passwordToggle);
+  if (!input) return;
+  const reveal = input.type === "password";
+  input.type = reveal ? "text" : "password";
+  button.setAttribute("aria-label", reveal ? "Ẩn mật khẩu" : "Hiện mật khẩu");
+  input.focus();
+}
+
+document.querySelectorAll("[data-password-toggle]").forEach((button) => {
+  button.addEventListener("click", () => togglePasswordVisibility(button));
+});
+
+document.getElementById("auth-confirm-password")?.addEventListener("blur", () => {
+  if (authMode !== "register") return;
+  setAuthConfirmError(window.JukeboxAuth.validateRegistrationPassword(
+    document.getElementById("auth-password").value,
+    document.getElementById("auth-confirm-password").value
+  ));
+});
+
 document.getElementById("auth-form")?.addEventListener("submit", async (e) => {
   e.preventDefault();
   const username = document.getElementById("auth-username").value.trim();
   const password = document.getElementById("auth-password").value;
+  const confirmation = document.getElementById("auth-confirm-password").value;
   const displayName = document.getElementById("auth-display-name").value.trim();
   const errorEl = document.getElementById("auth-error-msg");
   const submitBtn = document.getElementById("auth-submit-btn");
 
   errorEl.classList.add("hidden");
+  if (authMode === "register") {
+    const confirmationError = window.JukeboxAuth.validateRegistrationPassword(password, confirmation);
+    setAuthConfirmError(confirmationError);
+    if (confirmationError) {
+      document.getElementById("auth-confirm-password").focus();
+      return;
+    }
+  }
   submitBtn.disabled = true;
   submitBtn.textContent = "Đang xử lý…";
 
@@ -133,10 +192,12 @@ document.getElementById("auth-form")?.addEventListener("submit", async (e) => {
     } else {
       errorEl.textContent = data.reason || "Lỗi xác thực, vui lòng thử lại.";
       errorEl.classList.remove("hidden");
+      errorEl.focus();
     }
   } catch (err) {
     errorEl.textContent = "Lỗi kết nối mạng: " + err.message;
     errorEl.classList.remove("hidden");
+    errorEl.focus();
   } finally {
     submitBtn.disabled = false;
     submitBtn.textContent = authMode === "login" ? "Đăng nhập ngay" : "Đăng ký tài khoản";
@@ -1172,6 +1233,11 @@ function connectWs() {
         renderUserAuthBar();
         const title = msg.delta > 0 ? `Bạn vừa được hoàn +${msg.delta} điểm.` : "Số dư điểm vừa được cập nhật.";
         toast("info", "🪙", title, { sub: msg.reason || "Dữ liệu đã đồng bộ từ máy chủ." });
+      }
+    } else if (msg.type === "profileUpdated") {
+      if (currentUser && msg.displayName) {
+        currentUser.displayName = msg.displayName;
+        renderUserAuthBar();
       }
     } else if (msg.type === "sessionRevoked") {
       currentUser = null;

@@ -74,6 +74,25 @@ export class UserRepository {
     return this.findById(userId);
   }
 
+  updateDisplayName(userId, displayName) {
+    const cleanDisplayName = displayName.trim();
+    const now = new Date().toISOString();
+    this.db.run(
+      "UPDATE users SET display_name = ?, updated_at = ? WHERE id = ?",
+      [cleanDisplayName, now, userId]
+    );
+    return this.findById(userId);
+  }
+
+  updatePasswordHash(userId, passwordHash) {
+    const now = new Date().toISOString();
+    this.db.run(
+      "UPDATE users SET password_hash = ?, updated_at = ? WHERE id = ?",
+      [passwordHash, now, userId]
+    );
+    return this.findById(userId);
+  }
+
   listUsers({ search = "", status = "", limit = 50, offset = 0 } = {}) {
     let where = "WHERE 1=1";
     const params = [];

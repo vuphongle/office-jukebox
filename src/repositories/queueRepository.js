@@ -190,6 +190,18 @@ export class QueueRepository {
       .map((row) => row.queue_item_id);
   }
 
+  listActiveVotesByUser(userId) {
+    if (!userId) return [];
+    return this.db
+      .query(
+        `SELECT qv.queue_item_id, qv.points_spent
+         FROM queue_votes qv
+         JOIN queue_items qi ON qi.id = qv.queue_item_id
+         WHERE qv.user_id = ? AND qv.refunded_at IS NULL AND qi.status = 'queued'`
+      )
+      .all(userId);
+  }
+
   getVoters(queueItemId) {
     return this.db
       .query(

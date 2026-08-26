@@ -217,6 +217,18 @@ const registerGlobalLimit = createFixedWindowRateLimiter({
   key: () => "global",
   reason: "Hệ thống đang tạm giới hạn đăng ký mới. Vui lòng thử lại sau.",
 });
+const passwordIpLimit = createFixedWindowRateLimiter({
+  windowMs: 15 * 60 * 1000,
+  max: 20,
+  key: (req) => req.ip,
+  reason: "Có quá nhiều lần thử đổi mật khẩu từ mạng này. Vui lòng thử lại sau.",
+});
+const passwordUserLimit = createFixedWindowRateLimiter({
+  windowMs: 15 * 60 * 1000,
+  max: 5,
+  key: (req) => req.user?.id,
+  reason: "Bạn đã thử đổi mật khẩu quá nhiều lần. Vui lòng thử lại sau.",
+});
 
 app.post("/api/auth/register", registerIpLimit, registerGlobalLimit, async (req, res) => {
   const { username, password, displayName } = req.body || {};
@@ -348,6 +360,71 @@ app.get("/api/me", (req, res) => {
   });
 });
 
+app.patch("/api/me/profile", requireAuth, (req, res) => {
+  const { displayName } = req.body || {};
+  if (typeof displayName !== "string") {
+    return res.status(400).json({ ok: false, reason: "Tên hiển thị không hợp lệ." });
+  }
+
+  const cleanDisplayName = displayName.trim();
+  if (cleanDisplayName.length < 1 || cleanDisplayName.length > 40) {
+    return res.status(400).json({ ok: false, reason: "Tên hiển thị phải từ 1 đến 40 ký tự." });
+  }
+
+  const user = userRepo.updateDisplayName(req.user.id, cleanDisplayName);
+  notifyUserProfile(user.id, user.display_name);
+  res.json({
+    ok: true,
+    user: {
+      id: user.id,
+      username: user.username,
+      displayName: user.display_name,
+    },
+  });
+});
+
+app.post(
+  "/api/me/password",
+  requireAuth,
+  passwordIpLimit,
+  passwordUserLimit,
+  async (req, res) => {
+    const { currentPassword, newPassword } = req.body || {};
+    if (typeof currentPassword !== "string" || typeof newPassword !== "string") {
+      return res.status(400).json({ ok: false, reason: "Vui lòng nhập đầy đủ mật khẩu hiện tại và mật khẩu mới." });
+    }
+    if (newPassword.length < 6) {
+      return res.status(400).json({ ok: false, reason: "Mật khẩu mới phải có tối thiểu 6 ký tự." });
+    }
+    if (newPassword === currentPassword) {
+      return res.status(400).json({ ok: false, reason: "Mật khẩu mới phải khác mật khẩu hiện tại." });
+    }
+
+    try {
+      const user = userRepo.findById(req.user.id);
+      if (!user || !(await verifyPasswordAsync(currentPassword, user.password_hash))) {
+        return res.status(400).json({ ok: false, reason: "Mật khẩu hiện tại không chính xác." });
+      }
+
+      const passwordHash = await hashPasswordAsync(newPassword);
+      const nextToken = generateSessionToken();
+      const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
+      const rotateSession = db.transaction(() => {
+        userRepo.updatePasswordHash(user.id, passwordHash);
+        sessionRepo.deleteByUserId(user.id);
+        sessionRepo.create(user.id, nextToken, expiresAt);
+      });
+      rotateSession.immediate();
+
+      setSessionCookie(res, nextToken, req);
+      rotateUserSockets(user.id, req.sessionToken, nextToken);
+      res.json({ ok: true, message: "Đã đổi mật khẩu." });
+    } catch {
+      res.status(500).json({ ok: false, reason: "Không thể đổi mật khẩu lúc này." });
+    }
+  }
+);
+
 // --- API ĐIỂM DANH & QUÀ TẶNG (POINT DROPS) -------------------------------
 
 app.post("/api/me/checkin", requireAuth, (req, res) => {
@@ -360,12 +437,40 @@ app.post("/api/me/checkin", requireAuth, (req, res) => {
 });
 
 app.get("/api/me/points/history", requireAuth, (req, res) => {
-  const page = Math.max(1, parseInt(req.query.page || "1", 10));
-  const limit = Math.min(100, Math.max(1, parseInt(req.query.limit || "20", 10)));
+  const direction = (req.query.direction || "all").toString();
+  if (!["all", "earned", "spent"].includes(direction)) {
+    return res.status(400).json({ ok: false, reason: "Bộ lọc lịch sử điểm không hợp lệ." });
+  }
+  const parsedPage = parseInt(req.query.page || "1", 10);
+  const parsedLimit = parseInt(req.query.limit || "20", 10);
+  const page = Number.isFinite(parsedPage) ? Math.max(1, parsedPage) : 1;
+  const limit = Number.isFinite(parsedLimit) ? Math.min(100, Math.max(1, parsedLimit)) : 20;
   const offset = (page - 1) * limit;
 
-  const result = ledgerRepo.listByUser(req.user.id, { limit, offset });
-  res.json({ ok: true, page, limit, total: result.total, ledger: result.ledger });
+  const result = ledgerRepo.listByUser(req.user.id, { limit, offset, direction });
+  res.json({ ok: true, page, limit, direction, total: result.total, ledger: result.ledger });
+});
+
+app.get("/api/me/votes/active", requireAuth, (req, res) => {
+  const activeVoteRows = queueRepo.listActiveVotesByUser(req.user.id);
+  const pointsByQueueItem = new Map(
+    activeVoteRows.map((row) => [row.queue_item_id, row.points_spent])
+  );
+  const votes = state
+    .snapshot()
+    .queue.map((item, index) => ({ item, queuePosition: index + 1 }))
+    .filter(({ item }) => pointsByQueueItem.has(item.id))
+    .map(({ item, queuePosition }) => ({
+      queueItemId: item.id,
+      title: item.title,
+      channel: item.channel,
+      thumbnail: item.thumbnail,
+      pointsSpent: pointsByQueueItem.get(item.id),
+      voteScore: item.voteScore,
+      queuePosition,
+    }));
+
+  res.json({ ok: true, votes });
 });
 
 app.get("/api/me/point-drops/active", (req, res) => {
@@ -779,7 +884,7 @@ function versionedPage(name) {
   const filePath = path.join(__dirname, "public", name);
   if (!existsSync(filePath)) return `<!DOCTYPE html><html><body><h1>${name} not found</h1></body></html>`;
   return readFileSync(filePath, "utf8").replace(
-    /(href|src)="\/((?:guest|host|feedback|admin)\.(?:css|js))"/g,
+    /(href|src)="\/((?:guest|host|feedback|admin|account|auth-utils)\.(?:css|js))"/g,
     `$1="/$2?v=${BOOT_ID}"`
   );
 }
@@ -787,6 +892,7 @@ function versionedPage(name) {
 const HOST_PAGE = versionedPage("host.html");
 const GUEST_PAGE = versionedPage("guest.html");
 const ADMIN_PAGE = versionedPage("admin.html");
+const ACCOUNT_PAGE = versionedPage("account.html");
 
 app.get("/", requireHostAuth, (_req, res) => {
   res.set("Cache-Control", "no-cache").type("html").send(HOST_PAGE);
@@ -798,6 +904,10 @@ app.get("/guest", (_req, res) => {
 
 app.get("/admin", (_req, res) => {
   res.set("Cache-Control", "no-cache").type("html").send(ADMIN_PAGE);
+});
+
+app.get("/account", (_req, res) => {
+  res.set("Cache-Control", "no-cache").type("html").send(ACCOUNT_PAGE);
 });
 
 app.get("/feedback", (_req, res) => {
@@ -852,6 +962,28 @@ function revokeSessionSocket(sessionToken, reason) {
 function revokeUserSockets(userId, reason) {
   for (const client of wss.clients) {
     if (client.userId === userId) revokeSocket(client, reason);
+  }
+}
+
+function rotateUserSockets(userId, previousToken, nextToken) {
+  for (const client of wss.clients) {
+    if (client.userId !== userId) continue;
+    if (client.sessionToken === previousToken) {
+      client.sessionToken = nextToken;
+      refreshSocketIdentity(client, sessionRepo);
+      if (client.readyState === 1) client.send(JSON.stringify({ type: "sessionRotated" }));
+    } else {
+      revokeSocket(client, "Mật khẩu đã được thay đổi trên thiết bị khác.");
+    }
+  }
+}
+
+function notifyUserProfile(userId, displayName) {
+  const msg = JSON.stringify({ type: "profileUpdated", displayName });
+  for (const client of wss.clients) {
+    if (client.readyState !== 1) continue;
+    const session = refreshSocketIdentity(client, sessionRepo);
+    if (session?.user_id === userId) client.send(msg);
   }
 }
 

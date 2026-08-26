@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 import { scryptSync, randomBytes } from "node:crypto";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const DEFAULT_DB_PATH = path.join(__dirname, "..", "data", "jukebox.db");
+const DEFAULT_DB_PATH = process.env.JUKEBOX_DB_PATH || path.join(__dirname, "..", "data", "jukebox.db");
 
 let globalDb = null;
 

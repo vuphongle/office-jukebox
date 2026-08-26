@@ -1,0 +1,245 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Tài khoản · Office Jukebox</title>
+  <link rel="icon" type="image/png" href="/assets/favicon.png" />
+  <link rel="apple-touch-icon" href="/assets/favicon.png" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Serif:wght@600;700&family=Noto+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/account.css" />
+</head>
+<body>
+  <a class="skip-link" href="#account-main">Bỏ qua đến nội dung chính</a>
+
+  <header class="account-topbar">
+    <a class="back-link" href="/guest">
+      <svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6" /></svg>
+      <span>Quay lại chọn bài</span>
+    </a>
+    <a class="brand-mark" href="/guest" aria-label="Office Jukebox — về trang chọn bài">
+      <img src="/assets/logo.png" alt="" width="38" height="38" />
+      <span>Office Jukebox</span>
+    </a>
+  </header>
+
+  <main id="account-main" class="account-shell" tabindex="-1">
+    <div id="global-status" class="global-status" role="status" aria-live="polite" aria-atomic="true"></div>
+
+    <section id="account-loading" class="account-loading" aria-busy="true" aria-label="Đang tải tài khoản">
+      <div class="skeleton skeleton-hero"></div>
+      <div class="skeleton-grid"><div class="skeleton"></div><div class="skeleton"></div><div class="skeleton"></div></div>
+    </section>
+
+    <section id="auth-gate" class="auth-gate hidden" aria-labelledby="auth-gate-title">
+      <div class="auth-gate-intro">
+        <span class="auth-gate-icon" aria-hidden="true">
+          <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="3.5"/><path d="M5 20c.8-4.2 3.4-6.3 7-6.3s6.2 2.1 7 6.3"/></svg>
+        </span>
+        <p class="eyebrow">Tài khoản thành viên</p>
+        <h1 id="auth-gate-title">Giữ điểm và lượt vote của bạn</h1>
+        <p>Đăng nhập để điểm danh, xem lịch sử điểm và quản lý thông tin cá nhân.</p>
+      </div>
+
+      <div class="auth-panel">
+        <div class="auth-tabs" role="tablist" aria-label="Chọn hình thức xác thực">
+          <button id="account-auth-login-tab" class="auth-tab active" type="button" role="tab" aria-selected="true">Đăng nhập</button>
+          <button id="account-auth-register-tab" class="auth-tab" type="button" role="tab" aria-selected="false">Đăng ký</button>
+        </div>
+
+        <form id="account-auth-form" novalidate>
+          <div id="account-auth-error" class="form-summary hidden" role="alert" tabindex="-1"></div>
+
+          <div class="field">
+            <label for="account-auth-username">Tên đăng nhập <span aria-hidden="true">*</span></label>
+            <input id="account-auth-username" name="username" type="text" autocomplete="username" required minlength="3" maxlength="30" placeholder="Chữ cái, số, gạch dưới" />
+          </div>
+
+          <div id="account-auth-display-field" class="field hidden">
+            <label for="account-auth-display">Tên hiển thị</label>
+            <input id="account-auth-display" name="displayName" type="text" autocomplete="nickname" maxlength="40" placeholder="Tên xuất hiện cạnh bài hát" />
+          </div>
+
+          <div class="field">
+            <label for="account-auth-password">Mật khẩu <span aria-hidden="true">*</span></label>
+            <div class="password-wrap">
+              <input id="account-auth-password" name="password" type="password" autocomplete="current-password" required minlength="6" placeholder="Tối thiểu 6 ký tự" />
+              <button class="password-toggle" type="button" data-password-toggle="account-auth-password" aria-label="Hiện mật khẩu">
+                <svg aria-hidden="true" width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 12s3.5-6 9.5-6 9.5 6 9.5 6-3.5 6-9.5 6-9.5-6-9.5-6Z"/><circle cx="12" cy="12" r="2.7"/></svg>
+              </button>
+            </div>
+          </div>
+
+          <div id="account-auth-confirm-field" class="field hidden">
+            <label for="account-auth-confirm">Xác nhận mật khẩu <span aria-hidden="true">*</span></label>
+            <div class="password-wrap">
+              <input id="account-auth-confirm" name="confirmation" type="password" autocomplete="new-password" minlength="6" placeholder="Nhập lại mật khẩu" disabled aria-describedby="account-auth-confirm-error" />
+              <button class="password-toggle" type="button" data-password-toggle="account-auth-confirm" aria-label="Hiện mật khẩu" disabled>
+                <svg aria-hidden="true" width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 12s3.5-6 9.5-6 9.5 6 9.5 6-3.5 6-9.5 6-9.5-6-9.5-6Z"/><circle cx="12" cy="12" r="2.7"/></svg>
+              </button>
+            </div>
+            <p id="account-auth-confirm-error" class="field-error hidden"></p>
+          </div>
+
+          <button id="account-auth-submit" class="primary-button stable-button" type="submit">
+            <span class="button-spinner" aria-hidden="true"></span><span class="button-label">Đăng nhập</span>
+          </button>
+        </form>
+
+        <a class="continue-guest" href="/guest">Tiếp tục chọn bài không cần tài khoản</a>
+      </div>
+    </section>
+
+    <div id="account-dashboard" class="account-dashboard hidden">
+      <section class="identity-card" aria-labelledby="account-title">
+        <div id="account-avatar" class="account-avatar" aria-hidden="true">U</div>
+        <div class="identity-copy">
+          <p class="eyebrow">Tài khoản của bạn</p>
+          <h1 id="account-title">Thành viên</h1>
+          <p id="account-username">@username</p>
+        </div>
+        <span id="account-status" class="account-status"><span class="status-dot" aria-hidden="true"></span> Đang hoạt động</span>
+      </section>
+
+      <section class="stats-grid" aria-label="Tổng quan tài khoản">
+        <article class="stat-card stat-points">
+          <span class="stat-icon" aria-hidden="true"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="8"/><path d="M9.5 9.5h3a2 2 0 0 1 0 4h-3m2.5-6v8"/></svg></span>
+          <div><strong id="points-value">0</strong><span>Điểm khả dụng</span></div>
+        </article>
+        <article class="stat-card">
+          <span class="stat-icon coral" aria-hidden="true"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M13.5 2.5s.6 4-2.5 6.5c-2.6 2.1-3.5 4.2-2 6.2 1.2 1.5 3.6 1.7 5 .3 1.3-1.3 1.1-3.2.4-4.6 2.6 1.5 4.1 3.7 3.4 6.1-.8 2.8-3.6 4.5-6.8 4.5-4 0-7.2-2.6-7.2-6.7 0-4.7 4.1-7.1 7-9.8Z"/></svg></span>
+          <div><strong id="streak-value">0 ngày</strong><span>Chuỗi điểm danh</span></div>
+        </article>
+        <article class="stat-card">
+          <span id="checkin-stat-icon" class="stat-icon muted" aria-hidden="true"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8"/><path d="m8.5 12 2.2 2.2 4.8-5"/></svg></span>
+          <div><strong id="checkin-value">Chưa điểm danh</strong><span>Trạng thái hôm nay</span></div>
+        </article>
+      </section>
+
+      <section id="active-votes-section" class="surface-card active-votes-card hidden" aria-labelledby="active-votes-title">
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow">Hàng đợi hiện tại</p>
+            <h2 id="active-votes-title">Bài bạn đang tham gia vote</h2>
+          </div>
+          <a href="/guest#queue" class="text-link">Xem hàng đợi</a>
+        </div>
+        <div id="active-votes-list" class="active-votes-list"></div>
+      </section>
+
+      <div class="account-columns">
+        <section class="surface-card ledger-card" aria-labelledby="ledger-title">
+          <div class="section-heading ledger-heading">
+            <div>
+              <p class="eyebrow">Minh bạch số dư</p>
+              <h2 id="ledger-title">Hoạt động điểm</h2>
+            </div>
+            <span id="ledger-total" class="count-badge">0 giao dịch</span>
+          </div>
+
+          <div class="filter-group" role="group" aria-label="Lọc hoạt động điểm">
+            <button class="filter-button active" type="button" data-direction="all" aria-pressed="true">Tất cả</button>
+            <button class="filter-button" type="button" data-direction="earned" aria-pressed="false">Đã nhận</button>
+            <button class="filter-button" type="button" data-direction="spent" aria-pressed="false">Đã dùng</button>
+          </div>
+
+          <div id="ledger-content" class="ledger-content" aria-live="polite"></div>
+          <button id="ledger-more" class="secondary-button stable-button hidden" type="button">
+            <span class="button-spinner" aria-hidden="true"></span><span class="button-label">Xem thêm</span>
+          </button>
+        </section>
+
+        <aside class="account-sidebar">
+          <section class="surface-card rewards-card" aria-labelledby="rewards-title">
+            <div class="section-heading compact-heading">
+              <div>
+                <p class="eyebrow">Thưởng mỗi ngày</p>
+                <h2 id="rewards-title">Điểm danh</h2>
+              </div>
+              <span class="mini-streak"><span id="reward-streak">0</span> ngày</span>
+            </div>
+            <p id="checkin-description" class="section-description">Điểm danh mỗi ngày để nhận điểm vote và mở khóa mốc thưởng.</p>
+            <div id="milestone-list" class="milestone-list" aria-label="Các mốc chuỗi điểm danh">
+              <div class="milestone" data-days="3"><strong>3 ngày</strong><span>+2 điểm</span></div>
+              <div class="milestone" data-days="7"><strong>7 ngày</strong><span>+5 điểm</span></div>
+              <div class="milestone" data-days="14"><strong>14 ngày</strong><span>+10 điểm</span></div>
+              <div class="milestone" data-days="30"><strong>30 ngày</strong><span>+20 điểm</span></div>
+            </div>
+            <button id="account-checkin" class="primary-button stable-button" type="button">
+              <span class="button-spinner" aria-hidden="true"></span><span class="button-label">Điểm danh nhận +1 điểm</span>
+            </button>
+
+            <div id="point-drop-card" class="point-drop-card hidden">
+              <span class="drop-icon" aria-hidden="true"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 9h16v11H4zM3 5h18v4H3zM12 5v15M7.5 5c-1.8 0-2.5-1-2.5-2 0-1.1.9-2 2-2 2.3 0 5 4 5 4s2.7-4 5-4c1.1 0 2 .9 2 2 0 1-.7 2-2.5 2"/></svg></span>
+              <div><strong id="point-drop-title">Quà tặng điểm</strong><span id="point-drop-copy">Có điểm đang chờ bạn nhận.</span></div>
+              <button id="claim-drop" class="small-button stable-button" type="button"><span class="button-spinner" aria-hidden="true"></span><span class="button-label">Nhận ngay</span></button>
+            </div>
+          </section>
+
+          <section class="surface-card profile-card" aria-labelledby="profile-title">
+            <div class="section-heading compact-heading"><div><p class="eyebrow">Hồ sơ</p><h2 id="profile-title">Thông tin cá nhân</h2></div></div>
+            <form id="profile-form" novalidate>
+              <div class="field read-only-field">
+                <label for="profile-username">Tên đăng nhập</label>
+                <input id="profile-username" type="text" readonly aria-describedby="username-help" />
+                <p id="username-help" class="field-help">Tên đăng nhập không thể thay đổi.</p>
+              </div>
+              <div class="field">
+                <div class="field-label-row"><label for="profile-display-name">Tên hiển thị</label><span id="display-name-count" class="character-count hidden">0/40</span></div>
+                <input id="profile-display-name" type="text" autocomplete="nickname" maxlength="40" aria-describedby="profile-display-error" />
+                <p id="profile-display-error" class="field-error hidden"></p>
+              </div>
+              <button id="profile-submit" class="secondary-button stable-button" type="submit" disabled>
+                <span class="button-spinner" aria-hidden="true"></span><span class="button-label">Lưu tên hiển thị</span>
+              </button>
+            </form>
+          </section>
+
+          <section class="surface-card security-card" aria-labelledby="security-title">
+            <div class="security-summary">
+              <div><p class="eyebrow">Bảo mật</p><h2 id="security-title">Mật khẩu</h2><p>Đổi mật khẩu khi bạn nghi ngờ tài khoản không còn an toàn.</p></div>
+              <button id="password-expand" class="icon-text-button" type="button" aria-expanded="false" aria-controls="password-form">
+                <span>Đổi mật khẩu</span><svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg>
+              </button>
+            </div>
+
+            <form id="password-form" class="password-form hidden" novalidate>
+              <div id="password-form-summary" class="form-summary hidden" role="alert" tabindex="-1"></div>
+              <div class="field">
+                <label for="current-password">Mật khẩu hiện tại</label>
+                <div class="password-wrap"><input id="current-password" type="password" autocomplete="current-password" aria-describedby="current-password-error" /><button class="password-toggle" type="button" data-password-toggle="current-password" aria-label="Hiện mật khẩu"><svg aria-hidden="true" width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 12s3.5-6 9.5-6 9.5 6 9.5 6-3.5 6-9.5 6-9.5-6-9.5-6Z"/><circle cx="12" cy="12" r="2.7"/></svg></button></div>
+                <p id="current-password-error" class="field-error hidden"></p>
+              </div>
+              <div class="field">
+                <label for="new-password">Mật khẩu mới</label>
+                <div class="password-wrap"><input id="new-password" type="password" autocomplete="new-password" minlength="6" aria-describedby="new-password-error" /><button class="password-toggle" type="button" data-password-toggle="new-password" aria-label="Hiện mật khẩu"><svg aria-hidden="true" width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 12s3.5-6 9.5-6 9.5 6 9.5 6-3.5 6-9.5 6-9.5-6-9.5-6Z"/><circle cx="12" cy="12" r="2.7"/></svg></button></div>
+                <p id="new-password-error" class="field-error hidden"></p>
+              </div>
+              <div class="field">
+                <label for="confirm-new-password">Xác nhận mật khẩu mới</label>
+                <div class="password-wrap"><input id="confirm-new-password" type="password" autocomplete="new-password" minlength="6" aria-describedby="confirm-new-password-error" /><button class="password-toggle" type="button" data-password-toggle="confirm-new-password" aria-label="Hiện mật khẩu"><svg aria-hidden="true" width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 12s3.5-6 9.5-6 9.5 6 9.5 6-3.5 6-9.5 6-9.5-6-9.5-6Z"/><circle cx="12" cy="12" r="2.7"/></svg></button></div>
+                <p id="confirm-new-password-error" class="field-error hidden"></p>
+              </div>
+              <div class="form-actions">
+                <button id="password-cancel" class="ghost-button" type="button">Hủy</button>
+                <button id="password-submit" class="primary-button stable-button" type="submit"><span class="button-spinner" aria-hidden="true"></span><span class="button-label">Cập nhật mật khẩu</span></button>
+              </div>
+            </form>
+          </section>
+
+          <button id="account-logout" class="logout-button stable-button" type="button">
+            <span class="button-spinner" aria-hidden="true"></span>
+            <svg class="logout-icon" aria-hidden="true" width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M10 4H5v16h5M14 8l4 4-4 4M8 12h10"/></svg>
+            <span class="button-label">Đăng xuất</span>
+          </button>
+        </aside>
+      </div>
+    </div>
+  </main>
+
+  <script src="/auth-utils.js"></script>
+  <script src="/account.js"></script>
+</body>
+</html>
