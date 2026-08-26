@@ -866,11 +866,14 @@ function renderQueue(state) {
     li.innerHTML = `
       <span class="q-num">${i + 1}</span>
       <img src="${item.thumbnail || NO_THUMB}" alt="" loading="lazy" />
-      <div class="q-text"><div class="t-row"><span class="t"></span></div><div class="s"></div><div class="q-eta"></div></div>
+      <div class="q-text"><div class="t-row"><span class="t"></span></div><div class="s"></div><div class="q-requester"></div><div class="q-eta"></div></div>
       <button class="q-remove-own hidden" type="button" title="Xóa bài của bạn" aria-label="Xóa bài của bạn">×</button>`;
     li.querySelector(".t").textContent = item.title;
     updateMarqueeTitle(li.querySelector(".t"));
     li.querySelector(".s").textContent = item.channel;
+    li.querySelector(".q-requester").textContent = item.addedBy
+      ? `Người chọn: ${item.addedBy}`
+      : "Người chọn: Khách ẩn danh";
     li.querySelector(".q-eta").textContent = formatEstimatedStart(item.estimatedStartAt);
     if (myIds.has(item.id)) {
       const chip = document.createElement("span");

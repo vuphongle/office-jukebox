@@ -7,6 +7,9 @@
 
 import { randomUUID } from "node:crypto";
 
+const DEFAULT_DURATION_SECONDS = 3 * 60 + 30;
+const DEFAULT_DURATION = "3:30";
+
 export class JukeboxState {
   constructor() {
     this.nowPlaying = null; // mục hiện tại hoặc null
@@ -76,7 +79,7 @@ export class JukeboxState {
       videoId,
       title,
       channel: channel || "",
-      duration: duration || "",
+      duration: normalizeDuration(duration),
       thumbnail: thumbnail || null,
       addedBy: (addedBy || "").slice(0, 40),
       requesterId: (requesterId || "").toString().slice(0, 64),
@@ -169,6 +172,21 @@ export class JukeboxState {
 }
 
 function durationSeconds(duration) {
-  if (!duration || !/^[\d:]+$/.test(duration)) return Infinity;
-  return duration.split(":").reduce((total, part) => total * 60 + Number(part), 0);
+  if (typeof duration !== "string") return DEFAULT_DURATION_SECONDS;
+  const normalized = duration.trim();
+  if (!/^\d+(?::\d+){0,2}$/.test(normalized)) return DEFAULT_DURATION_SECONDS;
+  const parts = normalized.split(":");
+  if (parts.length > 1 && parts.slice(1).some((part) => Number(part) >= 60)) {
+    return DEFAULT_DURATION_SECONDS;
+  }
+  const seconds = parts.reduce((total, part) => total * 60 + Number(part), 0);
+  return Number.isFinite(seconds) && seconds > 0 ? seconds : DEFAULT_DURATION_SECONDS;
+}
+
+function normalizeDuration(duration) {
+  if (typeof duration !== "string") return DEFAULT_DURATION;
+  const normalized = duration.trim();
+  return durationSeconds(normalized) === DEFAULT_DURATION_SECONDS && normalized !== DEFAULT_DURATION
+    ? DEFAULT_DURATION
+    : normalized;
 }
