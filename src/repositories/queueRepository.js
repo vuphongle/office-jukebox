@@ -11,20 +11,24 @@ export class QueueRepository {
   }
 
   createItem({ videoId, title, channel, duration, thumbnail, addedBy, requesterId, addedByUserId = null, eventId = "default_event" }) {
-    const id = randomUUID();
-    const now = Date.now();
-    const seq = this.getNextSequence(eventId);
+    const tx = this.db.transaction(() => {
+      const id = randomUUID();
+      const now = Date.now();
+      const seq = this.getNextSequence(eventId);
 
-    this.db.run(
-      `INSERT INTO queue_items (
-        id, event_id, video_id, title, channel, duration, thumbnail,
-        added_by, requester_id, added_by_user_id, queue_sequence,
-        vote_score, pinned, pinned_order, status, added_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, 0, 'queued', ?)`,
-      [id, eventId, videoId, title, channel || "", duration || "3:30", thumbnail || null, addedBy || "", requesterId || "", addedByUserId, seq, now]
-    );
+      this.db.run(
+        `INSERT INTO queue_items (
+          id, event_id, video_id, title, channel, duration, thumbnail,
+          added_by, requester_id, added_by_user_id, queue_sequence,
+          vote_score, pinned, pinned_order, status, added_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, 0, 'queued', ?)`,
+        [id, eventId, videoId, title, channel || "", duration || "3:30", thumbnail || null, addedBy || "", requesterId || "", addedByUserId, seq, now]
+      );
 
-    return this.findById(id);
+      return this.findById(id);
+    });
+
+    return tx.immediate();
   }
 
   findById(id) {
@@ -91,7 +95,7 @@ export class QueueRepository {
         );
       }
     });
-    tx();
+    tx.immediate();
   }
 
   unpin(id) {
@@ -136,7 +140,7 @@ export class QueueRepository {
       return { voteScore: updatedItem.vote_score, newBalance };
     });
 
-    return tx();
+    return tx.immediate();
   }
 
   hasVoted(queueItemId, userId) {
@@ -145,6 +149,19 @@ export class QueueRepository {
       .query("SELECT 1 FROM queue_votes WHERE queue_item_id = ? AND user_id = ? AND refunded_at IS NULL")
       .get(queueItemId, userId);
     return !!row;
+  }
+
+  listActiveVoteItemIds(userId) {
+    if (!userId) return [];
+    return this.db
+      .query(
+        `SELECT qv.queue_item_id
+         FROM queue_votes qv
+         JOIN queue_items qi ON qi.id = qv.queue_item_id
+         WHERE qv.user_id = ? AND qv.refunded_at IS NULL AND qi.status = 'queued'`
+      )
+      .all(userId)
+      .map((row) => row.queue_item_id);
   }
 
   getVoters(queueItemId) {
@@ -158,38 +175,72 @@ export class QueueRepository {
       .all(queueItemId);
   }
 
+  _refundVotesUnsafe(queueItemId, reason) {
+    const activeVotes = this.getVoters(queueItemId);
+    if (!activeVotes.length) return [];
+
+    const now = new Date().toISOString();
+    const refunded = [];
+
+    for (const vote of activeVotes) {
+      this.db.run(
+        "UPDATE users SET points_balance = points_balance + ?, updated_at = ? WHERE id = ?",
+        [vote.points_spent, now, vote.user_id]
+      );
+
+      this.db.run(
+        "UPDATE queue_votes SET refunded_at = ? WHERE queue_item_id = ? AND user_id = ?",
+        [now, queueItemId, vote.user_id]
+      );
+
+      const ledgerId = randomUUID();
+      this.db.run(
+        `INSERT INTO point_ledger (id, user_id, delta, type, reference_id, actor_user_id, reason, created_at)
+         VALUES (?, ?, ?, 'vote_refund', ?, NULL, ?, ?)`,
+        [ledgerId, vote.user_id, vote.points_spent, queueItemId, reason, now]
+      );
+
+      refunded.push({ userId: vote.user_id, pointsRefunded: vote.points_spent });
+    }
+
+    return refunded;
+  }
+
   refundVotes(queueItemId, reason = "Bài hát bị xóa khỏi hàng đợi") {
+    const tx = this.db.transaction(() => this._refundVotesUnsafe(queueItemId, reason));
+
+    return tx.immediate();
+  }
+
+  removeAndRefund(queueItemId, reason, finishedAt = Date.now()) {
     const tx = this.db.transaction(() => {
-      const activeVotes = this.getVoters(queueItemId);
-      if (!activeVotes.length) return [];
-
-      const now = new Date().toISOString();
-      const refunded = [];
-
-      for (const vote of activeVotes) {
-        this.db.run(
-          "UPDATE users SET points_balance = points_balance + ?, updated_at = ? WHERE id = ?",
-          [vote.points_spent, now, vote.user_id]
-        );
-
-        this.db.run(
-          "UPDATE queue_votes SET refunded_at = ? WHERE queue_item_id = ? AND user_id = ?",
-          [now, queueItemId, vote.user_id]
-        );
-
-        const ledgerId = randomUUID();
-        this.db.run(
-          `INSERT INTO point_ledger (id, user_id, delta, type, reference_id, actor_user_id, reason, created_at)
-           VALUES (?, ?, ?, 'vote_refund', ?, NULL, ?, ?)`,
-          [ledgerId, vote.user_id, vote.points_spent, queueItemId, reason, now]
-        );
-
-        refunded.push({ userId: vote.user_id, pointsRefunded: vote.points_spent });
-      }
-
-      return refunded;
+      this.db.run(
+        "UPDATE queue_items SET status = 'removed', finished_at = ? WHERE id = ? AND status = 'queued'",
+        [finishedAt, queueItemId]
+      );
+      return this._refundVotesUnsafe(queueItemId, reason);
     });
+    return tx.immediate();
+  }
 
-    return tx();
+  finishAndStart({ finishedId, finalStatus = "played", nextId = null, finishedAt = Date.now(), startedAt = Date.now(), refundReason = "" }) {
+    const tx = this.db.transaction(() => {
+      if (finishedId) {
+        this.db.run(
+          "UPDATE queue_items SET status = ?, finished_at = ? WHERE id = ? AND status = 'playing'",
+          [finalStatus, finishedAt, finishedId]
+        );
+        if (finalStatus === "error") {
+          this._refundVotesUnsafe(finishedId, refundReason || "Lỗi phát video YouTube");
+        }
+      }
+      if (nextId) {
+        this.db.run(
+          "UPDATE queue_items SET status = 'playing', started_at = ? WHERE id = ? AND status = 'queued'",
+          [startedAt, nextId]
+        );
+      }
+    });
+    tx.immediate();
   }
 }

@@ -4,6 +4,7 @@ let ws = null;
 let currentTab = "tab-users";
 let adminUser = null;
 let selectedUserId = null;
+let dashboardStarted = false;
 
 // Pagination states
 let usersPage = 1;
@@ -11,38 +12,117 @@ let dropsPage = 1;
 let ledgerPage = 1;
 
 // --- Khởi tạo & Tab Navigation -------------------------------------------
-document.addEventListener("DOMContentLoaded", () => {
+document.addEventListener("DOMContentLoaded", async () => {
   setupTabs();
-  initAuthAndProfile();
+  document.getElementById("admin-login-form")?.addEventListener("submit", handleAdminLogin);
+  document.getElementById("admin-logout-btn")?.addEventListener("click", handleAdminLogout);
+  if (await initAuthAndProfile()) startDashboard();
+  else showLoginGate();
+});
+
+function startDashboard() {
+  document.getElementById("admin-login-gate").classList.add("hidden");
+  document.getElementById("admin-app").classList.remove("hidden");
+  if (dashboardStarted) {
+    if (!ws) initWebSocket();
+    selectTab(currentTab);
+    return;
+  }
+  dashboardStarted = true;
   initUsersTab();
   initDropsTab();
   initLedgerTab();
   initFeedbackTab();
   initWebSocket();
-});
+  const requestedTab = location.hash === "#feedback" ? "tab-feedback" : "tab-users";
+  selectTab(requestedTab);
+}
+
+function showLoginGate(message = "") {
+  document.getElementById("admin-app").classList.add("hidden");
+  document.getElementById("admin-login-gate").classList.remove("hidden");
+  const error = document.getElementById("admin-login-error");
+  error.textContent = message;
+  error.classList.toggle("hidden", !message);
+  document.getElementById("admin-login-username")?.focus();
+}
+
+async function handleAdminLogin(event) {
+  event.preventDefault();
+  const submit = document.getElementById("admin-login-submit");
+  const error = document.getElementById("admin-login-error");
+  submit.disabled = true;
+  submit.textContent = "Đang đăng nhập…";
+  error.classList.add("hidden");
+
+  try {
+    const res = await fetch("/api/auth/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        username: document.getElementById("admin-login-username").value.trim(),
+        password: document.getElementById("admin-login-password").value,
+      }),
+    });
+    const data = await res.json();
+    if (!data.ok) throw new Error(data.reason || "Không thể đăng nhập.");
+    if (data.user?.role !== "admin") {
+      await fetch("/api/auth/logout", { method: "POST" });
+      throw new Error("Tài khoản này không có quyền quản trị.");
+    }
+    adminUser = data.user;
+    renderAdminProfile();
+    startDashboard();
+  } catch (err) {
+    showLoginGate(err.message || "Không thể đăng nhập.");
+  } finally {
+    submit.disabled = false;
+    submit.textContent = "Đăng nhập quản trị";
+  }
+}
+
+async function handleAdminLogout() {
+  if (ws) {
+    ws.onclose = null;
+    ws.close();
+    ws = null;
+  }
+  await fetch("/api/auth/logout", { method: "POST" }).catch(() => {});
+  adminUser = null;
+  document.getElementById("admin-login-password").value = "";
+  showLoginGate();
+}
 
 function setupTabs() {
   const tabBtns = document.querySelectorAll(".tab-btn");
-  tabBtns.forEach((btn) => {
-    btn.addEventListener("click", () => {
-      tabBtns.forEach((b) => {
-        b.classList.remove("active");
-        b.setAttribute("aria-selected", "false");
-      });
-      document.querySelectorAll(".tab-pane").forEach((p) => p.classList.remove("active"));
-
-      btn.classList.add("active");
-      btn.setAttribute("aria-selected", "true");
-      currentTab = btn.dataset.tab;
-      document.getElementById(currentTab).classList.add("active");
-
-      // Refresh data on tab switch
-      if (currentTab === "tab-users") loadUsers();
-      else if (currentTab === "tab-drops") loadDrops();
-      else if (currentTab === "tab-ledger") loadLedger();
-      else if (currentTab === "tab-feedback") loadFeedback();
+  tabBtns.forEach((btn, index) => {
+    btn.addEventListener("click", () => selectTab(btn.dataset.tab));
+    btn.addEventListener("keydown", (event) => {
+      if (!["ArrowLeft", "ArrowRight"].includes(event.key)) return;
+      event.preventDefault();
+      const offset = event.key === "ArrowRight" ? 1 : -1;
+      const next = tabBtns[(index + offset + tabBtns.length) % tabBtns.length];
+      next.focus();
+      selectTab(next.dataset.tab);
     });
   });
+}
+
+function selectTab(tabId) {
+  document.querySelectorAll(".tab-btn").forEach((button) => {
+    const active = button.dataset.tab === tabId;
+    button.classList.toggle("active", active);
+    button.setAttribute("aria-selected", String(active));
+    button.tabIndex = active ? 0 : -1;
+  });
+  document.querySelectorAll(".tab-pane").forEach((pane) => pane.classList.toggle("active", pane.id === tabId));
+  currentTab = tabId;
+  history.replaceState(null, "", tabId === "tab-feedback" ? "#feedback" : "#" + tabId.replace("tab-", ""));
+  if (!dashboardStarted) return;
+  if (currentTab === "tab-users") loadUsers();
+  else if (currentTab === "tab-drops") loadDrops();
+  else if (currentTab === "tab-ledger") loadLedger();
+  else if (currentTab === "tab-feedback") loadFeedback();
 }
 
 function showStatus(text, isError = false) {
@@ -61,16 +141,20 @@ async function initAuthAndProfile() {
   try {
     const res = await fetch("/api/me");
     const data = await res.json();
-    if (data.ok && data.authenticated) {
+    if (data.ok && data.authenticated && data.user?.role === "admin") {
       adminUser = data.user;
-      const el = document.getElementById("admin-user-info");
-      if (el) {
-        el.textContent = `Xin chào, ${adminUser.displayName || adminUser.username} (${adminUser.role})`;
-      }
+      renderAdminProfile();
+      return true;
     }
   } catch (err) {
     console.error("Lỗi lấy thông tin admin:", err);
   }
+  return false;
+}
+
+function renderAdminProfile() {
+  const el = document.getElementById("admin-user-info");
+  if (el && adminUser) el.textContent = `${adminUser.displayName || adminUser.username} · Admin`;
 }
 
 // --- TAB 1: USER MANAGEMENT -----------------------------------------------
@@ -98,7 +182,6 @@ function initUsersTab() {
   // Modal User Ledger
   document.getElementById("user-ledger-close-btn")?.addEventListener("click", closeUserLedgerModal);
 
-  loadUsers();
 }
 
 async function loadUsers() {
@@ -112,8 +195,14 @@ async function loadUsers() {
     const data = await res.json();
     if (!data.ok) {
       tbody.innerHTML = `<tr><td colspan="8" class="text-center">${data.reason || "Lỗi tải người dùng"}</td></tr>`;
+      renderPagination("users-pagination", 1, 0, 20, () => {});
       return;
     }
+
+    renderPagination("users-pagination", usersPage, data.total, 20, (page) => {
+      usersPage = page;
+      loadUsers();
+    });
 
     if (!data.users.length) {
       tbody.innerHTML = `<tr><td colspan="8" class="text-center">Không tìm thấy thành viên nào</td></tr>`;
@@ -133,8 +222,8 @@ async function loadUsers() {
             <td>${escapeHtml(u.display_name)}</td>
             <td>${roleBadge}</td>
             <td>${statusBadge}</td>
-            <td><strong class="delta-pos">${u.points_balance}</strong> 🪙</td>
-            <td>🔥 ${u.current_streak}</td>
+            <td><strong class="delta-pos">${u.points_balance}</strong> điểm</td>
+            <td>${u.current_streak} ngày</td>
             <td>${u.last_checkin_date || "—"}</td>
             <td>
               <button class="action-btn btn-sm" onclick="openPointsModal('${u.id}', '${escapeHtml(u.username)}', ${u.points_balance})">Điểm ±</button>
@@ -157,6 +246,7 @@ window.openPointsModal = function (userId, username, currentBalance) {
   document.getElementById("adjust-delta").value = "";
   document.getElementById("adjust-reason").value = "";
   document.getElementById("points-modal").classList.remove("hidden");
+  document.getElementById("adjust-delta").focus();
 };
 
 function closePointsModal() {
@@ -167,8 +257,10 @@ function closePointsModal() {
 async function handlePointsAdjustment(e) {
   e.preventDefault();
   if (!selectedUserId) return;
+  const submit = e.submitter;
   const delta = parseInt(document.getElementById("adjust-delta").value, 10);
   const reason = document.getElementById("adjust-reason").value.trim();
+  submit.disabled = true;
 
   try {
     const res = await fetch(`/api/admin/users/${selectedUserId}/points`, {
@@ -186,6 +278,8 @@ async function handlePointsAdjustment(e) {
     }
   } catch (err) {
     alert("Lỗi kết nối: " + err.message);
+  } finally {
+    submit.disabled = false;
   }
 }
 
@@ -217,6 +311,7 @@ window.openUserLedger = async function (userId, username) {
   const tbody = document.getElementById("user-ledger-tbody");
   tbody.innerHTML = `<tr><td colspan="4" class="text-center">Đang tải…</td></tr>`;
   document.getElementById("user-ledger-modal").classList.remove("hidden");
+  document.getElementById("user-ledger-close-btn").focus();
 
   try {
     const res = await fetch(`/api/admin/users/${userId}/ledger?limit=50`);
@@ -233,7 +328,7 @@ window.openUserLedger = async function (userId, username) {
         return `
           <tr>
             <td>${formatTime(l.created_at)}</td>
-            <td><strong class="${deltaClass}">${deltaSign}</strong> 🪙</td>
+            <td><strong class="${deltaClass}">${deltaSign}</strong> điểm</td>
             <td><code>${l.type}</code></td>
             <td>${escapeHtml(l.reason || "—")}</td>
           </tr>
@@ -254,7 +349,6 @@ function closeUserLedgerModal() {
 function initDropsTab() {
   document.getElementById("direct-airdrop-form")?.addEventListener("submit", handleDirectAirdrop);
   document.getElementById("claimable-drop-form")?.addEventListener("submit", handleClaimableDrop);
-  loadDrops();
 }
 
 async function handleDirectAirdrop(e) {
@@ -263,6 +357,10 @@ async function handleDirectAirdrop(e) {
   const title = document.getElementById("direct-reason").value.trim();
 
   if (!confirm(`Xác nhận phát ${points} điểm cho TOÀN BỘ thành viên đang hoạt động?`)) return;
+  const submit = e.submitter;
+  submit.disabled = true;
+  const previousLabel = submit.textContent;
+  submit.textContent = "Đang phát điểm…";
 
   try {
     const res = await fetch("/api/admin/point-drops", {
@@ -281,6 +379,9 @@ async function handleDirectAirdrop(e) {
     }
   } catch (err) {
     alert("Lỗi: " + err.message);
+  } finally {
+    submit.disabled = false;
+    submit.textContent = previousLabel;
   }
 }
 
@@ -288,6 +389,10 @@ async function handleClaimableDrop(e) {
   e.preventDefault();
   const points = parseInt(document.getElementById("claimable-points").value, 10);
   const title = document.getElementById("claimable-title").value.trim();
+  const submit = e.submitter;
+  submit.disabled = true;
+  const previousLabel = submit.textContent;
+  submit.textContent = "Đang phát sóng…";
 
   try {
     const res = await fetch("/api/admin/point-drops", {
@@ -306,6 +411,9 @@ async function handleClaimableDrop(e) {
     }
   } catch (err) {
     alert("Lỗi: " + err.message);
+  } finally {
+    submit.disabled = false;
+    submit.textContent = previousLabel;
   }
 }
 
@@ -316,6 +424,10 @@ async function loadDrops() {
   try {
     const res = await fetch(`/api/admin/point-drops?page=${dropsPage}&limit=20`);
     const data = await res.json();
+    renderPagination("drops-pagination", dropsPage, data.total || 0, 20, (page) => {
+      dropsPage = page;
+      loadDrops();
+    });
     if (!data.ok || !data.drops.length) {
       tbody.innerHTML = `<tr><td colspan="7" class="text-center">Chưa có đợt phát điểm nào</td></tr>`;
       return;
@@ -334,7 +446,7 @@ async function loadDrops() {
           <tr>
             <td><strong>${escapeHtml(d.title)}</strong></td>
             <td>${typeLabel}</td>
-            <td><strong class="delta-pos">+${d.points}</strong> 🪙</td>
+            <td><strong class="delta-pos">+${d.points}</strong> điểm</td>
             <td>${statusBadge}</td>
             <td>${d.type === "claimable" ? `${d.claim_count || 0} người` : "Tất cả"}</td>
             <td>${escapeHtml(d.created_by_username || "Admin")}</td>
@@ -365,7 +477,6 @@ function initLedgerTab() {
     loadLedger();
   });
 
-  loadLedger();
 }
 
 async function loadLedger() {
@@ -377,6 +488,10 @@ async function loadLedger() {
   try {
     const res = await fetch(`/api/admin/ledger?search=${encodeURIComponent(search)}&type=${encodeURIComponent(type)}&page=${ledgerPage}&limit=30`);
     const data = await res.json();
+    renderPagination("ledger-pagination", ledgerPage, data.total || 0, 30, (page) => {
+      ledgerPage = page;
+      loadLedger();
+    });
     if (!data.ok || !data.ledger.length) {
       tbody.innerHTML = `<tr><td colspan="6" class="text-center">Không có nhật ký giao dịch nào</td></tr>`;
       return;
@@ -390,7 +505,7 @@ async function loadLedger() {
           <tr>
             <td>${formatTime(l.created_at)}</td>
             <td><strong>${escapeHtml(l.display_name || l.username)}</strong> <small class="text-muted">(@${escapeHtml(l.username)})</small></td>
-            <td><strong class="${deltaClass}">${deltaSign}</strong> 🪙</td>
+            <td><strong class="${deltaClass}">${deltaSign}</strong> điểm</td>
             <td><code>${l.type}</code></td>
             <td>${escapeHtml(l.reason || "—")}</td>
             <td><small class="text-muted">${l.reference_id ? escapeHtml(l.reference_id).slice(0, 8) : "—"}</small></td>
@@ -410,7 +525,6 @@ function initFeedbackTab() {
   document.getElementById("chat-toggle")?.addEventListener("click", toggleChatSetting);
   document.getElementById("chat-clear")?.addEventListener("click", clearChat);
   document.getElementById("admin-chat-form")?.addEventListener("submit", handleAdminChatSubmit);
-  loadFeedback();
 }
 
 async function loadFeedback() {
@@ -604,4 +718,32 @@ function debounce(fn, delay) {
     clearTimeout(timer);
     timer = setTimeout(() => fn.apply(this, args), delay);
   };
+}
+
+function renderPagination(containerId, page, total, limit, onPage) {
+  const container = document.getElementById(containerId);
+  if (!container) return;
+  container.replaceChildren();
+  const pageCount = Math.ceil(Number(total || 0) / limit);
+  if (pageCount <= 1) return;
+
+  const previous = document.createElement("button");
+  previous.type = "button";
+  previous.className = "action-btn";
+  previous.textContent = "Trang trước";
+  previous.disabled = page <= 1;
+  previous.addEventListener("click", () => onPage(page - 1));
+
+  const status = document.createElement("span");
+  status.className = "pagination-status";
+  status.textContent = `Trang ${page} / ${pageCount}`;
+
+  const next = document.createElement("button");
+  next.type = "button";
+  next.className = "action-btn";
+  next.textContent = "Trang sau";
+  next.disabled = page >= pageCount;
+  next.addEventListener("click", () => onPage(page + 1));
+
+  container.append(previous, status, next);
 }

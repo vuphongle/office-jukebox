@@ -1,11 +1,15 @@
 import { randomUUID } from "node:crypto";
 
-export const DEFAULT_TIMEZONE = process.env.APP_TIMEZONE || "Asia/Ho_Chi_Minh";
+export const DEFAULT_TIMEZONE = "Asia/Ho_Chi_Minh";
 
-export function getLocalDate(timezone = DEFAULT_TIMEZONE, date = new Date()) {
+function resolveTimezone(timezone) {
+  return timezone || process.env.APP_TIMEZONE || DEFAULT_TIMEZONE;
+}
+
+export function getLocalDate(timezone = null, date = new Date()) {
   try {
     const formatter = new Intl.DateTimeFormat("en-CA", {
-      timeZone: timezone,
+      timeZone: resolveTimezone(timezone),
       year: "numeric",
       month: "2-digit",
       day: "2-digit",
@@ -16,7 +20,7 @@ export function getLocalDate(timezone = DEFAULT_TIMEZONE, date = new Date()) {
   }
 }
 
-export function getYesterdayLocalDate(timezone = DEFAULT_TIMEZONE, date = new Date()) {
+export function getYesterdayLocalDate(timezone = null, date = new Date()) {
   const yesterday = new Date(date.getTime() - 24 * 60 * 60 * 1000);
   return getLocalDate(timezone, yesterday);
 }
@@ -32,7 +36,7 @@ export function calculateMilestoneBonus(streakAfter) {
   return { bonus: 0, isMilestone: false, milestoneDay: cycleDay };
 }
 
-export function performCheckin(db, userId, { timezone = DEFAULT_TIMEZONE, now = new Date() } = {}) {
+export function performCheckin(db, userId, { timezone = null, now = new Date() } = {}) {
   const today = getLocalDate(timezone, now);
   const yesterday = getYesterdayLocalDate(timezone, now);
 
@@ -117,5 +121,5 @@ export function performCheckin(db, userId, { timezone = DEFAULT_TIMEZONE, now = 
     };
   });
 
-  return tx();
+  return tx.immediate();
 }

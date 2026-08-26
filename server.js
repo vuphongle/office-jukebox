@@ -49,6 +49,7 @@ import {
   generateSessionToken,
   setSessionCookie,
   clearSessionCookie,
+  getSessionTokenFromCookieHeader,
   requireAuth,
   requireAdmin,
 } from "./src/auth.js";
@@ -80,6 +81,10 @@ const ledgerRepo = new LedgerRepository(db);
 const queueRepo = new QueueRepository(db);
 const dropRepo = new DropRepository(db);
 
+if (!db.query("SELECT 1 FROM users WHERE role = 'admin' AND status = 'active' LIMIT 1").get()) {
+  console.warn("[auth] Chưa có tài khoản admin active. Đặt ADMIN_USERNAME và ADMIN_PASSWORD trước lần khởi động đầu để tạo admin.");
+}
+
 const state = new JukeboxState(db);
 
 // --- Cài đặt host được lưu bền vững ----------------------------------------
@@ -107,7 +112,7 @@ let requireName = savedSettings.requireName ?? false;
 let feedbackOn = savedSettings.feedbackOn ?? true;
 let chatOn = savedSettings.chatOn ?? true;
 let voteSortOn = savedSettings.voteSortOn ?? true;
-state.voteSortOn = voteSortOn;
+state.setVoteSort(voteSortOn);
 
 const chatMessages = [];
 const chatLastSentAt = new WeakMap();
@@ -175,25 +180,8 @@ function requireHostAuth(req, res, next) {
   res.set("WWW-Authenticate", 'Basic realm="Event Music Host"').status(401).send("Yêu cầu mật khẩu.");
 }
 
-function requireAdminPermission(req, res, next) {
-  if (req.user && req.user.role === "admin" && req.user.status === "active") {
-    return next();
-  }
-  // Cho phép Basic Auth Host vào xem trang admin nếu có HOST_PASSWORD
-  if (HOST_PASSWORD) {
-    const b64 = (req.headers.authorization || "").split(" ")[1] || "";
-    const pass = Buffer.from(b64, "base64").toString().split(":").slice(1).join(":");
-    if (pass === HOST_PASSWORD) return next();
-  }
-  if (!req.user) {
-    return res.status(401).json({ ok: false, reason: "Vui lòng đăng nhập tài khoản quản trị." });
-  }
-  return res.status(403).json({ ok: false, reason: "Yêu cầu quyền Quản trị viên." });
-}
-
 app.use("/host.html", requireHostAuth);
-app.use("/feedback.html", requireHostAuth);
-app.use("/admin.html", requireHostAuth);
+app.get("/feedback.html", (_req, res) => res.redirect(302, "/admin#feedback"));
 
 app.use(
   express.static(path.join(__dirname, "public"), {
@@ -214,41 +202,54 @@ app.post("/api/auth/register", (req, res) => {
   if (!password || typeof password !== "string" || password.length < 6) {
     return res.status(400).json({ ok: false, reason: "Mật khẩu phải có tối thiểu 6 ký tự." });
   }
+  if (displayName !== undefined && typeof displayName !== "string") {
+    return res.status(400).json({ ok: false, reason: "Tên hiển thị không hợp lệ." });
+  }
 
   const existing = userRepo.findByUsername(username.trim());
   if (existing) {
     return res.status(409).json({ ok: false, reason: "Tên đăng nhập đã tồn tại." });
   }
 
-  const passwordHash = hashPassword(password);
-  const user = userRepo.create({
-    username: username.trim(),
-    passwordHash,
-    displayName: (displayName || username).trim().slice(0, 40),
-    role: "user",
-  });
+  try {
+    const passwordHash = hashPassword(password);
+    const registration = db.transaction(() => {
+      const user = userRepo.create({
+        username: username.trim(),
+        passwordHash,
+        displayName: (displayName || username).trim().slice(0, 40),
+        role: "user",
+      });
+      const token = generateSessionToken();
+      const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
+      sessionRepo.create(user.id, token, expiresAt);
+      return { user, token };
+    });
+    const { user, token } = registration.immediate();
+    setSessionCookie(res, token, req);
 
-  const token = generateSessionToken();
-  const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
-  sessionRepo.create(user.id, token, expiresAt);
-  setSessionCookie(res, token, req);
-
-  res.json({
-    ok: true,
-    user: {
-      id: user.id,
-      username: user.username,
-      displayName: user.display_name,
-      role: user.role,
-      pointsBalance: user.points_balance,
-      currentStreak: user.current_streak,
-    },
-  });
+    res.json({
+      ok: true,
+      user: {
+        id: user.id,
+        username: user.username,
+        displayName: user.display_name,
+        role: user.role,
+        pointsBalance: user.points_balance,
+        currentStreak: user.current_streak,
+      },
+    });
+  } catch (err) {
+    if (String(err.message).includes("UNIQUE constraint failed: users.username")) {
+      return res.status(409).json({ ok: false, reason: "Tên đăng nhập đã tồn tại." });
+    }
+    res.status(500).json({ ok: false, reason: "Không thể tạo tài khoản lúc này." });
+  }
 });
 
 app.post("/api/auth/login", (req, res) => {
   const { username, password } = req.body || {};
-  if (!username || !password) {
+  if (typeof username !== "string" || typeof password !== "string" || !username.trim() || !password) {
     return res.status(400).json({ ok: false, reason: "Vui lòng nhập tên đăng nhập và mật khẩu." });
   }
 
@@ -310,6 +311,7 @@ app.get("/api/me", (req, res) => {
       currentStreak: req.user.currentStreak,
       hasCheckedInToday,
       activeClaimableDrop: activeDrop && !alreadyClaimedDrop ? { id: activeDrop.id, title: activeDrop.title, points: activeDrop.points } : null,
+      votedQueueItemIds: queueRepo.listActiveVoteItemIds(req.user.id),
     },
   });
 });
@@ -538,7 +540,7 @@ app.post("/api/request", async (req, res) => {
 
 // --- API QUẢN TRỊ ADMIN (/api/admin/*) --------------------------------------
 
-app.get("/api/admin/users", requireAdminPermission, (req, res) => {
+app.get("/api/admin/users", requireAdmin, (req, res) => {
   const search = (req.query.search || "").toString().trim();
   const status = (req.query.status || "").toString().trim();
   const page = Math.max(1, parseInt(req.query.page || "1", 10));
@@ -549,10 +551,10 @@ app.get("/api/admin/users", requireAdminPermission, (req, res) => {
   res.json({ ok: true, page, limit, ...result });
 });
 
-app.post("/api/admin/users/:id/points", requireAdminPermission, (req, res) => {
-  const delta = parseInt(req.body?.delta, 10);
+app.post("/api/admin/users/:id/points", requireAdmin, (req, res) => {
+  const delta = Number(req.body?.delta);
   const reason = (req.body?.reason || "").toString().trim();
-  if (Number.isNaN(delta) || delta === 0) {
+  if (!Number.isSafeInteger(delta) || delta === 0) {
     return res.status(400).json({ ok: false, reason: "Số điểm thay đổi không hợp lệ." });
   }
   if (!reason) {
@@ -572,11 +574,17 @@ app.post("/api/admin/users/:id/points", requireAdminPermission, (req, res) => {
   }
 });
 
-app.patch("/api/admin/users/:id", requireAdminPermission, (req, res) => {
+app.patch("/api/admin/users/:id", requireAdmin, (req, res) => {
   const { status, role } = req.body || {};
   try {
     let user = userRepo.findById(req.params.id);
     if (!user) return res.status(404).json({ ok: false, reason: "Không tìm thấy người dùng." });
+    if (req.params.id === req.user.id && status === "blocked") {
+      return res.status(400).json({ ok: false, reason: "Bạn không thể tự khóa tài khoản quản trị đang đăng nhập." });
+    }
+    if (req.params.id === req.user.id && role && role !== "admin") {
+      return res.status(400).json({ ok: false, reason: "Bạn không thể tự hạ quyền tài khoản quản trị đang đăng nhập." });
+    }
 
     if (status && ["active", "blocked"].includes(status)) {
       user = userRepo.updateStatus(req.params.id, status);
@@ -590,7 +598,7 @@ app.patch("/api/admin/users/:id", requireAdminPermission, (req, res) => {
   }
 });
 
-app.get("/api/admin/users/:id/ledger", requireAdminPermission, (req, res) => {
+app.get("/api/admin/users/:id/ledger", requireAdmin, (req, res) => {
   const page = Math.max(1, parseInt(req.query.page || "1", 10));
   const limit = Math.min(100, Math.max(1, parseInt(req.query.limit || "50", 10)));
   const offset = (page - 1) * limit;
@@ -599,17 +607,18 @@ app.get("/api/admin/users/:id/ledger", requireAdminPermission, (req, res) => {
   res.json({ ok: true, page, limit, ...result });
 });
 
-app.post("/api/admin/point-drops", requireAdminPermission, (req, res) => {
+app.post("/api/admin/point-drops", requireAdmin, (req, res) => {
   const { type, title, points } = req.body || {};
-  const numPoints = parseInt(points, 10);
-  if (Number.isNaN(numPoints) || numPoints <= 0) {
-    return res.status(400).json({ ok: false, reason: "Số điểm phải lớn hơn 0." });
+  const cleanTitle = typeof title === "string" ? title.trim() : "";
+  const numPoints = Number(points);
+  if (!Number.isSafeInteger(numPoints) || numPoints <= 0 || numPoints > 1000) {
+    return res.status(400).json({ ok: false, reason: "Số điểm phải là số nguyên từ 1 đến 1000." });
   }
 
-  const actorId = req.user?.id || (userRepo.findByUsername("admin")?.id || null);
+  const actorId = req.user.id;
 
   if (type === "direct") {
-    const reason = (title || "Airdrop từ Ban Quản Trị").trim();
+    const reason = cleanTitle || "Airdrop từ Ban Quản Trị";
     const result = dropRepo.createDirectAirdrop({ points: numPoints, reason, createdByUserId: actorId });
 
     // WebSocket broadcast airdrop event
@@ -622,10 +631,10 @@ app.post("/api/admin/point-drops", requireAdminPermission, (req, res) => {
   }
 
   if (type === "claimable") {
-    if (!title || !title.trim()) {
+    if (!cleanTitle) {
       return res.status(400).json({ ok: false, reason: "Vui lòng nhập tiêu đề đợt nhận điểm." });
     }
-    const drop = dropRepo.createClaimableDrop({ title: title.trim(), points: numPoints, createdByUserId: actorId });
+    const drop = dropRepo.createClaimableDrop({ title: cleanTitle, points: numPoints, createdByUserId: actorId });
 
     // WebSocket broadcast claimable drop event
     const msg = JSON.stringify({ type: "pointDropAvailable", drop: { id: drop.id, title: drop.title, points: drop.points } });
@@ -639,7 +648,7 @@ app.post("/api/admin/point-drops", requireAdminPermission, (req, res) => {
   res.status(400).json({ ok: false, reason: "Hình thức phát điểm không hợp lệ." });
 });
 
-app.get("/api/admin/point-drops", requireAdminPermission, (req, res) => {
+app.get("/api/admin/point-drops", requireAdmin, (req, res) => {
   const page = Math.max(1, parseInt(req.query.page || "1", 10));
   const limit = Math.min(100, Math.max(1, parseInt(req.query.limit || "50", 10)));
   const offset = (page - 1) * limit;
@@ -648,7 +657,7 @@ app.get("/api/admin/point-drops", requireAdminPermission, (req, res) => {
   res.json({ ok: true, page, limit, ...result });
 });
 
-app.get("/api/admin/ledger", requireAdminPermission, (req, res) => {
+app.get("/api/admin/ledger", requireAdmin, (req, res) => {
   const search = (req.query.search || "").toString().trim();
   const type = (req.query.type || "").toString().trim();
   const page = Math.max(1, parseInt(req.query.page || "1", 10));
@@ -679,11 +688,11 @@ app.post("/api/feedback", (req, res) => {
   res.json({ ok: true });
 });
 
-app.get("/api/feedback", requireAdminPermission, (_req, res) => {
+app.get("/api/feedback", requireAdmin, (_req, res) => {
   res.json({ feedbackOn, chatOn, stats: feedbackStats(), items: feedbackItems });
 });
 
-app.patch("/api/feedback/settings", requireAdminPermission, (req, res) => {
+app.patch("/api/feedback/settings", requireAdmin, (req, res) => {
   const hasFeedbackSetting = typeof req.body?.on === "boolean";
   const hasChatSetting = typeof req.body?.chatOn === "boolean";
   if (!hasFeedbackSetting && !hasChatSetting) {
@@ -705,7 +714,7 @@ app.patch("/api/feedback/settings", requireAdminPermission, (req, res) => {
   res.json({ ok: true, feedbackOn, chatOn });
 });
 
-app.delete("/api/feedback/:id", requireAdminPermission, (req, res) => {
+app.delete("/api/feedback/:id", requireAdmin, (req, res) => {
   const before = feedbackItems.length;
   feedbackItems = feedbackItems.filter((item) => item.id !== req.params.id);
   if (feedbackItems.length === before) return res.status(404).json({ ok: false, reason: "Không tìm thấy góp ý." });
@@ -713,7 +722,7 @@ app.delete("/api/feedback/:id", requireAdminPermission, (req, res) => {
   res.json({ ok: true });
 });
 
-app.delete("/api/chat", requireAdminPermission, (_req, res) => {
+app.delete("/api/chat", requireAdmin, (_req, res) => {
   const cleared = chatMessages.length;
   chatMessages.length = 0;
   const message = JSON.stringify({ type: "chatCleared" });
@@ -738,7 +747,6 @@ function versionedPage(name) {
 const HOST_PAGE = versionedPage("host.html");
 const GUEST_PAGE = versionedPage("guest.html");
 const ADMIN_PAGE = versionedPage("admin.html");
-const FEEDBACK_PAGE = versionedPage("feedback.html");
 
 app.get("/", requireHostAuth, (_req, res) => {
   res.set("Cache-Control", "no-cache").type("html").send(HOST_PAGE);
@@ -748,12 +756,12 @@ app.get("/guest", (_req, res) => {
   res.set("Cache-Control", "no-cache").type("html").send(GUEST_PAGE);
 });
 
-app.get("/admin", requireHostAuth, (_req, res) => {
+app.get("/admin", (_req, res) => {
   res.set("Cache-Control", "no-cache").type("html").send(ADMIN_PAGE);
 });
 
-app.get("/feedback", requireHostAuth, (_req, res) => {
-  res.set("Cache-Control", "no-cache").type("html").send(FEEDBACK_PAGE);
+app.get("/feedback", (_req, res) => {
+  res.redirect(302, "/admin#feedback");
 });
 
 // --- WebSocket: ĐỒNG BỘ REALTIME & ĐIỀU KHIỂN HOST ------------------------
@@ -786,9 +794,12 @@ function broadcastState() {
 }
 state.onChange = broadcastState;
 
-wss.on("connection", (ws) => {
-  ws.isHost = !HOST_PASSWORD;
-  ws.userId = null;
+wss.on("connection", (ws, request) => {
+  const sessionToken = getSessionTokenFromCookieHeader(request.headers.cookie);
+  const session = sessionToken ? sessionRepo.findValid(sessionToken) : null;
+  ws.userId = session?.user_id || null;
+  ws.isAdmin = session?.role === "admin";
+  ws.isHost = !HOST_PASSWORD || ws.isAdmin;
 
   ws.send(stateMessage());
   if (chatOn && chatMessages.length) {
@@ -814,7 +825,8 @@ wss.on("connection", (ws) => {
         const session = sessionRepo.findValid(msg.token);
         if (session) {
           ws.userId = session.user_id;
-          if (session.role === "admin") ws.isHost = true;
+          ws.isAdmin = session.role === "admin";
+          if (ws.isAdmin) ws.isHost = true;
         }
       }
       return;
@@ -826,7 +838,7 @@ wss.on("connection", (ws) => {
         return;
       }
       const isAdmin = msg.admin === true;
-      if (isAdmin && !ws.isHost) {
+      if (isAdmin && !ws.isAdmin) {
         ws.send(JSON.stringify({ type: "chatSendResult", ok: false, reason: "Bạn không có quyền gửi tin nhắn admin." }));
         return;
       }

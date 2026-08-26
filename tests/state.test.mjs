@@ -51,6 +51,21 @@ test("reorder can append and ignores invalid or no-op requests", () => {
   assert.equal(changes, 1);
 });
 
+test("host move pins the moved song and unpin restores natural ordering", () => {
+  const state = createState();
+  add(state, "now-playing");
+  const second = add(state, "second");
+  add(state, "third");
+
+  state.move(second.id, "down");
+  assert.equal(second.pinned, true);
+  assert.deepEqual(queueIds(state), ["third", "second"]);
+
+  state.unpin(second.id);
+  assert.equal(second.pinned, false);
+  assert.deepEqual(queueIds(state), ["second", "third"]);
+});
+
 test("guest can remove only an upcoming request created by the same client", () => {
   const state = createState();
   add(state, "now-playing");

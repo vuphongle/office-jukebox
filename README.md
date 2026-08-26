@@ -61,6 +61,12 @@ dùng cho mọi sự kiện.
   phát trước và bộ giám sát tự động bỏ qua video không bắt đầu được.
 - ⚡ **Mọi thứ trực tiếp** — một lần phát WebSocket giữ máy chiếu và mọi điện
   thoại đồng bộ; khách nhìn thấy huy hiệu "Bạn" trên các bài hát của mình.
+- 👤 **Tài khoản tùy chọn** — khách vãng lai vẫn dùng toàn bộ luồng chọn bài;
+  thành viên có thể đăng ký, điểm danh hằng ngày và tích điểm theo streak.
+- ❤️ **Vote bằng điểm** — mỗi vote tốn một điểm, tự sắp xếp hàng đợi theo bài
+  Host ghim → số vote → thứ tự thêm; điểm được hoàn khi bài bị xóa hoặc lỗi phát.
+- 🎁 **Bảng điều khiển Admin** — quản lý thành viên, điều chỉnh điểm, phát airdrop
+  trực tiếp hoặc quà chờ nhận, xem ledger và điều hành góp ý/chat tại `/admin`.
 
 <div align="center">
 <img src="docs/guest-vi.png" alt="Trang khách trên điện thoại — khám phá, tìm kiếm và xếp hàng" width="330" />
@@ -75,6 +81,7 @@ git clone https://github.com/Hangton-Code/event-music-system.git
 cd event-music-system
 bun install
 cp .env.example .env      # giá trị mặc định dùng được — bộ lọc AI đang tắt
+# đặt ADMIN_PASSWORD mạnh trong .env nếu cần dùng /admin
 bun start
 ```
 
@@ -82,8 +89,7 @@ Mở **http://localhost:45416/** trên máy, kéo cửa sổ sang máy chiếu v
 **Bắt đầu** một lần để trình duyệt cho phép âm thanh. Khách quét mã QR trên màn
 hình.
 
-> Node ≥ 20 cũng dùng được (`npm install && npm start`), nhưng Bun là công cụ
-> mà image Docker và các tập lệnh sử dụng.
+> Ứng dụng yêu cầu Bun vì SQLite dùng module tích hợp `bun:sqlite`.
 
 ## Cách hoạt động
 
@@ -101,7 +107,8 @@ hình.
 |------|---------|
 | `/` | Trang người phụ trách/máy chiếu — trình phát, mã QR, hàng đợi, các điều khiển |
 | `/guest` | Trang di động khách mở qua mã QR |
-| `/feedback` | Trang quản trị góp ý (được bảo vệ cùng mật khẩu host) |
+| `/feedback` | Chuyển tới tab góp ý trong bảng điều khiển `/admin` |
+| `/admin` | Bảng điều khiển tài khoản, điểm, airdrop, ledger, góp ý và chat (cần tài khoản admin) |
 | `GET /api/search?q=` | Đọc kết quả tìm kiếm YouTube (không cần khóa API) |
 | `GET /api/browse?q=` | Tìm kiếm chỉ gồm đĩa đơn có bộ nhớ đệm, dùng cho các tab khám phá |
 | `POST /api/request` | Rào chắn → kiểm tra khả năng phát → (bộ lọc AI tùy chọn) → thêm vào hàng đợi |
@@ -116,8 +123,9 @@ vấn "Songs" và không dùng cookie đăng nhập của người dùng.
 
 **Máy chủ quản lý hàng đợi** (`src/state.js`). Trang máy chiếu chỉ là trình
 phát: khi một bài kết thúc hoặc gặp lỗi, trang báo cho máy chủ, máy chủ đưa bài
-tiếp theo lên và phát trạng thái mới cho mọi người. Các thiết lập trên trang máy
-chiếu (chế độ lọc, thời gian chờ, bối cảnh sự kiện) được lưu trong
+tiếp theo lên và phát trạng thái mới cho mọi người. Tài khoản, điểm, vote và
+hàng đợi được lưu trong `data/jukebox.db`; các thiết lập trên trang máy chiếu
+(chế độ lọc, thời gian chờ, bối cảnh sự kiện) vẫn nằm trong
 `data/settings.json`.
 
 Luồng yêu cầu: kiểm soát tràn → kiểm tra trùng/giới hạn → kiểm tra khả năng phát
@@ -231,6 +239,8 @@ danh sách đầy đủ kèm chú thích). Các mục chính:
 |----------|--------------|
 | `PUBLIC_URL` | Địa chỉ công khai mà mã QR trỏ tới (phía sau proxy ngược) |
 | `HOST_PASSWORD` | Khóa trang máy chiếu và các điều khiển (khuyến nghị khi công khai) |
+| `ADMIN_USERNAME` / `ADMIN_PASSWORD` | Tạo tài khoản admin đầu tiên; cần đặt trước lần khởi động đầu |
+| `APP_TIMEZONE` | Múi giờ tính ngày điểm danh (mặc định `Asia/Ho_Chi_Minh`) |
 | `LLM_API_KEY` / `LLM_BASE_URL` / `LLM_MODEL` | Bất kỳ nhà cung cấp nào tương thích OpenAI cho bộ lọc |
 | `EVENT_CONTEXT` | Mô tả ban đầu về sự kiện cho AI (có thể sửa trực tiếp) |
 | `PORT` | Cổng lắng nghe (mặc định `45416`) |

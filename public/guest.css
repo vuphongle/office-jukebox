@@ -985,7 +985,8 @@ header .desktop-intro { display: none; }
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  padding: 4px 8px;
+  min-height: 44px;
+  padding: 8px 10px;
   border-radius: 8px;
   border: 1px solid var(--line);
   background: var(--fill);
@@ -995,6 +996,7 @@ header .desktop-intro { display: none; }
   cursor: pointer;
   transition: all 150ms ease;
 }
+.q-vote-btn:disabled { cursor: default; opacity: .78; }
 .q-vote-btn:hover {
   background: oklch(68% 0.18 32 / 0.2);
   border-color: var(--red);

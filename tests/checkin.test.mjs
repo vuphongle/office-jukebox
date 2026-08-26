@@ -34,6 +34,20 @@ test("Milestone bonus calculation according to modulo 30 cycle", () => {
   assert.deepEqual(calculateMilestoneBonus(60), { bonus: 20, isMilestone: true, milestoneDay: 30 });
 });
 
+test("Local date reads APP_TIMEZONE at call time", () => {
+  const previous = process.env.APP_TIMEZONE;
+  const nearMidnightUtc = new Date("2026-08-01T23:30:00Z");
+  try {
+    process.env.APP_TIMEZONE = "UTC";
+    assert.equal(getLocalDate(null, nearMidnightUtc), "2026-08-01");
+    process.env.APP_TIMEZONE = "Asia/Ho_Chi_Minh";
+    assert.equal(getLocalDate(null, nearMidnightUtc), "2026-08-02");
+  } finally {
+    if (previous === undefined) delete process.env.APP_TIMEZONE;
+    else process.env.APP_TIMEZONE = previous;
+  }
+});
+
 test("Daily check-in streak and idempotency", () => {
   const db = initDb({ dbPath: ":memory:" });
   const userRepo = new UserRepository(db);

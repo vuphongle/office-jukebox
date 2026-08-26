@@ -54,7 +54,7 @@ export class UserRepository {
       return { ...user, points_balance: newBalance, ledgerId };
     });
 
-    return tx();
+    return tx.immediate();
   }
 
   updateStatus(userId, status) {

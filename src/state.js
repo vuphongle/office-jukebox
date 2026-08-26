@@ -224,25 +224,25 @@ export class JukeboxState {
     if (finishedVideoId && this.nowPlaying && this.nowPlaying.videoId !== finishedVideoId) {
       return; // event cũ của bài đã được chuyển qua
     }
-    if (this.nowPlaying) {
-      if (this.queueRepo) {
-        const finalStatus = isError ? "error" : "played";
-        this.queueRepo.updateStatus(this.nowPlaying.id, finalStatus, { finishedAt: Date.now() });
-        // Hoàn điểm nếu video gặp lỗi không phát được trên YouTube iframe (101/150)
-        if (isError) {
-          this.queueRepo.refundVotes(this.nowPlaying.id, "Lỗi phát video YouTube");
-        }
-      }
-      this.history.push(this.nowPlaying);
+    const finishedItem = this.nowPlaying;
+    const nextItem = this.queue[0] || null;
+    const transitionedAt = Date.now();
+    if (this.queueRepo) {
+      this.queueRepo.finishAndStart({
+        finishedId: finishedItem?.id || null,
+        finalStatus: isError ? "error" : "played",
+        nextId: nextItem?.id || null,
+        finishedAt: transitionedAt,
+        startedAt: transitionedAt,
+        refundReason: "Lỗi phát video YouTube",
+      });
+    }
+    if (finishedItem) {
+      this.history.push(finishedItem);
       if (this.history.length > 100) this.history.shift();
     }
     this.nowPlaying = this.queue.shift() || null;
-    if (this.nowPlaying) {
-      this.nowPlaying.startedAt = Date.now();
-      if (this.queueRepo) {
-        this.queueRepo.updateStatus(this.nowPlaying.id, "playing", { startedAt: this.nowPlaying.startedAt });
-      }
-    }
+    if (this.nowPlaying) this.nowPlaying.startedAt = transitionedAt;
     this._emit();
   }
 
@@ -253,16 +253,11 @@ export class JukeboxState {
 
   // Xóa một mục sắp phát theo id (điều khiển host).
   remove(id) {
-    const before = this.queue.length;
-    const item = this.queue.find((s) => s.id === id);
-    this.queue = this.queue.filter((s) => s.id !== id);
-    if (this.queue.length !== before) {
-      if (this.queueRepo && item) {
-        this.queueRepo.updateStatus(id, "removed", { finishedAt: Date.now() });
-        this.queueRepo.refundVotes(id, "Host xóa bài khỏi hàng đợi");
-      }
-      this._emit();
-    }
+    const index = this.queue.findIndex((item) => item.id === id);
+    if (index === -1) return;
+    if (this.queueRepo) this.queueRepo.removeAndRefund(id, "Host xóa bài khỏi hàng đợi");
+    this.queue.splice(index, 1);
+    this._emit();
   }
 
   // Xóa một mục sắp phát khi clientId trùng với người đã thêm mục đó (hoặc userId).
@@ -272,11 +267,8 @@ export class JukeboxState {
       (item) => item.id === id && (item.requesterId === requesterId || (userId && item.addedByUserId === userId))
     );
     if (index === -1) return false;
-    const [item] = this.queue.splice(index, 1);
-    if (this.queueRepo && item) {
-      this.queueRepo.updateStatus(id, "removed", { finishedAt: Date.now() });
-      this.queueRepo.refundVotes(id, "Người yêu cầu tự xóa bài");
-    }
+    if (this.queueRepo) this.queueRepo.removeAndRefund(id, "Người yêu cầu tự xóa bài");
+    this.queue.splice(index, 1);
     this._emit();
     return true;
   }
@@ -287,8 +279,9 @@ export class JukeboxState {
     if (i === -1) return;
     const j = dir === "up" ? i - 1 : i + 1;
     if (j < 0 || j >= this.queue.length) return;
+    const movedItem = this.queue[i];
     [this.queue[i], this.queue[j]] = [this.queue[j], this.queue[i]];
-    // Pin both items to preserve host's explicit position
+    movedItem.pinned = true;
     this._syncPinnedOrder();
     this._emit();
   }
@@ -338,11 +331,9 @@ export class JukeboxState {
   unpin(id) {
     const item = this.queue.find((s) => s.id === id);
     if (!item) return false;
+    if (this.queueRepo) this.queueRepo.unpin(id);
     item.pinned = false;
     item.pinnedOrder = 0;
-    if (this.queueRepo) {
-      this.queueRepo.unpin(id);
-    }
     this._sortQueue();
     this._syncPinnedOrder();
     this._emit();
@@ -357,14 +348,14 @@ export class JukeboxState {
 
   _syncPinnedOrder() {
     let order = 1;
+    const pinnedItems = [];
     for (const item of this.queue) {
       if (item.pinned) {
         item.pinnedOrder = order++;
-        if (this.queueRepo) {
-          this.queueRepo.setPin(item.id, true, item.pinnedOrder);
-        }
+        pinnedItems.push(item);
       }
     }
+    if (this.queueRepo && pinnedItems.length) this.queueRepo.reorderPinned(pinnedItems);
   }
 }
 

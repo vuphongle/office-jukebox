@@ -14,7 +14,7 @@ const TEST_DB_PATH = path.join(__dirname, "test-admin.db");
 test("Admin User Management & Direct Points Adjustment", () => {
   if (existsSync(TEST_DB_PATH)) unlinkSync(TEST_DB_PATH);
 
-  const db = initDb({ dbPath: TEST_DB_PATH });
+  const db = initDb({ dbPath: TEST_DB_PATH, adminUser: "admin", adminPass: "test-admin-password" });
   const userRepo = new UserRepository(db);
   const ledgerRepo = new LedgerRepository(db);
 
@@ -61,7 +61,7 @@ test("Admin Direct Airdrop & Claimable Point Drops", () => {
   const TEST_DB_PATH_2 = path.join(__dirname, "test-admin-drop.db");
   if (existsSync(TEST_DB_PATH_2)) unlinkSync(TEST_DB_PATH_2);
 
-  const db = initDb({ dbPath: TEST_DB_PATH_2 });
+  const db = initDb({ dbPath: TEST_DB_PATH_2, adminUser: "admin", adminPass: "test-admin-password" });
   const userRepo = new UserRepository(db);
   const dropRepo = new DropRepository(db);
 

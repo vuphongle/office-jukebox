@@ -5,7 +5,7 @@ import { UserRepository } from "../src/repositories/userRepository.js";
 import { DropRepository } from "../src/repositories/dropRepository.js";
 
 test("Direct Airdrop to all active users", () => {
-  const db = initDb({ dbPath: ":memory:" });
+  const db = initDb({ dbPath: ":memory:", adminUser: "admin", adminPass: "test-admin-password" });
   const userRepo = new UserRepository(db);
   const dropRepo = new DropRepository(db);
 
@@ -25,7 +25,7 @@ test("Direct Airdrop to all active users", () => {
 });
 
 test("Claimable point drops (Non-stackable supersede and single-claim)", () => {
-  const db = initDb({ dbPath: ":memory:" });
+  const db = initDb({ dbPath: ":memory:", adminUser: "admin", adminPass: "test-admin-password" });
   const userRepo = new UserRepository(db);
   const dropRepo = new DropRepository(db);
 

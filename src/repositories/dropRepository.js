@@ -39,7 +39,7 @@ export class DropRepository {
       return { dropId, userCount: activeUsers.length, pointsPerUser: points };
     });
 
-    return tx();
+    return tx.immediate();
   }
 
   createClaimableDrop({ title, points, createdBy, createdByUserId }) {
@@ -66,7 +66,7 @@ export class DropRepository {
       return this.findDropById(dropId);
     });
 
-    return tx();
+    return tx.immediate();
   }
 
   findDropById(dropId) {
@@ -140,7 +140,7 @@ export class DropRepository {
       return { pointsReceived: drop.points, pointsClaimed: drop.points, newBalance };
     });
 
-    return tx();
+    return tx.immediate();
   }
 
   listDrops({ limit = 50, offset = 0 } = {}) {

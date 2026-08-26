@@ -41,6 +41,10 @@ export function parseCookies(cookieHeader) {
   return cookies;
 }
 
+export function getSessionTokenFromCookieHeader(cookieHeader) {
+  return parseCookies(cookieHeader)[SESSION_COOKIE_NAME] || null;
+}
+
 export function setSessionCookie(res, token, req) {
   const isSecure = req?.secure || req?.headers?.["x-forwarded-proto"] === "https";
   const cookieParts = [
@@ -110,7 +114,10 @@ export function requireAuth(req, res, next) {
 }
 
 export function requireAdmin(req, res, next) {
-  if (!req.user || req.user.role !== "admin") {
+  if (!req.user) {
+    return res.status(401).json({ ok: false, reason: "Vui lòng đăng nhập tài khoản quản trị." });
+  }
+  if (req.user.role !== "admin") {
     return res.status(403).json({ ok: false, reason: "Yêu cầu quyền Quản trị viên." });
   }
   if (req.user.status === "blocked") {

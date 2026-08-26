@@ -7,7 +7,7 @@
   "keywords": ["jukebox", "party", "youtube", "qr-code", "karaoke", "ktv", "event", "music-queue", "self-hosted"],
   "type": "module",
   "engines": {
-    "node": ">=20"
+    "bun": ">=1.1"
   },
   "scripts": {
     "start": "bun server.js",

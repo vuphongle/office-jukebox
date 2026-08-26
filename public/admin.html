@@ -12,10 +12,35 @@
   <link rel="stylesheet" href="/admin.css" />
 </head>
 <body>
-  <main class="admin-app">
+  <section id="admin-login-gate" class="admin-login-gate" aria-labelledby="admin-login-title">
+    <div class="login-card">
+      <img class="brand-logo" src="/assets/logo.png" alt="Laztar" />
+      <p class="eyebrow">Khu vực quản trị</p>
+      <h1 id="admin-login-title">Đăng nhập Admin</h1>
+      <p class="login-desc">Dùng tài khoản có vai trò admin. Mật khẩu Host không cấp quyền vào bảng điều khiển này.</p>
+      <form id="admin-login-form" class="admin-form">
+        <div class="form-group">
+          <label for="admin-login-username">Tên đăng nhập</label>
+          <input id="admin-login-username" type="text" autocomplete="username" required maxlength="30" />
+        </div>
+        <div class="form-group">
+          <label for="admin-login-password">Mật khẩu</label>
+          <input id="admin-login-password" type="password" autocomplete="current-password" required minlength="6" />
+        </div>
+        <div id="admin-login-error" class="login-error hidden" role="alert"></div>
+        <button id="admin-login-submit" type="submit" class="submit-btn gold">Đăng nhập quản trị</button>
+      </form>
+      <a class="back-link login-back" href="/">Quay lại màn hình máy chiếu</a>
+    </div>
+  </section>
+
+  <main id="admin-app" class="admin-app hidden">
     <div class="top-nav">
       <a class="back-link" href="/">← Màn hình máy chiếu</a>
-      <div id="admin-user-info" class="admin-user-info"></div>
+      <div class="admin-session">
+        <div id="admin-user-info" class="admin-user-info"></div>
+        <button id="admin-logout-btn" class="action-btn" type="button">Đăng xuất</button>
+      </div>
     </div>
 
     <header class="page-head">
@@ -31,30 +56,30 @@
 
     <!-- Navigation Tabs -->
     <nav class="admin-tabs" role="tablist">
-      <button id="tab-btn-users" class="tab-btn active" role="tab" aria-selected="true" data-tab="tab-users">
-        👥 Quản lý Thành viên
+      <button id="tab-btn-users" class="tab-btn active" role="tab" aria-selected="true" aria-controls="tab-users" data-tab="tab-users">
+        Quản lý Thành viên
       </button>
-      <button id="tab-btn-drops" class="tab-btn" role="tab" aria-selected="false" data-tab="tab-drops">
-        🎁 Phát điểm (Airdrop)
+      <button id="tab-btn-drops" class="tab-btn" role="tab" aria-selected="false" aria-controls="tab-drops" data-tab="tab-drops">
+        Phát điểm (Airdrop)
       </button>
-      <button id="tab-btn-ledger" class="tab-btn" role="tab" aria-selected="false" data-tab="tab-ledger">
-        📜 Lịch sử Ledger
+      <button id="tab-btn-ledger" class="tab-btn" role="tab" aria-selected="false" aria-controls="tab-ledger" data-tab="tab-ledger">
+        Lịch sử Ledger
       </button>
-      <button id="tab-btn-feedback" class="tab-btn" role="tab" aria-selected="false" data-tab="tab-feedback">
-        💬 Góp ý & Chat
+      <button id="tab-btn-feedback" class="tab-btn" role="tab" aria-selected="false" aria-controls="tab-feedback" data-tab="tab-feedback">
+        Góp ý & Chat
       </button>
     </nav>
 
     <div id="global-status" class="global-status" role="status" aria-live="polite"></div>
 
     <!-- TAB 1: USERS MANAGEMENT -->
-    <section id="tab-users" class="tab-pane active" role="tabpanel">
+    <section id="tab-users" class="tab-pane active" role="tabpanel" aria-labelledby="tab-btn-users">
       <div class="panel-card">
         <div class="panel-header">
           <h2>Danh sách Người dùng</h2>
           <div class="filter-group">
-            <input id="user-search-input" type="search" placeholder="Tìm theo username hoặc tên…" />
-            <select id="user-status-filter">
+            <input id="user-search-input" type="search" placeholder="Tìm theo username hoặc tên…" aria-label="Tìm thành viên" />
+            <select id="user-status-filter" aria-label="Lọc trạng thái thành viên">
               <option value="">Tất cả trạng thái</option>
               <option value="active">Đang hoạt động</option>
               <option value="blocked">Đã bị khóa</option>
@@ -86,11 +111,11 @@
     </section>
 
     <!-- TAB 2: AIRDROPS & POINT DROPS -->
-    <section id="tab-drops" class="tab-pane" role="tabpanel">
+    <section id="tab-drops" class="tab-pane" role="tabpanel" aria-labelledby="tab-btn-drops">
       <div class="grid-2col">
         <!-- Direct Airdrop Card -->
         <div class="panel-card">
-          <h2>🎁 Phát Điểm Trực Tiếp (Direct Airdrop)</h2>
+          <h2>Phát Điểm Trực Tiếp (Direct Airdrop)</h2>
           <p class="card-desc">Cộng điểm ngay lập tức vào tài khoản của toàn bộ thành viên đang hoạt động.</p>
           <form id="direct-airdrop-form" class="admin-form">
             <div class="form-group">
@@ -101,13 +126,13 @@
               <label for="direct-reason">Lý do phát điểm *</label>
               <input id="direct-reason" type="text" maxlength="100" placeholder="Ví dụ: Khai mạc sự kiện 🎉" required />
             </div>
-            <button id="direct-submit-btn" type="submit" class="submit-btn gold">🚀 Thực hiện Phát Điểm Ngay</button>
+            <button id="direct-submit-btn" type="submit" class="submit-btn gold">Thực hiện Phát Điểm Ngay</button>
           </form>
         </div>
 
         <!-- Claimable Drop Card -->
         <div class="panel-card">
-          <h2>📦 Tạo Đợt Quà Tặng (Claimable Drop)</h2>
+          <h2>Tạo Đợt Quà Tặng (Claimable Drop)</h2>
           <p class="card-desc">Tạo đợt quà tặng realtime hiển thị trên điện thoại khách. Đợt cũ sẽ tự hết hạn.</p>
           <form id="claimable-drop-form" class="admin-form">
             <div class="form-group">
@@ -118,7 +143,7 @@
               <label for="claimable-title">Tiêu đề quà tặng *</label>
               <input id="claimable-title" type="text" maxlength="80" placeholder="Ví dụ: Quà quẩy đêm cùng Laztar 🔥" required />
             </div>
-            <button id="claimable-submit-btn" type="submit" class="submit-btn red">📢 Phát Sóng Quà Tặng Realtime</button>
+            <button id="claimable-submit-btn" type="submit" class="submit-btn red">Phát Sóng Quà Tặng Realtime</button>
           </form>
         </div>
       </div>
@@ -149,7 +174,7 @@
     </section>
 
     <!-- TAB 3: LEDGER AUDIT LOG -->
-    <section id="tab-ledger" class="tab-pane" role="tabpanel">
+    <section id="tab-ledger" class="tab-pane" role="tabpanel" aria-labelledby="tab-btn-ledger">
       <div class="panel-card">
         <div class="panel-header">
           <h2>Nhật ký Biến động Điểm (Audit Ledger)</h2>
@@ -190,7 +215,7 @@
     </section>
 
     <!-- TAB 4: FEEDBACK & CHAT -->
-    <section id="tab-feedback" class="tab-pane" role="tabpanel">
+    <section id="tab-feedback" class="tab-pane" role="tabpanel" aria-labelledby="tab-btn-feedback">
       <div class="feedback-controls-bar">
         <div class="stats-grid">
           <article><strong id="stat-total">—</strong><span>Tổng góp ý</span></article>
@@ -208,14 +233,14 @@
         <!-- Live Admin Chat Card -->
         <div class="panel-card">
           <div class="chat-header">
-            <h2>💬 Chat với Khách</h2>
+            <h2>Chat với Khách</h2>
             <span class="admin-badge">ADMIN</span>
           </div>
           <div id="admin-chat-messages" class="admin-chat-box"></div>
           <form id="admin-chat-form" class="admin-chat-form">
-            <input id="admin-chat-name" type="text" placeholder="Tên hiển thị" value="Ban Tổ Chức" maxlength="40" />
+            <input id="admin-chat-name" type="text" placeholder="Tên hiển thị" value="Ban Tổ Chức" maxlength="40" aria-label="Tên hiển thị trong chat" />
             <div class="chat-input-row">
-              <input id="admin-chat-message" type="text" placeholder="Nhắn gì đó cho cả phòng…" maxlength="280" autocomplete="off" />
+              <input id="admin-chat-message" type="text" placeholder="Nhắn gì đó cho cả phòng…" maxlength="280" autocomplete="off" aria-label="Nội dung tin nhắn" />
               <button type="submit" class="submit-btn gold">Gửi</button>
             </div>
             <div id="admin-chat-status" class="chat-status"></div>
@@ -235,15 +260,15 @@
   </main>
 
   <!-- MODAL: Adjust Points -->
-  <div id="points-modal" class="modal-overlay hidden" role="dialog" aria-modal="true">
+  <div id="points-modal" class="modal-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="points-modal-title">
     <div class="modal-card">
       <div class="modal-head">
-        <h3>Điều chỉnh Điểm cho <span id="modal-target-username"></span></h3>
-        <button id="modal-close-btn" class="close-btn">&times;</button>
+        <h3 id="points-modal-title">Điều chỉnh Điểm cho <span id="modal-target-username"></span></h3>
+        <button id="modal-close-btn" class="close-btn" type="button" aria-label="Đóng cửa sổ điều chỉnh điểm">&times;</button>
       </div>
       <form id="adjust-points-form">
         <div class="form-group">
-          <label>Số dư hiện tại: <strong id="modal-current-balance">0</strong> 🪙</label>
+          <label>Số dư hiện tại: <strong id="modal-current-balance">0</strong> điểm</label>
         </div>
         <div class="form-group">
           <label for="adjust-delta">Số điểm cộng hoặc trừ (VD: 5 hoặc -5) *</label>
@@ -262,11 +287,11 @@
   </div>
 
   <!-- MODAL: User Ledger Drawer -->
-  <div id="user-ledger-modal" class="modal-overlay hidden" role="dialog" aria-modal="true">
+  <div id="user-ledger-modal" class="modal-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="user-ledger-title">
     <div class="modal-card wide">
       <div class="modal-head">
-        <h3>Lịch sử Điểm của <span id="user-ledger-target"></span></h3>
-        <button id="user-ledger-close-btn" class="close-btn">&times;</button>
+        <h3 id="user-ledger-title">Lịch sử Điểm của <span id="user-ledger-target"></span></h3>
+        <button id="user-ledger-close-btn" class="close-btn" type="button" aria-label="Đóng lịch sử điểm">&times;</button>
       </div>
       <div class="table-responsive">
         <table class="data-table">

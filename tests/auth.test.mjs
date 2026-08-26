@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { initDb, closeDb } from "../src/db.js";
 import { UserRepository } from "../src/repositories/userRepository.js";
 import { SessionRepository } from "../src/repositories/sessionRepository.js";
-import { hashPassword, verifyPassword, parseCookies } from "../src/auth.js";
+import { hashPassword, verifyPassword, parseCookies, getSessionTokenFromCookieHeader, requireAdmin } from "../src/auth.js";
 import { unlinkSync, existsSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -27,9 +27,40 @@ test("Cookie parsing helper", () => {
   assert.equal(cookies.jukebox_session, "abc12345");
   assert.equal(cookies.guestName, "Phong");
   assert.equal(cookies.other, "xyz");
+  assert.equal(getSessionTokenFromCookieHeader(header), "abc12345");
 
   assert.deepEqual(parseCookies(""), {});
   assert.deepEqual(parseCookies(null), {});
+});
+
+test("Admin middleware requires an active admin session", () => {
+  let statusCode = null;
+  let payload = null;
+  let nextCalled = false;
+  const res = {
+    status(code) {
+      statusCode = code;
+      return this;
+    },
+    json(body) {
+      payload = body;
+      return this;
+    },
+  };
+
+  requireAdmin({ user: null }, res, () => { nextCalled = true; });
+  assert.equal(statusCode, 401);
+  assert.equal(payload.ok, false);
+  assert.equal(nextCalled, false);
+
+  statusCode = null;
+  payload = null;
+  requireAdmin({ user: { role: "user", status: "active" } }, res, () => { nextCalled = true; });
+  assert.equal(statusCode, 403);
+  assert.equal(nextCalled, false);
+
+  requireAdmin({ user: { role: "admin", status: "active" } }, res, () => { nextCalled = true; });
+  assert.equal(nextCalled, true);
 });
 
 test("User registration, authentication and session lifecycle", () => {

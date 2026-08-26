@@ -21,6 +21,11 @@
 
 * { box-sizing: border-box; }
 html { color-scheme: dark; }
+.hidden { display: none !important; }
+:where(a, button, input, select):focus-visible {
+  outline: 3px solid var(--gold);
+  outline-offset: 3px;
+}
 body {
   min-height: 100vh;
   margin: 0;
@@ -41,6 +46,26 @@ body::before, body::after {
 }
 body::before { width: 50vw; height: 50vw; max-width: 700px; max-height: 700px; top: -20vw; left: -10vw; background: oklch(42% 0.12 320 / 0.15); }
 body::after { width: 40vw; height: 40vw; max-width: 550px; max-height: 550px; right: -10vw; bottom: -15vw; background: oklch(62% 0.13 55 / 0.09); }
+
+.admin-login-gate {
+  min-height: 100dvh;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+}
+.login-card {
+  width: min(440px, 100%);
+  padding: 32px;
+  border: 1px solid var(--line);
+  border-radius: 22px;
+  background: var(--card);
+  box-shadow: 0 24px 70px rgba(0, 0, 0, .38);
+}
+.login-card .brand-logo { margin-bottom: 20px; }
+.login-desc { margin: 10px 0 24px; color: var(--muted); font-size: 14px; line-height: 1.55; }
+.login-error { margin: -4px 0 14px; color: var(--red); font-size: 13px; line-height: 1.45; }
+.login-card .submit-btn { width: 100%; }
+.login-back { display: inline-block; margin-top: 22px; }
 
 .admin-app {
   width: min(1240px, calc(100% - 40px));
@@ -63,6 +88,7 @@ body::after { width: 40vw; height: 40vw; max-width: 550px; max-height: 550px; ri
 }
 .back-link:hover { color: var(--text-hi); transform: translateX(-2px); }
 .admin-user-info { font-size: 13px; color: var(--gold); font-weight: 600; }
+.admin-session { display: flex; align-items: center; gap: 12px; }
 
 .page-head {
   display: flex;
@@ -110,6 +136,7 @@ h1 {
   overflow-x: auto;
 }
 .tab-btn {
+  min-height: 44px;
   padding: 10px 18px;
   border: 1px solid var(--line);
   border-radius: 12px;
@@ -193,7 +220,8 @@ h1 {
 }
 .filter-group input:focus, .filter-group select:focus {
   border-color: var(--gold);
-  outline: none;
+  outline: 2px solid var(--gold);
+  outline-offset: 2px;
 }
 
 .grid-2col {
@@ -260,6 +288,7 @@ h1 {
   cursor: pointer;
 }
 .action-btn:hover { background: var(--fill-hover); border-color: var(--gold); }
+.action-btn:disabled, .submit-btn:disabled { cursor: wait; opacity: .55; transform: none; }
 .btn-sm { padding: 4px 8px; font-size: 11px; margin-right: 4px; }
 .btn-warn { color: var(--red); border-color: oklch(68% 0.18 32 / 0.4); }
 
@@ -298,15 +327,17 @@ h1 {
   color: var(--text);
   font-size: 14px;
 }
-.admin-form input:focus { border-color: var(--gold); outline: none; }
+.admin-form input:focus { border-color: var(--gold); outline: 2px solid var(--gold); outline-offset: 2px; }
 
 /* Pagination */
 .pagination {
   display: flex;
+  align-items: center;
   justify-content: flex-end;
   gap: 8px;
   margin-top: 16px;
 }
+.pagination-status { color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
 
 /* Feedback & Chat Tab */
 .feedback-controls-bar {
@@ -463,6 +494,8 @@ h1 {
 }
 .modal-head h3 { margin: 0; font-size: 16px; color: var(--text-hi); }
 .close-btn {
+  width: 44px;
+  height: 44px;
   background: transparent;
   border: 0;
   color: var(--muted);
@@ -477,6 +510,7 @@ h1 {
   margin-top: 20px;
 }
 .cancel-btn {
+  min-height: 44px;
   padding: 8px 16px;
   border: 1px solid var(--line);
   border-radius: 10px;
@@ -486,9 +520,27 @@ h1 {
 }
 
 @media (max-width: 768px) {
+  .admin-app { width: min(100% - 24px, 1240px); padding-top: 16px; }
+  .top-nav { align-items: flex-start; gap: 12px; }
+  .admin-session { align-items: flex-end; flex-direction: column; text-align: right; }
+  .login-card { padding: 24px; }
+  .admin-tabs { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); overflow: visible; }
+  .tab-btn { padding-inline: 10px; white-space: normal; }
+  .filter-group { width: 100%; }
+  .filter-group input { width: 100%; flex-basis: 100%; }
   .grid-2col { grid-template-columns: 1fr; }
   .stats-grid { width: 100%; justify-content: space-between; }
   .stats-grid article { flex: 1; text-align: center; }
   .feedback-actions-bar { width: 100%; }
   .feedback-actions-bar .toggle-btn { flex: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    scroll-behavior: auto !important;
+    transition-duration: .01ms !important;
+    animation-duration: .01ms !important;
+    animation-iteration-count: 1 !important;
+  }
+  .back-link:hover, .submit-btn:hover { transform: none; }
 }

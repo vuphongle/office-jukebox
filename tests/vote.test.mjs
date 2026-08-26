@@ -56,11 +56,13 @@ test("Vote refund when host removes song", () => {
 
   state.vote(s1.id, u.id);
   assert.equal(userRepo.findById(u.id).points_balance, 4);
+  assert.deepEqual(state.queueRepo.listActiveVoteItemIds(u.id), [s1.id]);
 
   // Host removes s1
   state.remove(s1.id);
   // Points refunded 100%
   assert.equal(userRepo.findById(u.id).points_balance, 5);
+  assert.deepEqual(state.queueRepo.listActiveVoteItemIds(u.id), []);
 });
 
 test("Vote refund when YouTube error occurs on playing song", () => {

@@ -7,8 +7,14 @@ import { LedgerRepository } from "../src/repositories/ledgerRepository.js";
 import { QueueRepository } from "../src/repositories/queueRepository.js";
 import { DropRepository } from "../src/repositories/dropRepository.js";
 
+test("Database does not create a predictable admin without explicit credentials", () => {
+  const db = initDb({ dbPath: ":memory:", adminUser: "", adminPass: "" });
+  const userRepo = new UserRepository(db);
+  assert.equal(userRepo.findByUsername("admin"), null);
+});
+
 test("Database initialization and user repository CRUD", () => {
-  const db = initDb({ dbPath: ":memory:" });
+  const db = initDb({ dbPath: ":memory:", adminUser: "admin", adminPass: "test-admin-password" });
   const userRepo = new UserRepository(db);
 
   // Admin seeded

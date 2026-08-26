@@ -9,6 +9,7 @@ async function fetchMe() {
     if (data.ok && data.authenticated && data.user) {
       currentUser = data.user;
       renderUserAuthBar();
+      if (lastQueueState) renderQueue(lastQueueState);
       if (currentUser.displayName && !nameEl.value.trim()) {
         nameEl.value = currentUser.displayName;
         localStorage.setItem("guestName", currentUser.displayName);
@@ -18,10 +19,12 @@ async function fetchMe() {
     } else {
       currentUser = null;
       renderUserAuthBar();
+      if (lastQueueState) renderQueue(lastQueueState);
     }
   } catch {
     currentUser = null;
     renderUserAuthBar();
+    if (lastQueueState) renderQueue(lastQueueState);
   }
 }
 
@@ -73,12 +76,14 @@ function openAuthModal(mode = "login") {
     tabRegister.classList.remove("active");
     nameField.classList.add("hidden");
     submitBtn.textContent = "Đăng nhập ngay";
+    document.getElementById("auth-password").setAttribute("autocomplete", "current-password");
   } else {
     title.textContent = "Đăng ký thành viên mới";
     tabLogin.classList.remove("active");
     tabRegister.classList.add("active");
     nameField.classList.remove("hidden");
     submitBtn.textContent = "Đăng ký tài khoản";
+    document.getElementById("auth-password").setAttribute("autocomplete", "new-password");
   }
 
   modal.classList.remove("hidden");
@@ -116,9 +121,9 @@ document.getElementById("auth-form")?.addEventListener("submit", async (e) => {
     });
     const data = await res.json();
     if (data.ok) {
-      currentUser = data.user;
       closeAuthModal();
-      renderUserAuthBar();
+      await fetchMe();
+      if (!currentUser) throw new Error("Không thể tải phiên đăng nhập vừa tạo.");
       toast("ok", "👋", `Xin chào, ${currentUser.displayName || currentUser.username}!`);
       if (currentUser.displayName) {
         nameEl.value = currentUser.displayName;
@@ -143,7 +148,9 @@ async function handleLogout() {
     await fetch("/api/auth/logout", { method: "POST" });
   } catch {}
   currentUser = null;
+  hidePointDropBanner();
   renderUserAuthBar();
+  if (lastQueueState) renderQueue(lastQueueState);
   toast("info", "👋", "Đã đăng xuất tài khoản.");
 }
 
@@ -284,12 +291,16 @@ window.voteSong = async function (itemId) {
     openCheckinModal();
     return;
   }
+  if (currentUser.votedQueueItemIds?.includes(itemId) || pendingVotes.has(itemId)) return;
 
+  pendingVotes.add(itemId);
+  if (lastQueueState) renderQueue(lastQueueState);
   try {
     const res = await fetch(`/api/queue/${itemId}/vote`, { method: "POST" });
     const data = await res.json();
     if (data.ok) {
       currentUser.pointsBalance = data.newBalance;
+      currentUser.votedQueueItemIds = [...(currentUser.votedQueueItemIds || []), itemId];
       renderUserAuthBar();
       toast("ok", "❤️", "Đã vote thành công!", { sub: `Số dư còn lại: ${currentUser.pointsBalance} 🪙` });
     } else {
@@ -297,6 +308,9 @@ window.voteSong = async function (itemId) {
     }
   } catch (err) {
     toast("bad", "⚠️", "Lỗi kết nối: " + err.message);
+  } finally {
+    pendingVotes.delete(itemId);
+    if (lastQueueState) renderQueue(lastQueueState);
   }
 };
 
@@ -356,6 +370,7 @@ let chatPending = false;
 let chatMessages = [];
 let queueWs = null;
 const pendingRemovals = new Set();
+const pendingVotes = new Set();
 
 function setChatStatus(message, kind = "") {
   chatStatus.textContent = message;
@@ -1185,6 +1200,13 @@ function renderQueue(state) {
     const li = document.createElement("li");
     const voteCount = item.voteScore || 0;
     const isPinned = item.pinned === true;
+    const hasVoted = currentUser?.votedQueueItemIds?.includes(item.id) === true;
+    const votePending = pendingVotes.has(item.id);
+    const voteTitle = hasVoted
+      ? "Bạn đã vote cho bài hát này"
+      : currentUser
+        ? "Vote để đẩy bài hát lên đầu (tốn 1 điểm)"
+        : "Đăng nhập để vote bài hát";
 
     li.innerHTML = `
       <span class="q-num">${i + 1}</span>
@@ -1192,15 +1214,16 @@ function renderQueue(state) {
       <div class="q-text">
         <div class="t-row">
           <span class="t"></span>
-          ${isPinned ? '<span class="q-pinned-badge">📌 Ghim</span>' : ""}
+          ${isPinned ? '<span class="q-pinned-badge">Ghim</span>' : ""}
         </div>
         <div class="s"></div>
         <div class="q-requester"></div>
         <div class="q-eta"></div>
       </div>
       <div class="q-vote-wrap">
-        <button class="q-vote-btn" type="button" title="Vote để đẩy bài hát lên đầu (Tốn 1 điểm)" onclick="voteSong('${item.id}')">
-          ❤️ <span>${voteCount}</span>
+        <button class="q-vote-btn${hasVoted ? " has-voted" : ""}" type="button" title="${voteTitle}" aria-label="${voteTitle}" onclick="voteSong('${item.id}')" ${hasVoted || votePending ? "disabled" : ""}>
+          <svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20.8 4.6a5.5 5.5 0 0 0-7.8 0L12 5.6l-1-1a5.5 5.5 0 0 0-7.8 7.8l1 1L12 21l7.8-7.6 1-1a5.5 5.5 0 0 0 0-7.8Z"/></svg>
+          <span>${hasVoted ? "Đã vote" : "Vote +1"} · ${voteCount}</span>
         </button>
       </div>
       <button class="q-remove-own hidden" type="button" title="Xóa bài của bạn" aria-label="Xóa bài của bạn">×</button>`;
