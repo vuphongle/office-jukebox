@@ -517,11 +517,16 @@ header .desktop-intro { display: none; }
 .q-byline {
   min-width: 0;
   margin-top: 2px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
   color: var(--muted);
   font: 400 11px/1.35 var(--sans);
 }
 .q-byline .s {
   display: block;
+  width: 100%;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -529,6 +534,7 @@ header .desktop-intro { display: none; }
 }
 .q-requester {
   display: block;
+  width: 100%;
   margin-top: 1px;
   overflow-wrap: anywhere;
 }
@@ -779,7 +785,7 @@ header .desktop-intro { display: none; }
 .chat-status { min-height: 0; padding: 0 13px 10px; color: var(--muted); font: 400 11.5px/1.35 var(--sans); }
 .chat-status.bad { color: oklch(76% .13 30); }
 .chat-status.ok { color: var(--ok-sub); }
-.q-rank-badge { display: inline-block; margin-left: 5px; padding: 2px 5px; border: 1px solid oklch(80% .14 85 / .24); border-radius: 999px; color: var(--gold); background: oklch(80% .14 85 / .06); font-size: 9px; line-height: 1.1; }
+.q-rank-badge { display: inline-flex; align-items: center; max-width: 100%; margin: 3px 0 0; padding: 3px 6px; border: 1px solid oklch(80% .14 85 / .24); border-radius: 999px; color: var(--gold); background: oklch(80% .14 85 / .06); font-size: 9px; line-height: 1.1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
 @media (max-width: 699px) {
   .chat-widget { right: max(12px, env(safe-area-inset-right)); bottom: max(12px, env(safe-area-inset-bottom)); }
