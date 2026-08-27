@@ -313,13 +313,15 @@ function render() {
           ${isPinned ? '<span class="q-pinned-badge" title="Bài do host ghim vị trí">📌 Ghim</span>' : ''}
           ${voteScore > 0 ? `<span class="q-vote-badge" title="${voteScore} lượt vote">❤️ ${voteScore}</span>` : ''}
         </div>
-        <div class="q-sub"></div>
+        <div class="q-sub">
+          <span class="q-sub-label"></span>
+        </div>
       </div>
       ${isPinned ? '<button class="q-unpin" title="Bỏ ghim">✕ Ghim</button>' : ''}
       <button class="q-remove" title="Xóa">✕</button>`;
     li.querySelector(".q-title").textContent = item.title;
     updateMarqueeTitle(li.querySelector(".q-title"));
-    li.querySelector(".q-sub").textContent = item.addedBy ? `Yêu cầu: ${item.addedBy}` : item.channel;
+    li.querySelector(".q-sub-label").textContent = item.addedBy ? `Yêu cầu: ${item.addedBy}` : item.channel;
     if (item.rank?.badge) {
       const rank = document.createElement("span");
       rank.className = "q-rank-badge";
