@@ -201,6 +201,20 @@ button:focus-visible, a:focus-visible, input:focus-visible {
   padding: 22px;
   border-radius: var(--radius-lg);
 }
+.account-rank {
+  min-width: 170px;
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 12px;
+  border: 1px solid oklch(80% .14 85 / .28);
+  border-radius: 14px;
+  background: oklch(80% .14 85 / .08);
+}
+.account-rank-badge { font-size: 25px; line-height: 1; }
+.account-rank-copy { display: grid; gap: 2px; min-width: 0; }
+.account-rank-copy strong { color: var(--text-high); font-size: 13px; line-height: 1.2; }
+.account-rank-copy span { color: var(--text-muted); font-size: 11px; }
 .account-avatar {
   width: 68px;
   height: 68px;
@@ -400,12 +414,17 @@ button:focus-visible, a:focus-visible, input:focus-visible {
 @media (min-width: 720px) {
   .account-shell, .account-topbar { width: min(1120px, calc(100% - 48px)); }
   .auth-gate { grid-template-columns: minmax(0, 1fr) minmax(340px, 420px); gap: 56px; }
-  .identity-card { grid-template-columns: auto minmax(0, 1fr) auto; padding: 28px; }
+  .identity-card { grid-template-columns: auto minmax(0, 1fr) auto auto; padding: 28px; }
   .account-status { grid-column: auto; justify-self: end; }
   .stats-grid { grid-template-columns: repeat(3, 1fr); }
   .stat-points { grid-column: auto; }
   .point-drop-card { grid-template-columns: auto minmax(0, 1fr) auto; }
   .point-drop-card .small-button { grid-column: auto; width: auto; min-width: 96px; }
+}
+
+@media (max-width: 719px) {
+  .account-rank { grid-column: 1 / -1; justify-self: stretch; }
+  .account-status { grid-column: 1 / -1; }
 }
 
 @media (min-width: 960px) {

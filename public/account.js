@@ -204,6 +204,12 @@ function renderAccount() {
   $("#account-title").textContent = displayName;
   $("#account-username").textContent = `@${currentUser.username}`;
   $("#account-avatar").textContent = displayName.trim().charAt(0).toUpperCase() || "U";
+  const rank = currentUser.rank || {};
+  $("#account-rank-badge").textContent = rank.badge || "🎧";
+  $("#account-rank-name").textContent = rank.name || "Người mới bắt nhịp";
+  $("#account-rank-progress").textContent = rank.nextMinXp
+    ? `${Number(rank.xp || 0).toLocaleString("vi-VN")} / ${Number(rank.nextMinXp).toLocaleString("vi-VN")} XP`
+    : `${Number(rank.xp || 0).toLocaleString("vi-VN")} XP · Tối đa`;
   $("#points-value").textContent = Number(currentUser.pointsBalance || 0).toLocaleString("vi-VN");
   $("#streak-value").textContent = `${currentUser.currentStreak || 0} ngày`;
   $("#reward-streak").textContent = currentUser.currentStreak || 0;
@@ -548,6 +554,13 @@ function connectSocket() {
       currentUser.displayName = message.displayName;
       profileDisplayName = message.displayName;
       renderAccount();
+    } else if (message.type === "rankUpdated" && currentUser && message.rank) {
+      const previousLevel = Number(currentUser.rank?.level || 1);
+      currentUser.rank = message.rank;
+      renderAccount();
+      if (Number(message.rank.level || 1) > previousLevel) {
+        showStatus(`Bạn đã lên hạng ${message.rank.name || "mới"}!`);
+      }
     } else if (message.type === "pointDropAvailable" && currentUser) {
       currentDrop = message.drop;
       renderPointDrop();

@@ -107,10 +107,62 @@ export function initDb({ dbPath = DEFAULT_DB_PATH, adminUser = process.env.ADMIN
       status TEXT NOT NULL DEFAULT 'queued' CHECK(status IN ('queued', 'playing', 'played', 'removed', 'error')),
       added_at INTEGER NOT NULL,
       started_at INTEGER,
-      finished_at INTEGER
+      finished_at INTEGER,
+      finish_reason TEXT,
+      played_seconds INTEGER
     );
     CREATE INDEX IF NOT EXISTS idx_queue_items_status ON queue_items(status, pinned, pinned_order, vote_score, queue_sequence);
+    CREATE INDEX IF NOT EXISTS idx_queue_items_playback_history ON queue_items(event_id, status, finished_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_queue_items_added_user_history ON queue_items(added_by_user_id, status, finished_at DESC);
     CREATE UNIQUE INDEX IF NOT EXISTS idx_queue_items_one_playing ON queue_items(event_id) WHERE status = 'playing';
+
+    -- Rank XP is a separate, append-only activity economy. It must never be
+    -- mixed with point_ledger, which is the spendable wallet for voting.
+    CREATE TABLE IF NOT EXISTS user_rank_profiles (
+      user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+      xp_total INTEGER NOT NULL DEFAULT 0 CHECK(xp_total >= 0),
+      rank_level INTEGER NOT NULL DEFAULT 1 CHECK(rank_level >= 1),
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_user_rank_profiles_xp ON user_rank_profiles(xp_total DESC, user_id);
+
+    CREATE TABLE IF NOT EXISTS rank_activity_ledger (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      event_id TEXT NOT NULL DEFAULT 'default_event' REFERENCES events(id),
+      activity_type TEXT NOT NULL,
+      delta_xp INTEGER NOT NULL CHECK(delta_xp >= 0),
+      source_id TEXT NOT NULL DEFAULT '',
+      metadata_json TEXT NOT NULL DEFAULT '{}',
+      created_at TEXT NOT NULL,
+      UNIQUE(user_id, event_id, activity_type, source_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_rank_activity_user_event_created
+      ON rank_activity_ledger(user_id, event_id, created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_rank_activity_event_created
+      ON rank_activity_ledger(event_id, created_at DESC);
+
+    CREATE TABLE IF NOT EXISTS rank_chat_windows (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      event_id TEXT NOT NULL DEFAULT 'default_event' REFERENCES events(id),
+      window_start TEXT NOT NULL,
+      window_end TEXT NOT NULL,
+      unique_message_count INTEGER NOT NULL DEFAULT 0,
+      active_bucket_count INTEGER NOT NULL DEFAULT 0,
+      spam_score REAL NOT NULL DEFAULT 0,
+      quality_score REAL,
+      quality_confidence REAL,
+      xp_awarded INTEGER NOT NULL DEFAULT 0,
+      evaluated_at TEXT,
+      created_at TEXT NOT NULL,
+      UNIQUE(user_id, event_id, window_start)
+    );
+    CREATE INDEX IF NOT EXISTS idx_rank_chat_windows_event_start
+      ON rank_chat_windows(event_id, window_start DESC);
+    CREATE INDEX IF NOT EXISTS idx_rank_chat_windows_user_start
+      ON rank_chat_windows(user_id, window_start DESC);
 
     CREATE TABLE IF NOT EXISTS queue_votes (
       queue_item_id TEXT NOT NULL REFERENCES queue_items(id),
@@ -190,9 +242,23 @@ export function initDb({ dbPath = DEFAULT_DB_PATH, adminUser = process.env.ADMIN
   if (!queueItemColumns.some((column) => column.name === "vote_rank_sequence")) {
     db.run("ALTER TABLE queue_items ADD COLUMN vote_rank_sequence INTEGER NOT NULL DEFAULT 0");
   }
+  if (!queueItemColumns.some((column) => column.name === "finish_reason")) {
+    db.run("ALTER TABLE queue_items ADD COLUMN finish_reason TEXT");
+  }
+  if (!queueItemColumns.some((column) => column.name === "played_seconds")) {
+    db.run("ALTER TABLE queue_items ADD COLUMN played_seconds INTEGER");
+  }
   db.run(
     `CREATE INDEX IF NOT EXISTS idx_queue_items_vote_order
      ON queue_items(status, pinned, pinned_order, vote_score DESC, vote_rank_sequence, queue_sequence)`
+  );
+  db.run(
+    `CREATE INDEX IF NOT EXISTS idx_queue_items_playback_history
+     ON queue_items(event_id, status, finished_at DESC)`
+  );
+  db.run(
+    `CREATE INDEX IF NOT EXISTS idx_queue_items_added_user_history
+     ON queue_items(added_by_user_id, status, finished_at DESC)`
   );
 
   // Seed default admin if no admin exists

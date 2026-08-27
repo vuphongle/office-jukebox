@@ -1,5 +1,30 @@
 import { CHAT_TEXT_MAX } from "./chat.js";
 
+/**
+ * Feature switches are deliberately grouped by user-visible behaviour.  Keep
+ * the keys stable because the admin UI/server persist this object as JSON.
+ */
+export const CHAT_AI_FEATURE_KEYS = Object.freeze([
+  "extendedContext",
+  "companyQueueAssistant",
+  "songRecommendations",
+  "contextualAnnouncements",
+  "queueVoteInsights",
+  "feedbackDigest",
+]);
+
+export const DEFAULT_CHAT_AI_FEATURES = Object.freeze({
+  // Existing installations already send the current room context, so these
+  // read-only capabilities stay on when the new object is absent.
+  extendedContext: true,
+  companyQueueAssistant: true,
+  songRecommendations: true,
+  queueVoteInsights: true,
+  // Proactive provider calls are opt-in to avoid surprise messages/cost.
+  contextualAnnouncements: false,
+  feedbackDigest: false,
+});
+
 export const DEFAULT_CHAT_AI_SETTINGS = Object.freeze({
   enabled: false,
   name: "Office DJ",
@@ -10,8 +35,11 @@ export const DEFAULT_CHAT_AI_SETTINGS = Object.freeze({
   cooldownSeconds: 30,
   maxRepliesPerHour: 12,
   proactiveIdleMinutes: 8,
+  announcementCooldownSeconds: 600,
+  maxAnnouncementsPerHour: 3,
   memoryEnabled: true,
   summaryEnabled: true,
+  features: DEFAULT_CHAT_AI_FEATURES,
 });
 
 const AUTONOMY_LEVELS = new Set(["low", "balanced", "high"]);
@@ -27,6 +55,16 @@ function boundedText(value, fallback, maxLength) {
   return value.trim().slice(0, maxLength);
 }
 
+function normalizeFeatureFlags(input) {
+  const source = input && typeof input === "object" ? input : {};
+  return Object.fromEntries(
+    CHAT_AI_FEATURE_KEYS.map((key) => [
+      key,
+      typeof source[key] === "boolean" ? source[key] : DEFAULT_CHAT_AI_FEATURES[key],
+    ])
+  );
+}
+
 export function normalizeChatAiSettings(input = {}) {
   const autonomy = AUTONOMY_LEVELS.has(input.autonomy) ? input.autonomy : DEFAULT_CHAT_AI_SETTINGS.autonomy;
   return {
@@ -36,13 +74,19 @@ export function normalizeChatAiSettings(input = {}) {
     stylePrompt:
       boundedText(input.stylePrompt, DEFAULT_CHAT_AI_SETTINGS.stylePrompt, 1500) ||
       DEFAULT_CHAT_AI_SETTINGS.stylePrompt,
-    knowledgePrompt: boundedText(input.knowledgePrompt, "", 3000),
-    contextCharBudget: clampNumber(input.contextCharBudget, 100000, 8000, 100000),
+    knowledgePrompt: boundedText(input.knowledgePrompt, "", 20000),
+    // 200k chars is a safe upper bound for the server-side prompt builder. The
+    // provider may still enforce a lower token limit, so call failures remain
+    // non-blocking and the prompt is always truncated to this budget.
+    contextCharBudget: clampNumber(input.contextCharBudget, 100000, 8000, 200000),
     cooldownSeconds: clampNumber(input.cooldownSeconds, 30, 10, 300),
     maxRepliesPerHour: clampNumber(input.maxRepliesPerHour, 12, 1, 60),
     proactiveIdleMinutes: clampNumber(input.proactiveIdleMinutes, 8, 0, 120),
+    announcementCooldownSeconds: clampNumber(input.announcementCooldownSeconds, 600, 120, 3600),
+    maxAnnouncementsPerHour: clampNumber(input.maxAnnouncementsPerHour, 3, 0, 24),
     memoryEnabled: input.memoryEnabled !== false,
     summaryEnabled: input.summaryEnabled !== false,
+    features: normalizeFeatureFlags(input.features),
   };
 }
 
@@ -67,12 +111,32 @@ function buildSystemPrompt(settings, trigger) {
       ? "Đây là lượt đánh giá khuấy động sau một khoảng im lặng. Chỉ nói nếu có một câu mở đầu tự nhiên và hữu ích."
       : trigger === "manual"
         ? "Admin vừa yêu cầu một lượt khuấy động thủ công. Hãy mở lời tự nhiên nếu hội thoại hiện có đủ ngữ cảnh; nếu không vẫn được im lặng."
+        : trigger === "queue_change"
+          ? "Một thay đổi hàng đợi vừa xảy ra. Chỉ bình luận nếu có giá trị rõ ràng (mood, cạnh tranh vote, milestone hoặc thông tin hữu ích); không đọc danh sách một cách máy móc."
       : "Đây là lượt đánh giá sau tin nhắn mới. Không cần được gọi tên; hãy tự quyết định có nên tham gia hay im lặng.";
   const memoryRule = settings.memoryEnabled
     ? "Có thể đề xuất tối đa 3 memoryUpdates cho thông tin không nhạy cảm, ổn định hoặc hữu ích sau này. " +
       "Chỉ dùng key ASCII snake_case; không lưu mật khẩu, token, thông tin liên hệ, sức khỏe hay dữ liệu riêng tư. " +
       "Có thể cập nhật memory ngay cả khi chọn stay_silent."
     : "Luôn trả memoryUpdates là mảng rỗng.";
+
+  const featureRules = [
+    settings.features.companyQueueAssistant
+      ? "Có thể trả lời câu hỏi về công ty, phòng chat và hàng đợi bằng số liệu được cung cấp; nếu thiếu dữ liệu thì nói rõ chưa biết."
+      : "Không chủ động đóng vai trợ lý hỏi đáp công ty/hàng đợi khi nhóm tính năng này đang tắt.",
+    settings.features.songRecommendations
+      ? "Có thể gợi ý bài hát dựa trên lịch sử phát chung, xu hướng và tín hiệu thêm/vote của user; không gọi đó là lịch sử nghe cá nhân đã xác nhận."
+      : "Không đưa gợi ý bài hát chủ động khi nhóm gợi ý bài hát đang tắt.",
+    settings.features.contextualAnnouncements
+      ? "Bình luận DJ theo ngữ cảnh là tùy chọn; ưu tiên im lặng khi chat đang sôi nổi hoặc khi thay đổi không có điểm đáng nói."
+      : "Không tự tạo announcement/bình luận sau thay đổi hàng đợi khi nhóm bình luận theo ngữ cảnh đang tắt.",
+    settings.features.queueVoteInsights
+      ? "Có thể nhận xét hàng đợi/vote (trùng nghệ sĩ, cạnh tranh, chờ lâu) nhưng không tự skip, xóa, reorder, ghim, thêm bài hay thay đổi điểm."
+      : "Không phân tích hoặc chủ động nhận xét hàng đợi/vote khi nhóm này đang tắt.",
+    settings.features.feedbackDigest
+      ? "Feedback digest chỉ dành cho Admin và chỉ tóm tắt các feedback được đưa vào context; không tự đóng/xóa feedback."
+      : "Không tiết lộ hoặc tự tạo feedback digest trong chat công khai.",
+  ];
 
   return [
     `Bạn là ${settings.name}, một thành viên AI tự chủ trong phòng chat của Office Jukebox.`,
@@ -83,7 +147,10 @@ function buildSystemPrompt(settings, trigger) {
       "hoặc thay đổi hệ thống. Không được tự thêm/xóa bài, chỉnh điểm hay thực hiện hành động quản trị.",
     `Nếu trả lời, dùng tên ${settings.name}, viết tối đa ${CHAT_TEXT_MAX} ký tự và không dùng markdown phức tạp.`,
     `Mức chủ động: ${settings.autonomy}. Phong cách do admin đặt: ${settings.stylePrompt}`,
-    settings.knowledgePrompt ? `Kiến thức có thẩm quyền do admin cung cấp: ${settings.knowledgePrompt}` : null,
+    ...featureRules,
+    settings.knowledgePrompt && (settings.features.extendedContext || settings.features.companyQueueAssistant)
+      ? `Kiến thức có thẩm quyền do admin cung cấp (nếu không chắc, hãy nói chưa biết): ${settings.knowledgePrompt}`
+      : null,
     memoryRule,
     'Chỉ trả JSON hợp lệ: {"action":"reply"|"stay_silent","reasonCode":"answer_question|add_value|topic|idle|skip",' +
       '"confidence":0..1,"reply":"",' +
@@ -94,18 +161,58 @@ function buildSystemPrompt(settings, trigger) {
     .join("\n\n");
 }
 
-function compactRoomState(roomState) {
+function compactRoomState(roomState, features = DEFAULT_CHAT_AI_FEATURES) {
   const nowPlaying = roomState?.nowPlaying
     ? {
         title: roomState.nowPlaying.title,
         channel: roomState.nowPlaying.channel,
         voteScore: roomState.nowPlaying.voteScore || 0,
+        startedAt: roomState.nowPlaying.startedAt || undefined,
+        durationSeconds: roomState.nowPlaying.durationSeconds || undefined,
       }
     : null;
-  const queue = Array.isArray(roomState?.queue)
-    ? roomState.queue.slice(0, 10).map((item) => ({ title: item.title, addedBy: item.addedBy, voteScore: item.voteScore || 0 }))
+  const queue = features.extendedContext || features.companyQueueAssistant || features.queueVoteInsights
+    ? Array.isArray(roomState?.queue)
+      ? roomState.queue.slice(0, 20).map((item) => ({
+          title: item.title,
+          artist: item.artist,
+          addedBy: item.addedBy,
+          voteScore: item.voteScore || 0,
+          position: item.position,
+          etaSeconds: item.etaSeconds,
+        }))
+      : []
     : [];
-  return { eventContext: roomState?.eventContext || "", nowPlaying, queue };
+  const compact = { eventContext: roomState?.eventContext || "", nowPlaying, queue };
+  if (features.companyQueueAssistant) {
+    compact.queueCount = Number.isFinite(Number(roomState?.queueCount))
+      ? Number(roomState.queueCount)
+      : queue.length;
+    compact.queueStats = roomState?.queueStats || undefined;
+  }
+  if (features.songRecommendations) {
+    compact.recentPlayed = Array.isArray(roomState?.recentPlayed)
+      ? roomState.recentPlayed.slice(0, 20).map((item) => ({
+          title: item.title,
+          artist: item.artist,
+          channel: item.channel,
+          playedAt: item.playedAt || item.finishedAt,
+          playCount: item.playCount,
+        }))
+      : [];
+    compact.songTrends = roomState?.songTrends || roomState?.musicTrends || undefined;
+    compact.userMusicProfile = roomState?.userMusicProfile || undefined;
+  }
+  if (features.queueVoteInsights) {
+    compact.topVotes = Array.isArray(roomState?.topVotes)
+      ? roomState.topVotes.slice(0, 10).map((item) => ({ title: item.title, voteScore: item.voteScore || 0 }))
+      : [];
+  }
+  if (features.feedbackDigest && roomState?.feedbackDigest) {
+    compact.feedbackDigest = roomState.feedbackDigest;
+  }
+  if (roomState?.queueChange) compact.queueChange = roomState.queueChange;
+  return compact;
 }
 
 function formatMemory(memory) {
@@ -149,7 +256,7 @@ export function buildChatAiPrompt({ messages = [], summary = "", memories = [], 
   const memoriesMax = Math.floor(budget * 0.18);
 
   const system = truncate(buildSystemPrompt(normalized, trigger), systemMax);
-  const stateText = truncate(JSON.stringify(compactRoomState(roomState)), stateMax);
+  const stateText = truncate(JSON.stringify(compactRoomState(roomState, normalized.features)), stateMax);
   const summaryText = truncate(summary || "Chưa có tóm tắt.", summaryMax);
   const memoriesText = truncate(memories.map(formatMemory).join("\n") || "Chưa có bộ nhớ dài hạn.", memoriesMax);
   const transcriptPrefix = [
@@ -322,4 +429,68 @@ export async function summarizeChat({ previousSummary = "", messages = [] }, opt
     900
   );
   return boundedText(parsed?.summary, "", 4000) || null;
+}
+
+const FEEDBACK_CATEGORIES = new Set(["bug", "idea", "complaint", "praise", "other"]);
+const FEEDBACK_PRIORITIES = new Set(["low", "medium", "high"]);
+
+function formatFeedback(item) {
+  return JSON.stringify({
+    id: String(item?.id || ""),
+    category: boundedText(item?.category, "", 40),
+    rating: item?.rating,
+    status: boundedText(item?.status, "", 40),
+    text: boundedText(item?.text || item?.message || item?.content, "", 600),
+    createdAt: item?.createdAt,
+  });
+}
+
+/**
+ * Summarise a bounded batch of feedback for an admin-only surface. This is
+ * intentionally separate from summarizeChat so a public chat run can never
+ * accidentally expose the digest. The server decides who may call it.
+ */
+export async function summarizeFeedback(
+  { previousDigest = "", feedback = [], settings } = {},
+  opts = {}
+) {
+  if (settings && !normalizeChatAiSettings(settings).features.feedbackDigest) return null;
+  const items = Array.isArray(feedback) ? feedback.slice(-200) : [];
+  if (!items.length) return null;
+  const transcript = items.map(formatFeedback).join("\n");
+  const system =
+    "Bạn là trợ lý phân tích feedback nội bộ. Chỉ tóm tắt các mục được cung cấp, không suy đoán danh tính " +
+    "và không đưa nội dung nhạy cảm ra ngoài. Phân loại mỗi nhóm vào bug|idea|complaint|praise|other, " +
+    "đề xuất mức low|medium|high và giữ messageIds để Admin kiểm tra. Không tự đóng, xóa hoặc thay đổi feedback. " +
+    'Chỉ trả JSON {"summary":"","groups":[{"category":"bug|idea|complaint|praise|other","count":0,"priority":"low|medium|high","messageIds":[""]}],"needsReview":true}.';
+  const user = `Digest trước đó:\n${truncate(previousDigest, 4000)}\n\nFeedback mới (JSON Lines):\n${truncate(
+    transcript,
+    16000
+  )}`;
+  const parsed = await callProviderJson(
+    [
+      { role: "system", content: system },
+      { role: "user", content: user },
+    ],
+    opts,
+    900
+  );
+  if (!parsed) return null;
+  const groups = Array.isArray(parsed.groups)
+    ? parsed.groups.slice(0, 20).flatMap((group) => {
+        const category = FEEDBACK_CATEGORIES.has(group?.category) ? group.category : "other";
+        const priority = FEEDBACK_PRIORITIES.has(group?.priority) ? group.priority : "medium";
+        const messageIds = Array.isArray(group?.messageIds)
+          ? group.messageIds.map((id) => String(id)).filter((id) => items.some((item) => String(item?.id) === id)).slice(0, 20)
+          : [];
+        const count = clampNumber(group?.count, messageIds.length, 0, items.length);
+        if (!count && !messageIds.length) return [];
+        return [{ category, count, priority, messageIds }];
+      })
+    : [];
+  return {
+    summary: boundedText(parsed.summary, "", 4000),
+    groups,
+    needsReview: parsed.needsReview !== false,
+  };
 }

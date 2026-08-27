@@ -234,13 +234,29 @@ export class JukeboxState {
 
   // Chuyển sang bài tiếp theo. finishedVideoId ngăn chuyển hai lần do các event
   // "ended"/"error" trùng lặp của cùng một bài.
-  advance(finishedVideoId, { isError = false } = {}) {
+  advance(finishedVideoId, { isError = false, finishReason = null, playedSeconds = null } = {}) {
     if (finishedVideoId && this.nowPlaying && this.nowPlaying.videoId !== finishedVideoId) {
-      return; // event cũ của bài đã được chuyển qua
+      return null; // event cũ của bài đã được chuyển qua
     }
     const finishedItem = this.nowPlaying;
     const nextItem = this.queue[0] || null;
     const transitionedAt = Date.now();
+    const resolvedFinishReason = isError ? "error" : (finishReason || "ended");
+    const elapsedSeconds = finishedItem?.startedAt
+      ? Math.min(
+        durationSeconds(finishedItem.duration),
+        Math.max(0, Math.floor((transitionedAt - finishedItem.startedAt) / 1000))
+      )
+      : null;
+    const hasExplicitPlayedSeconds = playedSeconds !== null && playedSeconds !== undefined;
+    const resolvedPlayedSeconds = hasExplicitPlayedSeconds && Number.isFinite(Number(playedSeconds))
+      ? Math.min(durationSeconds(finishedItem?.duration), Math.max(0, Math.floor(Number(playedSeconds))))
+      : elapsedSeconds;
+    // Capture active voters before an error transition refunds them. The
+    // server uses this immutable snapshot to settle vote-participation XP.
+    const voters = finishedItem && this.queueRepo
+      ? this.queueRepo.getVoters(finishedItem.id)
+      : [];
     let refunds = [];
     if (this.queueRepo) {
       refunds = this.queueRepo.finishAndStart({
@@ -249,10 +265,14 @@ export class JukeboxState {
         nextId: nextItem?.id || null,
         finishedAt: transitionedAt,
         startedAt: transitionedAt,
+        finishReason: resolvedFinishReason,
+        playedSeconds: resolvedPlayedSeconds,
         refundReason: "Lỗi phát video YouTube",
       });
     }
     if (finishedItem) {
+      finishedItem.finishReason = resolvedFinishReason;
+      finishedItem.playedSeconds = resolvedPlayedSeconds;
       this.history.push(finishedItem);
       if (this.history.length > 100) this.history.shift();
     }
@@ -260,11 +280,20 @@ export class JukeboxState {
     if (this.nowPlaying) this.nowPlaying.startedAt = transitionedAt;
     this._emit();
     this._emitBalanceChanges(refunds, "Hoàn điểm do lỗi phát video YouTube");
+    return {
+      finishedItem,
+      nextItem: this.nowPlaying,
+      finalStatus: isError ? "error" : "played",
+      finishReason: resolvedFinishReason,
+      playedSeconds: resolvedPlayedSeconds,
+      voters,
+      refunds,
+    };
   }
 
   // Điều khiển host: bỏ qua bài hiện tại bất kể bài nào đang phát.
-  skip() {
-    this.advance(this.nowPlaying?.videoId);
+  skip({ playedSeconds = null } = {}) {
+    return this.advance(this.nowPlaying?.videoId, { finishReason: "skipped", playedSeconds });
   }
 
   // Xóa một mục sắp phát theo id (điều khiển host).

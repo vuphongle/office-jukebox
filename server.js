@@ -35,7 +35,7 @@ import {
   parseChatInput,
   pushRecentChat,
 } from "./src/chat.js";
-import { chatAiConfigured, normalizeChatAiSettings } from "./src/chatAi.js";
+import { chatAiConfigured, normalizeChatAiSettings, summarizeFeedback } from "./src/chatAi.js";
 import { ChatAiCoordinator } from "./src/chatAiCoordinator.js";
 
 import { initDb } from "./src/db.js";
@@ -46,6 +46,8 @@ import { QueueRepository } from "./src/repositories/queueRepository.js";
 import { DropRepository } from "./src/repositories/dropRepository.js";
 import { ChatRepository } from "./src/repositories/chatRepository.js";
 import { ChatAiMemoryRepository } from "./src/repositories/chatAiMemoryRepository.js";
+import { RankRepository } from "./src/repositories/rankRepository.js";
+import { isQualifiedPlay } from "./src/rank.js";
 import {
   createAuthMiddleware,
   hashPasswordAsync,
@@ -88,6 +90,7 @@ const queueRepo = new QueueRepository(db);
 const dropRepo = new DropRepository(db);
 const chatRepo = new ChatRepository(db);
 const chatAiMemoryRepo = new ChatAiMemoryRepository(db);
+const rankRepo = new RankRepository(db);
 chatRepo.prune();
 
 if (!db.query("SELECT 1 FROM users WHERE role = 'admin' AND status = 'active' LIMIT 1").get()) {
@@ -95,6 +98,42 @@ if (!db.query("SELECT 1 FROM users WHERE role = 'admin' AND status = 'active' LI
 }
 
 const state = new JukeboxState(db);
+
+const RANK_BADGE_ICONS = Object.freeze({
+  "headphones-blue": "🎧",
+  pulse: "⚡",
+  flame: "🔥",
+  turntable: "🎛️",
+  "stage-star": "🌟",
+  "neon-crown": "👑",
+});
+
+function publicRank(userId) {
+  const rank = rankRepo.getRank(userId);
+  if (!rank) return null;
+  return {
+    level: rank.rankLevel,
+    name: rank.rankName,
+    badge: RANK_BADGE_ICONS[rank.badge] || "🎧",
+    badgeId: rank.badge,
+    xp: rank.xpTotal,
+    nextLevel: rank.nextLevel,
+    nextMinXp: rank.nextMinXp,
+    xpToNext: rank.xpToNext,
+  };
+}
+
+function publicStateSnapshot() {
+  const snapshot = state.snapshot();
+  const byId = new Map([state.nowPlaying, ...state.queue].filter(Boolean).map((item) => [item.id, item]));
+  const decorate = (item) => {
+    if (!item) return null;
+    const source = byId.get(item.id);
+    const rank = source?.addedByUserId ? publicRank(source.addedByUserId) : null;
+    return rank ? { ...item, rank } : item;
+  };
+  return { ...snapshot, nowPlaying: decorate(snapshot.nowPlaying), queue: snapshot.queue.map(decorate) };
+}
 
 // --- Cài đặt host được lưu bền vững ----------------------------------------
 const DATA_DIR = path.join(__dirname, "data");
@@ -126,6 +165,7 @@ state.setVoteSort(voteSortOn);
 
 const chatMessages = chatRepo.listRecent("default_event", 40);
 const chatLastSentAt = new WeakMap();
+const rankChatLastText = new Map();
 
 let feedbackItems = [];
 try {
@@ -134,6 +174,9 @@ try {
 } catch {
   /* lần chạy đầu tiên — chưa có góp ý */
 }
+let feedbackDigest = savedSettings.feedbackDigest && typeof savedSettings.feedbackDigest === "object"
+  ? savedSettings.feedbackDigest
+  : null;
 
 function saveSettings() {
   try {
@@ -153,6 +196,7 @@ function saveSettings() {
           chatOn,
           voteSortOn,
           chatAi: chatAiSettings,
+          feedbackDigest,
         },
         null,
         2
@@ -296,6 +340,7 @@ app.post("/api/auth/register", registerIpLimit, registerGlobalLimit, async (req,
         role: user.role,
         pointsBalance: user.points_balance,
         currentStreak: user.current_streak,
+        rank: publicRank(user.id),
       },
     });
   } catch (err) {
@@ -336,6 +381,7 @@ app.post("/api/auth/login", loginIpLimit, loginUsernameLimit, async (req, res) =
         role: user.role,
         pointsBalance: user.points_balance,
         currentStreak: user.current_streak,
+        rank: publicRank(user.id),
       },
     });
   } catch {
@@ -376,8 +422,20 @@ app.get("/api/me", (req, res) => {
       hasCheckedInToday,
       activeClaimableDrop: activeDrop && !alreadyClaimedDrop ? { id: activeDrop.id, title: activeDrop.title, points: activeDrop.points } : null,
       votedQueueItemIds: queueRepo.listActiveVoteItemIds(req.user.id),
+      rank: publicRank(req.user.id),
     },
   });
+});
+
+app.get("/api/me/rank", requireAuth, (req, res) => {
+  res.json({ ok: true, rank: publicRank(req.user.id) });
+});
+
+app.get("/api/me/rank/activity", requireAuth, (req, res) => {
+  const page = Math.max(1, parseInt(req.query.page || "1", 10));
+  const limit = Math.min(100, Math.max(1, parseInt(req.query.limit || "50", 10)));
+  const activity = rankRepo.listActivity(req.user.id, { limit, offset: (page - 1) * limit });
+  res.json({ ok: true, page, limit, activity });
 });
 
 app.patch("/api/me/profile", requireAuth, (req, res) => {
@@ -708,7 +766,15 @@ app.get("/api/admin/users", requireAdmin, (req, res) => {
   const offset = (page - 1) * limit;
 
   const result = userRepo.listUsers({ search, status, limit, offset });
-  res.json({ ok: true, page, limit, ...result });
+  res.json({ ok: true, page, limit, ...result, users: result.users.map((user) => ({ ...user, rank: publicRank(user.id) })) });
+});
+
+app.get("/api/admin/rank/leaderboard", requireAdmin, (req, res) => {
+  const page = Math.max(1, parseInt(req.query.page || "1", 10));
+  const limit = Math.min(100, Math.max(1, parseInt(req.query.limit || "50", 10)));
+  const eventId = (req.query.eventId || "").toString().trim() || null;
+  const leaderboard = rankRepo.listLeaderboard({ eventId, limit, offset: (page - 1) * limit });
+  res.json({ ok: true, page, limit, eventId, leaderboard });
 });
 
 app.post("/api/admin/users/:id/points", requireAdmin, (req, res) => {
@@ -913,11 +979,17 @@ app.get("/api/admin/chat-ai/settings", requireAdmin, (_req, res) => {
     status: chatAiCoordinator.status(),
     summary: chatAiMemoryRepo.getSummary(),
     memories: chatAiMemoryRepo.listActive("default_event", 100),
+    feedbackDigest,
   });
 });
 
 app.patch("/api/admin/chat-ai/settings", requireAdmin, (req, res) => {
-  chatAiSettings = normalizeChatAiSettings({ ...chatAiSettings, ...(req.body || {}) });
+  const patch = req.body && typeof req.body === "object" ? req.body : {};
+  chatAiSettings = normalizeChatAiSettings({
+    ...chatAiSettings,
+    ...patch,
+    features: { ...chatAiSettings.features, ...(patch.features || {}) },
+  });
   if (!chatAiSettings.enabled) chatAiCoordinator.reset();
   saveSettings();
   broadcastState();
@@ -936,6 +1008,24 @@ app.post("/api/admin/chat-ai/kick", requireAdmin, (_req, res) => {
   }
   void chatAiCoordinator.run("manual");
   res.json({ ok: true, accepted: true });
+});
+
+app.post("/api/admin/chat-ai/feedback-digest", requireAdmin, async (_req, res) => {
+  if (!chatAiSettings.features.feedbackDigest) {
+    return res.status(409).json({ ok: false, reason: "Hãy bật nhóm digest góp ý trong cấu hình AI trước." });
+  }
+  if (!chatAiConfigured()) {
+    return res.status(409).json({ ok: false, reason: "Chưa cấu hình API key cho AI." });
+  }
+  try {
+    const digest = await summarizeFeedback({ feedback: feedbackItems, settings: chatAiSettings });
+    if (!digest) return res.status(502).json({ ok: false, reason: "AI chưa tạo được digest góp ý. Vui lòng thử lại." });
+    feedbackDigest = { ...digest, generatedAt: new Date().toISOString() };
+    saveSettings();
+    res.json({ ok: true, digest: feedbackDigest });
+  } catch {
+    res.status(502).json({ ok: false, reason: "Không thể tạo digest góp ý lúc này." });
+  }
 });
 
 app.patch("/api/admin/chat-ai/memories/:id", requireAdmin, (req, res) => {
@@ -1013,7 +1103,31 @@ const chatAiCoordinator = new ChatAiCoordinator({
   memoryRepository: chatAiMemoryRepo,
   getSettings: () => chatAiSettings,
   getChatOn: () => chatOn,
-  getRoomState: () => ({ ...state.snapshot(), eventContext }),
+  getRoomState: () => {
+    const snapshot = state.snapshot();
+    const recentPlayed = queueRepo.getRecentPlayed("default_event", 20).map((item) => ({
+      title: item.title,
+      channel: item.channel || "",
+      addedBy: item.added_by || "",
+      playedAt: item.finished_at ? new Date(item.finished_at).toISOString() : null,
+      playCount: 1,
+    }));
+    const counts = new Map();
+    for (const item of recentPlayed) counts.set(item.title, (counts.get(item.title) || 0) + 1);
+    const songTrends = [...counts.entries()]
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 10)
+      .map(([title, plays]) => ({ title, plays }));
+    return {
+      ...snapshot,
+      eventContext,
+      queueCount: snapshot.queue.length + (snapshot.nowPlaying ? 1 : 0),
+      queueStats: queueRepo.getQueueStats("default_event"),
+      recentPlayed,
+      songTrends,
+      topVotes: queueRepo.getVoteLeaders("default_event", 10),
+    };
+  },
   onAiMessage: (message) => {
     pushRecentChat(chatMessages, message);
     broadcastChatMessage(message);
@@ -1024,7 +1138,7 @@ chatAiCoordinator.start();
 function stateMessage() {
   return JSON.stringify({
     type: "state",
-    state: state.snapshot(),
+    state: publicStateSnapshot(),
     filterOn,
     moderationMode,
     cooldownSeconds,
@@ -1046,7 +1160,14 @@ function broadcastState() {
     if (client.readyState === 1) client.send(msg);
   }
 }
-state.onChange = broadcastState;
+state.onChange = (nextState) => {
+  broadcastState();
+  chatAiCoordinator.scheduleQueueChange({
+    queueCount: nextState.queue?.length || 0,
+    nowPlaying: nextState.nowPlaying?.title || null,
+    topQueue: (nextState.queue || []).slice(0, 3).map((item) => item.title),
+  });
+};
 
 function notifyUserBalance(userId, newBalance, { delta = 0, reason = "" } = {}) {
   const msg = JSON.stringify({ type: "balanceUpdated", newBalance, delta, reason });
@@ -1089,6 +1210,82 @@ function notifyUserProfile(userId, displayName) {
     const session = refreshSocketIdentity(client, sessionRepo);
     if (session?.user_id === userId) client.send(msg);
   }
+}
+
+function notifyUserRank(userId, rank) {
+  const msg = JSON.stringify({ type: "rankUpdated", rank });
+  for (const client of wss.clients) {
+    if (client.readyState !== 1) continue;
+    const session = refreshSocketIdentity(client, sessionRepo);
+    if (session?.user_id === userId) client.send(msg);
+  }
+}
+
+function recordRankChatActivity(message, userId) {
+  if (!message || !userId) return;
+  const normalizedText = String(message.text || "").trim().toLocaleLowerCase("vi-VN");
+  const now = Date.now();
+  const previous = rankChatLastText.get(userId);
+  const isRepeated = previous && previous.text === normalizedText && now - previous.at < 90_000;
+  rankChatLastText.set(userId, { text: normalizedText, at: now });
+  if (rankChatLastText.size > 1000) {
+    for (const [key, value] of rankChatLastText) {
+      if (now - value.at > 30 * 60 * 1000) rankChatLastText.delete(key);
+    }
+  }
+  const activity = rankRepo.recordChatActivity({
+    userId,
+    createdAt: message.createdAt,
+    isSpam: !!isRepeated,
+  });
+  if (!activity.awardedXp) return;
+  const award = rankRepo.awardXp({
+    userId,
+    activityType: "chat_window",
+    sourceId: `${activity.windowStart}:${activity.xpAwarded}`,
+    deltaXp: activity.awardedXp,
+    metadata: { windowStart: activity.windowStart, messageCount: activity.messageCount },
+  });
+  if (award.awarded) {
+    notifyUserRank(userId, publicRank(userId));
+    broadcastState();
+  }
+}
+
+function settleRankTransition(transition) {
+  const finishedItem = transition?.finishedItem;
+  if (!finishedItem || transition.finalStatus !== "played") return;
+  const qualified = isQualifiedPlay({
+    finishReason: transition.finishReason,
+    playedSeconds: transition.playedSeconds,
+    duration: finishedItem.duration,
+  });
+  if (!qualified) return;
+
+  const updatedUsers = new Map();
+  if (finishedItem.addedByUserId) {
+    const playAward = rankRepo.awardQualifiedPlay({
+      userId: finishedItem.addedByUserId,
+      queueItemId: finishedItem.id,
+      title: finishedItem.title,
+      playedSeconds: transition.playedSeconds,
+    });
+    if (playAward.awarded) updatedUsers.set(finishedItem.addedByUserId, playAward.profile);
+  }
+
+  // A voter earns one participation XP for a qualifying played item. The
+  // repository's idempotency key prevents repeated host events from farming XP
+  // and deliberately ignores additional points spent on the same item.
+  for (const voter of transition.voters || []) {
+    const award = rankRepo.awardVoteParticipation({
+      userId: voter.user_id,
+      queueItemId: finishedItem.id,
+      title: finishedItem.title,
+    });
+    if (award.awarded) updatedUsers.set(voter.user_id, award.profile);
+  }
+  for (const [userId, profile] of updatedUsers) notifyUserRank(userId, publicRank(userId));
+  if (updatedUsers.size) broadcastState();
 }
 
 function revokeSocket(client, reason) {
@@ -1160,9 +1357,13 @@ wss.on("connection", (ws, request) => {
         isAI: false,
         createdAt: new Date().toISOString(),
       });
-      pushRecentChat(chatMessages, message);
+      const publicMessage = currentSession?.user_id
+        ? { ...message, rank: publicRank(currentSession.user_id) }
+        : message;
+      pushRecentChat(chatMessages, publicMessage);
+      recordRankChatActivity(message, currentSession?.user_id);
       chatLastSentAt.set(ws, now);
-      broadcastChatMessage(message);
+      broadcastChatMessage(publicMessage);
       ws.send(JSON.stringify({ type: "chatSendResult", ok: true, id: message.id }));
       chatAiCoordinator.schedule(message);
       return;
@@ -1185,14 +1386,14 @@ wss.on("connection", (ws, request) => {
     switch (msg.type) {
       case "ended":
         console.log(`[host] đã phát xong ${msg.videoId}`);
-        state.advance(msg.videoId);
+        settleRankTransition(state.advance(msg.videoId, { finishReason: "ended" }));
         break;
       case "error":
         console.warn(`[host] mã lỗi phát ${msg.code} trên ${msg.videoId} — bỏ qua & hoàn điểm`);
-        state.advance(msg.videoId, { isError: true });
+        settleRankTransition(state.advance(msg.videoId, { isError: true, finishReason: "error" }));
         break;
       case "skip":
-        state.skip();
+        settleRankTransition(state.skip({ playedSeconds: msg.playedSeconds }));
         break;
       case "remove":
         state.remove(msg.id);

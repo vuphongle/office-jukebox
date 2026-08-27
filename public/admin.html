@@ -97,12 +97,13 @@
                 <th>Trạng thái</th>
                 <th>Số dư điểm</th>
                 <th>Streak</th>
+                <th>Hạng hoạt động</th>
                 <th>Check-in cuối</th>
                 <th>Hành động</th>
               </tr>
             </thead>
             <tbody id="users-tbody">
-              <tr><td colspan="8" class="text-center">Đang tải dữ liệu…</td></tr>
+              <tr><td colspan="9" class="text-center">Đang tải dữ liệu…</td></tr>
             </tbody>
           </table>
         </div>
@@ -289,12 +290,12 @@
             </div>
             <div class="form-group">
               <label for="chat-ai-knowledge">Kiến thức/FAQ do admin cung cấp</label>
-              <textarea id="chat-ai-knowledge" maxlength="3000" rows="5" placeholder="Nội quy, lịch sự kiện, thông tin AI được phép dùng…"></textarea>
+              <textarea id="chat-ai-knowledge" maxlength="20000" rows="7" placeholder="Nội quy, lịch sự kiện, thông tin AI được phép dùng…"></textarea>
             </div>
             <div class="ai-settings-grid">
               <div class="form-group">
                 <label for="chat-ai-context-chars">Context tối đa (ký tự)</label>
-                <input id="chat-ai-context-chars" type="number" min="8000" max="100000" step="1000" />
+                <input id="chat-ai-context-chars" type="number" min="8000" max="200000" step="1000" />
               </div>
               <div class="form-group">
                 <label for="chat-ai-cooldown">Cooldown (giây)</label>
@@ -308,6 +309,14 @@
                 <label for="chat-ai-idle-minutes">Khuấy động sau (phút, 0 = tắt)</label>
                 <input id="chat-ai-idle-minutes" type="number" min="0" max="120" />
               </div>
+              <div class="form-group">
+                <label for="chat-ai-announcement-cooldown">Cooldown bình luận hàng đợi (giây)</label>
+                <input id="chat-ai-announcement-cooldown" type="number" min="120" max="3600" step="30" />
+              </div>
+              <div class="form-group">
+                <label for="chat-ai-announcements-hour">Bình luận hàng đợi tối đa/giờ</label>
+                <input id="chat-ai-announcements-hour" type="number" min="0" max="24" />
+              </div>
             </div>
             <div class="ai-option-row">
               <label class="check-row" for="chat-ai-memory-enabled">
@@ -319,11 +328,22 @@
                 <span>Tự tóm tắt hội thoại cũ</span>
               </label>
             </div>
+            <fieldset class="ai-feature-fieldset">
+              <legend>Nhóm khả năng AI</legend>
+              <label class="check-row" for="chat-ai-feature-context"><input id="chat-ai-feature-context" type="checkbox" /><span>Context lớn & kiến thức công ty</span></label>
+              <label class="check-row" for="chat-ai-feature-queue"><input id="chat-ai-feature-queue" type="checkbox" /><span>Hỏi đáp phòng & hàng đợi</span></label>
+              <label class="check-row" for="chat-ai-feature-recommend"><input id="chat-ai-feature-recommend" type="checkbox" /><span>Gợi ý bài theo xu hướng</span></label>
+              <label class="check-row" for="chat-ai-feature-announcement"><input id="chat-ai-feature-announcement" type="checkbox" /><span>Bình luận DJ theo ngữ cảnh</span></label>
+              <label class="check-row" for="chat-ai-feature-votes"><input id="chat-ai-feature-votes" type="checkbox" /><span>Phân tích hàng đợi & vote</span></label>
+              <label class="check-row" for="chat-ai-feature-feedback"><input id="chat-ai-feature-feedback" type="checkbox" /><span>Digest góp ý nội bộ (Admin)</span></label>
+            </fieldset>
             <div class="ai-form-actions">
               <button id="chat-ai-save" type="submit" class="submit-btn gold">Lưu cấu hình AI</button>
               <button id="chat-ai-kick" type="button" class="action-btn">Khuấy động ngay</button>
+              <button id="chat-ai-feedback-digest" type="button" class="action-btn">Tạo digest góp ý</button>
             </div>
             <div id="chat-ai-status" class="chat-status" aria-live="polite"></div>
+            <div id="chat-ai-feedback-digest-result" class="ai-summary-box hidden" aria-live="polite"></div>
           </form>
 
           <div class="ai-memory-panel">

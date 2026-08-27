@@ -320,6 +320,13 @@ function render() {
     li.querySelector(".q-title").textContent = item.title;
     updateMarqueeTitle(li.querySelector(".q-title"));
     li.querySelector(".q-sub").textContent = item.addedBy ? `Yêu cầu: ${item.addedBy}` : item.channel;
+    if (item.rank?.badge) {
+      const rank = document.createElement("span");
+      rank.className = "q-rank-badge";
+      rank.textContent = `${item.rank.badge} ${item.rank.name || ""}`.trim();
+      rank.title = item.rank.name || "Hạng hoạt động";
+      li.querySelector(".q-sub").append(" ", rank);
+    }
 
     if (isPinned) {
       li.querySelector(".q-unpin").onclick = () => send({ type: "unpin", id: item.id });
@@ -406,7 +413,10 @@ function wireControls() {
     if (s === YT.PlayerState.PLAYING) player.pauseVideo();
     else player.playVideo();
   };
-  document.getElementById("skip").onclick = () => send({ type: "skip" });
+  document.getElementById("skip").onclick = () => {
+    const playedSeconds = playerReady && player?.getCurrentTime ? Number(player.getCurrentTime()) : null;
+    send({ type: "skip", playedSeconds: Number.isFinite(playedSeconds) ? playedSeconds : null });
+  };
   // Nút bộ lọc chuyển vòng: Tắt → Bật (bình thường) → Nghiêm ngặt (chỉ nội dung phù hợp với gia đình) → Tắt.
   document.getElementById("filter-toggle").onclick = () => {
     if (!filterOn) send({ type: "setFilter", on: true, mode: "default" });
