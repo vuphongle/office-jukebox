@@ -476,6 +476,13 @@ function renderChatMessages() {
     const name = document.createElement("strong");
     name.className = "chat-message-name";
     name.textContent = message.name;
+    if (message.rank?.badge) {
+      const rankBadge = document.createElement("span");
+      rankBadge.className = "chat-message-rank";
+      rankBadge.textContent = `${message.rank.badge} ${message.rank.name || ""}`.trim();
+      rankBadge.title = message.rank.name || "Hạng thành viên";
+      name.append(" ", rankBadge);
+    }
     if (message.isAdmin || message.isAI) {
       const badge = document.createElement("span");
       badge.className = "chat-message-badge";
@@ -485,7 +492,17 @@ function renderChatMessages() {
     const text = document.createElement("p");
     text.className = "chat-message-text";
     text.textContent = message.text;
-    item.append(name, text);
+    const meta = document.createElement("time");
+    meta.className = "chat-message-time";
+    const createdAt = message.createdAt ? new Date(message.createdAt) : null;
+    if (createdAt && !Number.isNaN(createdAt.getTime())) {
+      meta.dateTime = createdAt.toISOString();
+      meta.title = createdAt.toLocaleString("vi-VN", { dateStyle: "medium", timeStyle: "short" });
+      meta.textContent = createdAt.toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" });
+    } else {
+      meta.textContent = "";
+    }
+    item.append(name, text, meta);
     chatMessagesEl.appendChild(item);
   }
   chatMessagesEl.scrollTop = chatMessagesEl.scrollHeight;
@@ -499,6 +516,10 @@ function appendChatMessage(message, { notify = true } = {}) {
     senderId: typeof message.senderId === "string" ? message.senderId.slice(0, 64) : "",
     isAdmin: message.isAdmin === true,
     isAI: message.isAI === true,
+    createdAt: typeof message.createdAt === "string" ? message.createdAt : "",
+    rank: message.rank && typeof message.rank === "object"
+      ? { name: String(message.rank.name || "").slice(0, 40), badge: String(message.rank.badge || "").slice(0, 8) }
+      : null,
   });
   if (chatMessages.length > 40) chatMessages = chatMessages.slice(-40);
   renderChatMessages();
@@ -575,6 +596,12 @@ function sendChatMessage(event) {
 chatToggle.addEventListener("click", () => setChatOpen(!chatOpen));
 chatClose.addEventListener("click", () => setChatOpen(false));
 chatForm.addEventListener("submit", sendChatMessage);
+chatMessageEl.addEventListener("keydown", (event) => {
+  if (event.key === "Enter" && !event.shiftKey) {
+    event.preventDefault();
+    chatForm.requestSubmit();
+  }
+});
 document.addEventListener("keydown", (event) => {
   if (event.key === "Escape" && chatOpen) setChatOpen(false);
 });
@@ -1364,6 +1391,13 @@ function renderQueue(state) {
     li.querySelector(".q-requester").textContent = item.addedBy
       ? `Người chọn: ${item.addedBy}`
       : "Người chọn: Khách ẩn danh";
+    if (item.rank?.badge) {
+      const rank = document.createElement("span");
+      rank.className = "q-rank-badge";
+      rank.textContent = `${item.rank.badge} ${item.rank.name || ""}`.trim();
+      rank.title = item.rank.name || "Hạng hoạt động";
+      li.querySelector(".q-byline").appendChild(rank);
+    }
     li.querySelector(".q-eta").textContent = formatEstimatedStart(item.estimatedStartAt);
     if (myIds.has(item.id)) {
       const chip = document.createElement("span");

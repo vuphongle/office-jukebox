@@ -66,7 +66,45 @@ export class QueueRepository {
       .all(eventId);
   }
 
-  updateStatus(id, status, { startedAt = null, finishedAt = null } = {}) {
+  getRecentPlayed(eventId = "default_event", limit = 20) {
+    const boundedLimit = Math.min(100, Math.max(1, Number(limit) || 20));
+    return this.db
+      .query(
+        `SELECT id, video_id, title, channel, duration, added_by, added_by_user_id,
+                vote_score, finished_at, finish_reason, played_seconds
+         FROM queue_items
+         WHERE event_id = ? AND status = 'played'
+         ORDER BY finished_at DESC LIMIT ?`
+      )
+      .all(eventId, boundedLimit);
+  }
+
+  getQueueStats(eventId = "default_event") {
+    return this.db
+      .query(
+        `SELECT
+           SUM(CASE WHEN status = 'queued' THEN 1 ELSE 0 END) AS queued_count,
+           SUM(CASE WHEN status = 'playing' THEN 1 ELSE 0 END) AS playing_count,
+           SUM(CASE WHEN status = 'played' THEN 1 ELSE 0 END) AS played_count,
+           COALESCE(MAX(vote_score), 0) AS max_vote_score
+         FROM queue_items WHERE event_id = ?`
+      )
+      .get(eventId);
+  }
+
+  getVoteLeaders(eventId = "default_event", limit = 10) {
+    const boundedLimit = Math.min(50, Math.max(1, Number(limit) || 10));
+    return this.db
+      .query(
+        `SELECT title, vote_score
+         FROM queue_items
+         WHERE event_id = ? AND status IN ('queued', 'playing') AND vote_score > 0
+         ORDER BY vote_score DESC, queue_sequence ASC LIMIT ?`
+      )
+      .all(eventId, boundedLimit);
+  }
+
+  updateStatus(id, status, { startedAt = null, finishedAt = null, finishReason = null, playedSeconds = null } = {}) {
     const now = Date.now();
     if (status === "playing") {
       this.db.run(
@@ -74,9 +112,10 @@ export class QueueRepository {
         [startedAt || now, id]
       );
     } else if (["played", "removed", "error"].includes(status)) {
+      const resolvedFinishReason = finishReason || (status === "played" ? "ended" : status);
       this.db.run(
-        "UPDATE queue_items SET status = ?, finished_at = ? WHERE id = ?",
-        [status, finishedAt || now, id]
+        "UPDATE queue_items SET status = ?, finished_at = ?, finish_reason = ?, played_seconds = ? WHERE id = ?",
+        [status, finishedAt || now, resolvedFinishReason, playedSeconds, id]
       );
     } else {
       this.db.run("UPDATE queue_items SET status = ? WHERE id = ?", [status, id]);
@@ -258,7 +297,7 @@ export class QueueRepository {
   removeAndRefund(queueItemId, reason, finishedAt = Date.now()) {
     const tx = this.db.transaction(() => {
       this.db.run(
-        "UPDATE queue_items SET status = 'removed', finished_at = ? WHERE id = ? AND status = 'queued'",
+        "UPDATE queue_items SET status = 'removed', finished_at = ?, finish_reason = 'removed' WHERE id = ? AND status = 'queued'",
         [finishedAt, queueItemId]
       );
       return this._refundVotesUnsafe(queueItemId, reason);
@@ -266,13 +305,23 @@ export class QueueRepository {
     return tx.immediate();
   }
 
-  finishAndStart({ finishedId, finalStatus = "played", nextId = null, finishedAt = Date.now(), startedAt = Date.now(), refundReason = "" }) {
+  finishAndStart({
+    finishedId,
+    finalStatus = "played",
+    nextId = null,
+    finishedAt = Date.now(),
+    startedAt = Date.now(),
+    finishReason = null,
+    playedSeconds = null,
+    refundReason = "",
+  }) {
     const tx = this.db.transaction(() => {
       let refunds = [];
       if (finishedId) {
+        const resolvedFinishReason = finishReason || (finalStatus === "played" ? "ended" : finalStatus);
         this.db.run(
-          "UPDATE queue_items SET status = ?, finished_at = ? WHERE id = ? AND status = 'playing'",
-          [finalStatus, finishedAt, finishedId]
+          "UPDATE queue_items SET status = ?, finished_at = ?, finish_reason = ?, played_seconds = ? WHERE id = ? AND status = 'playing'",
+          [finalStatus, finishedAt, resolvedFinishReason, playedSeconds, finishedId]
         );
         if (finalStatus === "error") {
           refunds = this._refundVotesUnsafe(finishedId, refundReason || "Lỗi phát video YouTube");

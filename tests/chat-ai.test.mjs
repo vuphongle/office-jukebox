@@ -10,6 +10,7 @@ import {
   decideChatAi,
   normalizeChatAiSettings,
   selectRecentMessagesByChars,
+  summarizeFeedback,
 } from "../src/chatAi.js";
 import { ChatAiCoordinator } from "../src/chatAiCoordinator.js";
 import { UserRepository } from "../src/repositories/userRepository.js";
@@ -42,7 +43,7 @@ function sseResponse(chunks) {
   };
 }
 
-test("chat AI settings allow a 100k character context and keep bounded admin fields", () => {
+test("chat AI settings allow an expanded 200k context and keep bounded admin fields", () => {
   const settings = normalizeChatAiSettings({
     enabled: true,
     contextCharBudget: 999_999,
@@ -50,10 +51,22 @@ test("chat AI settings allow a 100k character context and keep bounded admin fie
     stylePrompt: "s".repeat(2000),
     knowledgePrompt: "k".repeat(4000),
   });
-  assert.equal(settings.contextCharBudget, 100_000);
+  assert.equal(settings.contextCharBudget, 200_000);
   assert.equal(settings.name.length, 40);
   assert.equal(settings.stylePrompt.length, 1500);
-  assert.equal(settings.knowledgePrompt.length, 3000);
+  assert.equal(settings.knowledgePrompt.length, 4000);
+  assert.equal(settings.features.contextualAnnouncements, false);
+  assert.equal(settings.features.feedbackDigest, false);
+});
+
+test("chat AI feature switches are grouped and preserve defaults for omitted keys", () => {
+  const settings = normalizeChatAiSettings({
+    features: { contextualAnnouncements: true, queueVoteInsights: false },
+  });
+  assert.equal(settings.features.contextualAnnouncements, true);
+  assert.equal(settings.features.queueVoteInsights, false);
+  assert.equal(settings.features.songRecommendations, true);
+  assert.equal(settings.features.feedbackDigest, false);
 });
 
 test("chat AI provider detection falls back when the dedicated key is blank", () => {
@@ -92,6 +105,33 @@ test("character context keeps complete newest messages and stays inside the conf
   });
   assert.ok(prompt.characterCount <= 100_000);
   assert.equal(prompt.includedMessageIds.at(-1), "message-499");
+});
+
+test("expanded room context includes recent plays and trends only for enabled capabilities", () => {
+  const prompt = buildChatAiPrompt({
+    messages: [message(1, "Gợi ý bài tiếp theo")],
+    roomState: {
+      queueCount: 12,
+      queue: [{ title: "Bài chờ", addedBy: "Mai", voteScore: 4 }],
+      recentPlayed: [{ title: "Bài vừa phát", artist: "Nghệ sĩ", playedAt: "2026-08-27T09:00:00Z" }],
+      songTrends: { artists: [{ name: "Nghệ sĩ", plays: 3 }] },
+    },
+    settings: { enabled: true, contextCharBudget: 8_000 },
+  });
+  const userPrompt = prompt.messages[1].content;
+  assert.match(userPrompt, /Bài vừa phát/);
+  assert.match(userPrompt, /Nghệ sĩ/);
+
+  const disabledPrompt = buildChatAiPrompt({
+    messages: [message(1)],
+    roomState: { recentPlayed: [{ title: "Không nên đưa vào" }] },
+    settings: {
+      enabled: true,
+      contextCharBudget: 8_000,
+      features: { songRecommendations: false },
+    },
+  });
+  assert.doesNotMatch(disabledPrompt.messages[1].content, /Không nên đưa vào/);
 });
 
 test("AI decision validates autonomous reply and memory updates from provider JSON", async () => {
@@ -134,6 +174,32 @@ test("AI decision accepts OpenAI-compatible SSE responses returned by the provid
   );
   assert.equal(result.action, "reply");
   assert.equal(result.reply, "Chào cả phòng!");
+});
+
+test("feedback digest is bounded to supplied message ids and stays opt-in", async () => {
+  const feedback = [
+    { id: "fb-1", text: "Nên có nút tìm kiếm", createdAt: new Date().toISOString() },
+    { id: "fb-2", text: "Ứng dụng bị lag", createdAt: new Date().toISOString() },
+  ];
+  const fetchImpl = async () =>
+    jsonResponse({
+      summary: "Có một ý tưởng và một lỗi cần xem xét.",
+      groups: [
+        { category: "idea", count: 1, priority: "low", messageIds: ["fb-1", "unknown"] },
+        { category: "bug", count: 1, priority: "high", messageIds: ["fb-2"] },
+      ],
+      needsReview: true,
+    });
+  const result = await summarizeFeedback(
+    { feedback, settings: { features: { feedbackDigest: true } } },
+    { apiKey: "test-key", fetchImpl }
+  );
+  assert.equal(result.groups.length, 2);
+  assert.deepEqual(result.groups[0].messageIds, ["fb-1"]);
+  assert.equal(
+    await summarizeFeedback({ feedback, settings: { features: { feedbackDigest: false } } }, { apiKey: "test-key", fetchImpl }),
+    null
+  );
 });
 
 test("coordinator persists an AI message and selected event memory without a tag", async () => {

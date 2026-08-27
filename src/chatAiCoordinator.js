@@ -6,10 +6,12 @@ const DEBOUNCE_MS = 2500;
 const SUMMARY_REFRESH_CHARACTERS = 12000;
 const SUMMARY_BATCH_CHARACTERS = 16000;
 const PROACTIVE_MIN_INTERVAL_MS = 20 * 60 * 1000;
+const QUEUE_CHANGE_DEBOUNCE_MS = 2500;
+const BUSY_CHAT_WINDOW_MS = 90 * 1000;
 
 function confidenceThreshold(autonomy, trigger) {
   const base = autonomy === "low" ? 0.84 : autonomy === "high" ? 0.55 : 0.7;
-  return trigger === "idle" ? Math.min(0.95, base + 0.1) : base;
+  return trigger === "idle" || trigger === "queue_change" ? Math.min(0.95, base + 0.1) : base;
 }
 
 function oldestBatchByCharacters(messages, maxCharacters) {
@@ -50,10 +52,14 @@ export class ChatAiCoordinator {
     this.generation = 0;
     this.running = false;
     this.debounceTimer = null;
+    this.queueChangeTimer = null;
     this.idleTimer = null;
     this.lastAiReplyAt = 0;
     this.lastProactiveAt = 0;
     this.replyTimestamps = [];
+    this.announcementTimestamps = [];
+    this.lastAnnouncementAt = 0;
+    this.pendingQueueChange = null;
     this.lastStatus = { state: "idle", lastRunAt: null, lastAction: null, reasonCode: null, contextCharacters: 0 };
   }
 
@@ -66,8 +72,10 @@ export class ChatAiCoordinator {
   stop() {
     this.reset();
     if (this.debounceTimer) clearTimeout(this.debounceTimer);
+    if (this.queueChangeTimer) clearTimeout(this.queueChangeTimer);
     if (this.idleTimer) clearInterval(this.idleTimer);
     this.debounceTimer = null;
+    this.queueChangeTimer = null;
     this.idleTimer = null;
   }
 
@@ -75,7 +83,10 @@ export class ChatAiCoordinator {
     this.generation += 1;
     this.pendingSeq = this.processedSeq;
     if (this.debounceTimer) clearTimeout(this.debounceTimer);
+    if (this.queueChangeTimer) clearTimeout(this.queueChangeTimer);
     this.debounceTimer = null;
+    this.queueChangeTimer = null;
+    this.pendingQueueChange = null;
     this.lastStatus = { ...this.lastStatus, state: "idle", lastAction: null, reasonCode: null };
   }
 
@@ -87,12 +98,43 @@ export class ChatAiCoordinator {
     this.debounceTimer.unref?.();
   }
 
+  /**
+   * Queue mutations are coalesced so a reorder/remove burst results in at
+   * most one provider call. The server remains responsible for deciding what
+   * actually changed; the optional context is only a hint for the prompt.
+   */
+  scheduleQueueChange(change = {}) {
+    const settings = normalizeChatAiSettings(this.getSettings());
+    if (!settings.features.contextualAnnouncements || settings.maxAnnouncementsPerHour <= 0) return;
+    this.pendingQueueChange = change && typeof change === "object" ? { ...change } : {};
+    if (this.queueChangeTimer) clearTimeout(this.queueChangeTimer);
+    this.queueChangeTimer = setTimeout(() => {
+      this.queueChangeTimer = null;
+      void this.run("queue_change");
+    }, QUEUE_CHANGE_DEBOUNCE_MS);
+    this.queueChangeTimer.unref?.();
+  }
+
   status() {
     return { ...this.lastStatus, configured: chatAiConfigured(this.providerOptions), running: this.running };
   }
 
   callDelay(settings, trigger) {
     if (!settings.enabled || !this.getChatOn() || !chatAiConfigured(this.providerOptions)) return null;
+    if (trigger === "queue_change") {
+      if (!settings.features.contextualAnnouncements || settings.maxAnnouncementsPerHour <= 0) return null;
+      const now = Date.now();
+      this.announcementTimestamps = this.announcementTimestamps.filter(
+        (timestamp) => now - timestamp < 60 * 60 * 1000
+      );
+      const delays = [
+        Math.max(0, settings.announcementCooldownSeconds * 1000 - (now - this.lastAnnouncementAt)),
+      ];
+      if (this.announcementTimestamps.length >= settings.maxAnnouncementsPerHour) {
+        delays.push(Math.max(0, this.announcementTimestamps[0] + 60 * 60 * 1000 - now));
+      }
+      return Math.max(...delays);
+    }
     if (trigger === "manual") return 0;
     const now = Date.now();
     this.replyTimestamps = this.replyTimestamps.filter((timestamp) => now - timestamp < 60 * 60 * 1000);
@@ -118,11 +160,20 @@ export class ChatAiCoordinator {
         if (this.debounceTimer) clearTimeout(this.debounceTimer);
         this.debounceTimer = setTimeout(() => void this.run("message"), delay);
         this.debounceTimer.unref?.();
+      } else if (trigger === "queue_change") {
+        if (this.queueChangeTimer) clearTimeout(this.queueChangeTimer);
+        this.queueChangeTimer = setTimeout(() => {
+          this.queueChangeTimer = null;
+          void this.run("queue_change");
+        }, delay);
+        this.queueChangeTimer.unref?.();
       }
       return;
     }
     const targetSeq = this.pendingSeq;
     const runGeneration = this.generation;
+    const queueChange = trigger === "queue_change" ? this.pendingQueueChange : null;
+    if (trigger === "queue_change") this.pendingQueueChange = null;
     if (trigger === "idle") this.lastProactiveAt = Date.now();
     this.running = true;
     this.lastStatus = { ...this.lastStatus, state: "thinking", lastRunAt: new Date().toISOString() };
@@ -130,14 +181,29 @@ export class ChatAiCoordinator {
     try {
       const candidates = this.chatRepository.listRecentCandidates(this.eventId);
       if (!candidates.length) return;
+      if (trigger === "queue_change" && !this.shouldRunQueueAnnouncement(candidates)) {
+        this.lastStatus = {
+          ...this.lastStatus,
+          state: "idle",
+          lastAction: "stay_silent",
+          reasonCode: "busy_chat",
+        };
+        return;
+      }
       const summary = this.memoryRepository.getSummary(this.eventId);
       const memories = this.memoryRepository.listActive(this.eventId, 50);
+      // Clone the server snapshot before adding the trigger hint. A caller may
+      // return a frozen/shared object and must not observe coordinator state.
+      const roomState = { ...(this.getRoomState() || {}) };
+      if (trigger === "queue_change" && queueChange) {
+        roomState.queueChange = queueChange;
+      }
       const result = await decideChatAi(
         {
           messages: candidates,
           summary: summary.content,
           memories,
-          roomState: this.getRoomState(),
+          roomState,
           settings,
           trigger,
         },
@@ -183,6 +249,10 @@ export class ChatAiCoordinator {
         const now = Date.now();
         this.lastAiReplyAt = now;
         this.replyTimestamps.push(now);
+        if (trigger === "queue_change") {
+          this.lastAnnouncementAt = now;
+          this.announcementTimestamps.push(now);
+        }
         this.onAiMessage(saved);
       }
 
@@ -199,7 +269,29 @@ export class ChatAiCoordinator {
         this.debounceTimer = setTimeout(() => void this.run("message"), DEBOUNCE_MS);
         this.debounceTimer.unref?.();
       }
+      if (this.pendingQueueChange && !this.queueChangeTimer) {
+        const currentSettings = normalizeChatAiSettings(this.getSettings());
+        if (currentSettings.features.contextualAnnouncements && currentSettings.maxAnnouncementsPerHour > 0) {
+          this.queueChangeTimer = setTimeout(() => {
+            this.queueChangeTimer = null;
+            void this.run("queue_change");
+          }, QUEUE_CHANGE_DEBOUNCE_MS);
+          this.queueChangeTimer.unref?.();
+        }
+      }
     }
+  }
+
+  shouldRunQueueAnnouncement(messages) {
+    const cutoff = Date.now() - BUSY_CHAT_WINDOW_MS;
+    const recentHumanMessages = messages.filter(
+      (message) => !message.isAI && Date.parse(message.createdAt) >= cutoff
+    );
+    // A busy room is already getting human attention. Avoid spending a call or
+    // inserting an unsolicited message while people are exchanging quickly.
+    if (recentHumanMessages.length >= 5) return false;
+    const last45s = Date.now() - 45 * 1000;
+    return recentHumanMessages.filter((message) => Date.parse(message.createdAt) >= last45s).length < 3;
   }
 
   applyMemoryUpdates(updates, settings) {

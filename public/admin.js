@@ -197,7 +197,7 @@ async function loadUsers() {
     const res = await fetch(`/api/admin/users?search=${encodeURIComponent(search)}&status=${encodeURIComponent(status)}&page=${usersPage}&limit=20`);
     const data = await res.json();
     if (!data.ok) {
-      tbody.innerHTML = `<tr><td colspan="8" class="text-center">${data.reason || "Lỗi tải người dùng"}</td></tr>`;
+      tbody.innerHTML = `<tr><td colspan="9" class="text-center">${data.reason || "Lỗi tải người dùng"}</td></tr>`;
       renderPagination("users-pagination", 1, 0, 20, () => {});
       return;
     }
@@ -208,7 +208,7 @@ async function loadUsers() {
     });
 
     if (!data.users.length) {
-      tbody.innerHTML = `<tr><td colspan="8" class="text-center">Không tìm thấy thành viên nào</td></tr>`;
+      tbody.innerHTML = `<tr><td colspan="9" class="text-center">Không tìm thấy thành viên nào</td></tr>`;
       return;
     }
 
@@ -218,6 +218,8 @@ async function loadUsers() {
         const statusBadge = u.status === "active" ? '<span class="badge badge-active">Hoạt động</span>' : '<span class="badge badge-blocked">Bị khóa</span>';
         const blockBtnText = u.status === "active" ? "Khóa" : "Mở khóa";
         const blockBtnClass = u.status === "active" ? "action-btn btn-sm btn-warn" : "action-btn btn-sm";
+        const rank = u.rank || {};
+        const rankCell = `<span class="rank-cell-badge">${escapeHtml(rank.badge || "🎧")}</span> ${escapeHtml(rank.name || "Người mới bắt nhịp")}<small>${Number(rank.xp || 0).toLocaleString("vi-VN")} XP</small>`;
 
         return `
           <tr>
@@ -227,6 +229,7 @@ async function loadUsers() {
             <td>${statusBadge}</td>
             <td><strong class="delta-pos">${u.points_balance}</strong> điểm</td>
             <td>${u.current_streak} ngày</td>
+            <td class="rank-cell">${rankCell}</td>
             <td>${u.last_checkin_date || "—"}</td>
             <td>
               <button class="action-btn btn-sm" onclick="openPointsModal('${u.id}', '${escapeHtml(u.username)}', ${u.points_balance})">Điểm ±</button>
@@ -238,7 +241,7 @@ async function loadUsers() {
       })
       .join("");
   } catch (err) {
-    tbody.innerHTML = `<tr><td colspan="8" class="text-center">Lỗi mạng: ${err.message}</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="9" class="text-center">Lỗi mạng: ${err.message}</td></tr>`;
   }
 }
 
@@ -530,6 +533,7 @@ function initFeedbackTab() {
   document.getElementById("admin-chat-form")?.addEventListener("submit", handleAdminChatSubmit);
   document.getElementById("chat-ai-settings-form")?.addEventListener("submit", saveChatAiSettings);
   document.getElementById("chat-ai-kick")?.addEventListener("click", kickChatAi);
+  document.getElementById("chat-ai-feedback-digest")?.addEventListener("click", createFeedbackDigest);
   document.getElementById("chat-ai-memory-reset")?.addEventListener("click", resetChatAiMemory);
   document.getElementById("chat-ai-memory-list")?.addEventListener("click", handleChatAiMemoryAction);
 }
@@ -628,14 +632,25 @@ async function loadChatAiSettings() {
     document.getElementById("chat-ai-cooldown").value = settings.cooldownSeconds || 30;
     document.getElementById("chat-ai-max-hour").value = settings.maxRepliesPerHour || 12;
     document.getElementById("chat-ai-idle-minutes").value = settings.proactiveIdleMinutes ?? 8;
+    document.getElementById("chat-ai-announcement-cooldown").value = settings.announcementCooldownSeconds ?? 600;
+    document.getElementById("chat-ai-announcements-hour").value = settings.maxAnnouncementsPerHour ?? 3;
     document.getElementById("chat-ai-memory-enabled").checked = settings.memoryEnabled !== false;
     document.getElementById("chat-ai-summary-enabled").checked = settings.summaryEnabled !== false;
+    const features = settings.features || {};
+    document.getElementById("chat-ai-feature-context").checked = features.extendedContext !== false;
+    document.getElementById("chat-ai-feature-queue").checked = features.companyQueueAssistant !== false;
+    document.getElementById("chat-ai-feature-recommend").checked = features.songRecommendations !== false;
+    document.getElementById("chat-ai-feature-announcement").checked = features.contextualAnnouncements === true;
+    document.getElementById("chat-ai-feature-votes").checked = features.queueVoteInsights !== false;
+    document.getElementById("chat-ai-feature-feedback").checked = features.feedbackDigest === true;
 
     const provider = document.getElementById("chat-ai-provider-status");
     provider.textContent = data.configured ? "Provider sẵn sàng" : "Chưa có key AI";
     provider.className = data.configured ? "badge badge-active" : "badge badge-blocked";
     const kickButton = document.getElementById("chat-ai-kick");
     kickButton.disabled = !data.configured || !settings.enabled;
+    const digestButton = document.getElementById("chat-ai-feedback-digest");
+    if (digestButton) digestButton.disabled = !data.configured || !settings.enabled || settings.features?.feedbackDigest !== true;
 
     const stateLabels = {
       idle: "Sẵn sàng",
@@ -647,8 +662,41 @@ async function loadChatAiSettings() {
     statusEl.textContent = `${stateLabels[lastStatus.state] || "Sẵn sàng"}${context}`;
     document.getElementById("chat-ai-summary").textContent = data.summary?.content || "Chưa có tóm tắt.";
     renderChatAiMemories(data.memories || []);
+    renderFeedbackDigest(data.feedbackDigest);
   } catch (error) {
     statusEl.textContent = error.message || "Không thể tải cấu hình AI.";
+  }
+}
+
+function renderFeedbackDigest(digest) {
+  const result = document.getElementById("chat-ai-feedback-digest-result");
+  if (!result) return;
+  if (!digest || typeof digest !== "object") {
+    result.classList.add("hidden");
+    result.textContent = "";
+    return;
+  }
+  result.innerHTML = `<strong>Digest góp ý gần nhất</strong><p>${escapeHtml(digest.summary || "Chưa có tóm tắt.")}</p>${Array.isArray(digest.groups) && digest.groups.length ? `<ul>${digest.groups.map((group) => `<li>${escapeHtml(group.category)} · ${escapeHtml(group.priority)} · ${group.count} mục</li>`).join("")}</ul>` : ""}<small>${escapeHtml(digest.generatedAt ? formatTime(digest.generatedAt) : "")}</small>`;
+  result.classList.remove("hidden");
+}
+
+async function createFeedbackDigest() {
+  const button = document.getElementById("chat-ai-feedback-digest");
+  const status = document.getElementById("chat-ai-status");
+  const result = document.getElementById("chat-ai-feedback-digest-result");
+  button.disabled = true;
+  status.textContent = "Đang tạo digest góp ý…";
+  try {
+    const res = await fetch("/api/admin/chat-ai/feedback-digest", { method: "POST" });
+    const data = await res.json();
+    if (!res.ok || !data.ok) throw new Error(data.reason || "Không thể tạo digest góp ý.");
+    const digest = data.digest || {};
+    renderFeedbackDigest(digest);
+    status.textContent = "Đã tạo digest góp ý, cần Admin duyệt trước khi hành động.";
+  } catch (error) {
+    status.textContent = error.message || "Không thể tạo digest góp ý.";
+  } finally {
+    button.disabled = false;
   }
 }
 
@@ -672,8 +720,18 @@ async function saveChatAiSettings(event) {
         cooldownSeconds: Number(document.getElementById("chat-ai-cooldown").value),
         maxRepliesPerHour: Number(document.getElementById("chat-ai-max-hour").value),
         proactiveIdleMinutes: Number(document.getElementById("chat-ai-idle-minutes").value),
+        announcementCooldownSeconds: Number(document.getElementById("chat-ai-announcement-cooldown").value),
+        maxAnnouncementsPerHour: Number(document.getElementById("chat-ai-announcements-hour").value),
         memoryEnabled: document.getElementById("chat-ai-memory-enabled").checked,
         summaryEnabled: document.getElementById("chat-ai-summary-enabled").checked,
+        features: {
+          extendedContext: document.getElementById("chat-ai-feature-context").checked,
+          companyQueueAssistant: document.getElementById("chat-ai-feature-queue").checked,
+          songRecommendations: document.getElementById("chat-ai-feature-recommend").checked,
+          contextualAnnouncements: document.getElementById("chat-ai-feature-announcement").checked,
+          queueVoteInsights: document.getElementById("chat-ai-feature-votes").checked,
+          feedbackDigest: document.getElementById("chat-ai-feature-feedback").checked,
+        },
       }),
     });
     const data = await res.json();
@@ -842,6 +900,7 @@ function renderChatMessage(m) {
     <div style="margin-bottom: 8px; font-size: 13px;">
       <strong style="color: ${isAI ? "oklch(82% .12 245)" : isAdmin ? "var(--red)" : "var(--gold)"}">${badge}${escapeHtml(m.name)}:</strong>
       <span style="color: var(--text)">${escapeHtml(m.text)}</span>
+      <time class="admin-chat-time" datetime="${escapeHtml(m.createdAt || "")}">${escapeHtml(formatTime(m.createdAt))}</time>
     </div>
   `;
 }
