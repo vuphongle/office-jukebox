@@ -35,6 +35,8 @@ import {
   parseChatInput,
   pushRecentChat,
 } from "./src/chat.js";
+import { chatAiConfigured, normalizeChatAiSettings } from "./src/chatAi.js";
+import { ChatAiCoordinator } from "./src/chatAiCoordinator.js";
 
 import { initDb } from "./src/db.js";
 import { UserRepository } from "./src/repositories/userRepository.js";
@@ -42,6 +44,8 @@ import { SessionRepository } from "./src/repositories/sessionRepository.js";
 import { LedgerRepository } from "./src/repositories/ledgerRepository.js";
 import { QueueRepository } from "./src/repositories/queueRepository.js";
 import { DropRepository } from "./src/repositories/dropRepository.js";
+import { ChatRepository } from "./src/repositories/chatRepository.js";
+import { ChatAiMemoryRepository } from "./src/repositories/chatAiMemoryRepository.js";
 import {
   createAuthMiddleware,
   hashPasswordAsync,
@@ -82,6 +86,8 @@ const sessionRepo = new SessionRepository(db);
 const ledgerRepo = new LedgerRepository(db);
 const queueRepo = new QueueRepository(db);
 const dropRepo = new DropRepository(db);
+const chatRepo = new ChatRepository(db);
+const chatAiMemoryRepo = new ChatAiMemoryRepository(db);
 
 if (!db.query("SELECT 1 FROM users WHERE role = 'admin' AND status = 'active' LIMIT 1").get()) {
   console.warn("[auth] Chưa có tài khoản admin active. Đặt ADMIN_USERNAME và ADMIN_PASSWORD trước lần khởi động đầu để tạo admin.");
@@ -114,9 +120,10 @@ let requireName = savedSettings.requireName ?? false;
 let feedbackOn = savedSettings.feedbackOn ?? true;
 let chatOn = savedSettings.chatOn ?? true;
 let voteSortOn = savedSettings.voteSortOn ?? true;
+let chatAiSettings = normalizeChatAiSettings(savedSettings.chatAi || {});
 state.setVoteSort(voteSortOn);
 
-const chatMessages = [];
+const chatMessages = chatRepo.listRecent("default_event", 40);
 const chatLastSentAt = new WeakMap();
 
 let feedbackItems = [];
@@ -133,7 +140,19 @@ function saveSettings() {
     writeFileSync(
       SETTINGS_PATH,
       JSON.stringify(
-        { filterOn, moderationMode, eventContext, cooldownSeconds, queueLimitOn, queueLimit, requireName, feedbackOn, chatOn, voteSortOn },
+        {
+          filterOn,
+          moderationMode,
+          eventContext,
+          cooldownSeconds,
+          queueLimitOn,
+          queueLimit,
+          requireName,
+          feedbackOn,
+          chatOn,
+          voteSortOn,
+          chatAi: chatAiSettings,
+        },
         null,
         2
       )
@@ -521,6 +540,8 @@ app.get("/api/info", async (_req, res) => {
       requireName,
       feedbackOn,
       chatOn,
+      chatAiOn: chatAiSettings.enabled && chatOn,
+      chatAiName: chatAiSettings.name,
       voteSortOn,
     });
   } catch {
@@ -847,7 +868,10 @@ app.patch("/api/feedback/settings", requireAdmin, (req, res) => {
   if (hasChatSetting) {
     chatOn = req.body.chatOn;
     if (!chatOn) {
+      chatAiCoordinator.reset();
       chatMessages.length = 0;
+      chatRepo.clear();
+      chatAiMemoryRepo.clearConversationState();
       const message = JSON.stringify({ type: "chatCleared" });
       for (const client of wss.clients) {
         if (client.readyState === 1) client.send(message);
@@ -869,12 +893,69 @@ app.delete("/api/feedback/:id", requireAdmin, (req, res) => {
 
 app.delete("/api/chat", requireAdmin, (_req, res) => {
   const cleared = chatMessages.length;
+  chatAiCoordinator.reset();
   chatMessages.length = 0;
+  chatRepo.clear();
+  chatAiMemoryRepo.clearConversationState();
   const message = JSON.stringify({ type: "chatCleared" });
   for (const client of wss.clients) {
     if (client.readyState === 1) client.send(message);
   }
   res.json({ ok: true, cleared });
+});
+
+app.get("/api/admin/chat-ai/settings", requireAdmin, (_req, res) => {
+  res.json({
+    ok: true,
+    configured: chatAiConfigured(),
+    settings: chatAiSettings,
+    status: chatAiCoordinator.status(),
+    summary: chatAiMemoryRepo.getSummary(),
+    memories: chatAiMemoryRepo.listActive("default_event", 100),
+  });
+});
+
+app.patch("/api/admin/chat-ai/settings", requireAdmin, (req, res) => {
+  chatAiSettings = normalizeChatAiSettings({ ...chatAiSettings, ...(req.body || {}) });
+  if (!chatAiSettings.enabled) chatAiCoordinator.reset();
+  saveSettings();
+  broadcastState();
+  res.json({ ok: true, configured: chatAiConfigured(), settings: chatAiSettings, status: chatAiCoordinator.status() });
+});
+
+app.post("/api/admin/chat-ai/kick", requireAdmin, (_req, res) => {
+  if (!chatAiSettings.enabled) {
+    return res.status(409).json({ ok: false, reason: "Hãy bật AI trước khi khuấy động." });
+  }
+  if (!chatOn) {
+    return res.status(409).json({ ok: false, reason: "Phòng chat đang tắt." });
+  }
+  if (!chatAiConfigured()) {
+    return res.status(409).json({ ok: false, reason: "Chưa cấu hình API key cho AI." });
+  }
+  void chatAiCoordinator.run("manual");
+  res.json({ ok: true, accepted: true });
+});
+
+app.patch("/api/admin/chat-ai/memories/:id", requireAdmin, (req, res) => {
+  if (typeof req.body?.pinned !== "boolean") {
+    return res.status(400).json({ ok: false, reason: "Giá trị ghim không hợp lệ." });
+  }
+  const updated = chatAiMemoryRepo.setPinned(req.params.id, req.body.pinned);
+  if (!updated) return res.status(404).json({ ok: false, reason: "Không tìm thấy memory." });
+  res.json({ ok: true });
+});
+
+app.delete("/api/admin/chat-ai/memories/:id", requireAdmin, (req, res) => {
+  const deleted = chatAiMemoryRepo.delete(req.params.id);
+  if (!deleted) return res.status(404).json({ ok: false, reason: "Không tìm thấy memory." });
+  res.json({ ok: true });
+});
+
+app.delete("/api/admin/chat-ai/memory", requireAdmin, (_req, res) => {
+  chatAiCoordinator.reset();
+  chatAiMemoryRepo.clearConversationState();
+  res.json({ ok: true });
 });
 
 // --- PHỤC VỤ TRANG HTML ---------------------------------------------------
@@ -919,6 +1000,26 @@ app.get("/feedback", (_req, res) => {
 const server = http.createServer(app);
 const wss = new WebSocketServer({ server });
 
+function broadcastChatMessage(message) {
+  const payload = JSON.stringify({ type: "chatMessage", message });
+  for (const client of wss.clients) {
+    if (client.readyState === 1) client.send(payload);
+  }
+}
+
+const chatAiCoordinator = new ChatAiCoordinator({
+  chatRepository: chatRepo,
+  memoryRepository: chatAiMemoryRepo,
+  getSettings: () => chatAiSettings,
+  getChatOn: () => chatOn,
+  getRoomState: () => ({ ...state.snapshot(), eventContext }),
+  onAiMessage: (message) => {
+    pushRecentChat(chatMessages, message);
+    broadcastChatMessage(message);
+  },
+});
+chatAiCoordinator.start();
+
 function stateMessage() {
   return JSON.stringify({
     type: "state",
@@ -932,6 +1033,8 @@ function stateMessage() {
     requireName,
     feedbackOn,
     chatOn,
+    chatAiOn: chatAiSettings.enabled && chatOn,
+    chatAiName: chatAiSettings.name,
     voteSortOn,
   });
 }
@@ -1046,21 +1149,21 @@ wss.on("connection", (ws, request) => {
         ws.send(JSON.stringify({ type: "chatSendResult", ok: false, reason: "Bạn gửi hơi nhanh. Vui lòng chờ một chút." }));
         return;
       }
-      const message = {
+      const message = chatRepo.create({
         id: randomUUID(),
         name: parsed.name,
         text: parsed.text,
         senderId: (msg.clientId || "").toString().slice(0, 64),
+        userId: currentSession?.user_id || null,
         isAdmin,
+        isAI: false,
         createdAt: new Date().toISOString(),
-      };
+      });
       pushRecentChat(chatMessages, message);
       chatLastSentAt.set(ws, now);
-      const chatMessage = JSON.stringify({ type: "chatMessage", message });
-      for (const client of wss.clients) {
-        if (client.readyState === 1) client.send(chatMessage);
-      }
+      broadcastChatMessage(message);
       ws.send(JSON.stringify({ type: "chatSendResult", ok: true, id: message.id }));
+      chatAiCoordinator.schedule(message);
       return;
     }
 

@@ -1,0 +1,263 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+
+import { initDb, closeDb } from "../src/db.js";
+import { ChatRepository } from "../src/repositories/chatRepository.js";
+import { ChatAiMemoryRepository } from "../src/repositories/chatAiMemoryRepository.js";
+import {
+  buildChatAiPrompt,
+  decideChatAi,
+  normalizeChatAiSettings,
+  selectRecentMessagesByChars,
+} from "../src/chatAi.js";
+import { ChatAiCoordinator } from "../src/chatAiCoordinator.js";
+import { UserRepository } from "../src/repositories/userRepository.js";
+
+function message(index, text = `Tin nhắn ${index}`) {
+  return {
+    id: `message-${index}`,
+    name: `User ${index}`,
+    text,
+    senderId: `sender-${index}`,
+    isAdmin: false,
+    isAI: false,
+    createdAt: new Date(1_700_000_000_000 + index * 1000).toISOString(),
+  };
+}
+
+function jsonResponse(payload) {
+  return {
+    ok: true,
+    json: async () => ({ choices: [{ message: { content: JSON.stringify(payload) } }] }),
+  };
+}
+
+function sseResponse(chunks) {
+  return {
+    ok: true,
+    headers: { get: (name) => (name.toLowerCase() === "content-type" ? "text/event-stream" : null) },
+    text: async () =>
+      `${chunks.map((content) => `data: ${JSON.stringify({ choices: [{ delta: { content } }] })}`).join("\n\n")}\n\ndata: [DONE]\n`,
+  };
+}
+
+test("chat AI settings allow a 100k character context and keep bounded admin fields", () => {
+  const settings = normalizeChatAiSettings({
+    enabled: true,
+    contextCharBudget: 999_999,
+    name: "A".repeat(80),
+    stylePrompt: "s".repeat(2000),
+    knowledgePrompt: "k".repeat(4000),
+  });
+  assert.equal(settings.contextCharBudget, 100_000);
+  assert.equal(settings.name.length, 40);
+  assert.equal(settings.stylePrompt.length, 1500);
+  assert.equal(settings.knowledgePrompt.length, 3000);
+});
+
+test("character context keeps complete newest messages and stays inside the configured budget", () => {
+  const messages = Array.from({ length: 500 }, (_, index) => message(index, `${index}:${"x".repeat(280)}`));
+  const selected = selectRecentMessagesByChars(messages, 5000);
+  assert.equal(selected.at(-1).id, "message-499");
+  assert.ok(selected.length < messages.length);
+  assert.equal(selected.every((item) => item.text.length === 284), true);
+
+  const prompt = buildChatAiPrompt({
+    messages,
+    summary: "Tóm tắt ".repeat(1000),
+    memories: Array.from({ length: 50 }, (_, index) => ({
+      key: `memory_${index}`,
+      type: "topic",
+      content: "Nội dung ".repeat(50),
+      pinned: false,
+    })),
+    roomState: { nowPlaying: { title: "Bài hiện tại" }, queue: [] },
+    settings: { enabled: true, contextCharBudget: 100_000 },
+  });
+  assert.ok(prompt.characterCount <= 100_000);
+  assert.equal(prompt.includedMessageIds.at(-1), "message-499");
+});
+
+test("AI decision validates autonomous reply and memory updates from provider JSON", async () => {
+  const source = message(1, "Hôm nay mọi người muốn nghe V-pop sôi động");
+  const fetchImpl = async () =>
+    jsonResponse({
+      action: "reply",
+      reasonCode: "topic",
+      confidence: 0.91,
+      reply: "Chốt mood V-pop sôi động nhé! Mọi người muốn mở đầu bằng bài nào?",
+      memoryUpdates: [
+        {
+          key: "current_music_mood",
+          type: "preference",
+          content: "Phòng đang muốn nghe V-pop sôi động",
+          confidence: 0.9,
+          ttlHours: 6,
+          sourceMessageIds: [source.id, "unknown-id"],
+        },
+      ],
+    });
+  const result = await decideChatAi(
+    { messages: [source], settings: { enabled: true, contextCharBudget: 100_000 } },
+    { apiKey: "test-key", baseUrl: "https://provider.test/v1", model: "test-model", fetchImpl }
+  );
+  assert.equal(result.action, "reply");
+  assert.equal(result.memoryUpdates.length, 1);
+  assert.deepEqual(result.memoryUpdates[0].sourceMessageIds, [source.id]);
+});
+
+test("AI decision accepts OpenAI-compatible SSE responses returned by the provider", async () => {
+  const fetchImpl = async () =>
+    sseResponse([
+      '{"action":"reply","reasonCode":"topic",',
+      '"confidence":0.93,"reply":"Chào cả phòng!","memoryUpdates":[]}',
+    ]);
+  const result = await decideChatAi(
+    { messages: [message(1, "Xin chào")], settings: { enabled: true, contextCharBudget: 8000 } },
+    { apiKey: "test-key", baseUrl: "https://provider.test/v1", model: "test-model", fetchImpl }
+  );
+  assert.equal(result.action, "reply");
+  assert.equal(result.reply, "Chào cả phòng!");
+});
+
+test("coordinator persists an AI message and selected event memory without a tag", async () => {
+  const db = initDb({ dbPath: ":memory:" });
+  const chatRepository = new ChatRepository(db);
+  const memoryRepository = new ChatAiMemoryRepository(db);
+  const human = chatRepository.create(message(1, "Có bài V-pop nào vui để mở đầu không?"));
+  const broadcasts = [];
+  const fetchImpl = async () =>
+    jsonResponse({
+      action: "reply",
+      reasonCode: "answer_question",
+      confidence: 0.95,
+      reply: "Thử See Tình để mở đầu không khí vui nhé!",
+      memoryUpdates: [
+        {
+          key: "opening_mood",
+          type: "preference",
+          content: "Muốn mở đầu bằng V-pop vui",
+          confidence: 0.9,
+          ttlHours: 12,
+          sourceMessageIds: [human.id],
+        },
+      ],
+    });
+  const coordinator = new ChatAiCoordinator({
+    chatRepository,
+    memoryRepository,
+    getSettings: () => ({ enabled: true, autonomy: "balanced", contextCharBudget: 100_000 }),
+    getRoomState: () => ({ nowPlaying: null, queue: [] }),
+    onAiMessage: (created) => broadcasts.push(created),
+    providerOptions: { apiKey: "test-key", baseUrl: "https://provider.test/v1", model: "test-model", fetchImpl },
+    logger: { warn() {} },
+  });
+  coordinator.schedule(human);
+  coordinator.stop();
+  await coordinator.run("message");
+
+  const history = chatRepository.listRecent("default_event", 40);
+  assert.equal(history.length, 2);
+  assert.equal(history[1].isAI, true);
+  assert.equal(history[1].isAdmin, false);
+  assert.equal(broadcasts.length, 1);
+  assert.equal(memoryRepository.listActive().at(0).key, "opening_mood");
+  closeDb();
+});
+
+test("persisted chat never exposes the authenticated user id in public message objects", () => {
+  const db = initDb({ dbPath: ":memory:" });
+  const user = new UserRepository(db).create({ username: "chat-user", passwordHash: "hash" });
+  const chatRepository = new ChatRepository(db);
+  const saved = chatRepository.create({ ...message(1), userId: user.id });
+  assert.equal(Object.hasOwn(saved, "userId"), false);
+  assert.equal(Object.hasOwn(chatRepository.listRecent().at(0), "userId"), false);
+  assert.equal(db.query("SELECT user_id FROM chat_messages WHERE id = ?").get(saved.id).user_id, user.id);
+  closeDb();
+});
+
+test("reset ignores an in-flight AI result after chat history is cleared", async () => {
+  const db = initDb({ dbPath: ":memory:" });
+  const chatRepository = new ChatRepository(db);
+  const memoryRepository = new ChatAiMemoryRepository(db);
+  const human = chatRepository.create(message(1, "Mọi người nghe gì tiếp?"));
+  let resolveProvider;
+  const fetchImpl = () =>
+    new Promise((resolve) => {
+      resolveProvider = () => resolve(jsonResponse({ action: "reply", confidence: 0.99, reply: "Nghe V-pop nhé!", memoryUpdates: [] }));
+    });
+  const coordinator = new ChatAiCoordinator({
+    chatRepository,
+    memoryRepository,
+    getSettings: () => ({ enabled: true, contextCharBudget: 100_000 }),
+    getRoomState: () => ({}),
+    onAiMessage() {
+      throw new Error("A stale AI message must not be broadcast");
+    },
+    providerOptions: { apiKey: "test-key", fetchImpl },
+    logger: { warn() {} },
+  });
+  coordinator.schedule(human);
+  clearTimeout(coordinator.debounceTimer);
+  coordinator.debounceTimer = null;
+  const run = coordinator.run("message");
+  coordinator.reset();
+  chatRepository.clear();
+  resolveProvider();
+  await run;
+  assert.equal(chatRepository.listRecent().length, 0);
+  closeDb();
+});
+
+test("silent proactive checks are throttled while a manual admin kick remains immediate", async () => {
+  const db = initDb({ dbPath: ":memory:" });
+  const chatRepository = new ChatRepository(db);
+  const memoryRepository = new ChatAiMemoryRepository(db);
+  chatRepository.create(message(1, "Phòng đang yên lặng"));
+  const settings = normalizeChatAiSettings({ enabled: true, proactiveIdleMinutes: 1 });
+  const coordinator = new ChatAiCoordinator({
+    chatRepository,
+    memoryRepository,
+    getSettings: () => settings,
+    getRoomState: () => ({}),
+    onAiMessage() {},
+    providerOptions: {
+      apiKey: "test-key",
+      fetchImpl: async () => jsonResponse({ action: "stay_silent", confidence: 0.9, memoryUpdates: [] }),
+    },
+    logger: { warn() {} },
+  });
+
+  await coordinator.run("idle");
+  assert.ok(coordinator.callDelay(settings, "idle") > 19 * 60 * 1000);
+  assert.equal(coordinator.callDelay(settings, "manual"), 0);
+  closeDb();
+});
+
+test("clearing inferred AI state keeps pinned memory", () => {
+  const db = initDb({ dbPath: ":memory:" });
+  const memoryRepository = new ChatAiMemoryRepository(db);
+  const pinned = memoryRepository.upsert({
+    key: "office_rule",
+    type: "fact",
+    content: "Không phát nội dung nhạy cảm",
+    confidence: 1,
+    sourceMessageIds: ["admin"],
+  });
+  memoryRepository.setPinned(pinned.id, true);
+  memoryRepository.upsert({
+    key: "temporary_mood",
+    type: "topic",
+    content: "Đang thích nhạc chill",
+    confidence: 0.9,
+    sourceMessageIds: ["message"],
+  });
+  memoryRepository.saveSummary("Một tóm tắt", 10);
+  memoryRepository.clearConversationState();
+
+  const memories = memoryRepository.listActive();
+  assert.equal(memories.length, 1);
+  assert.equal(memories[0].key, "office_rule");
+  assert.equal(memoryRepository.getSummary().content, "");
+  closeDb();
+});

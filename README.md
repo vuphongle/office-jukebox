@@ -54,6 +54,10 @@ dùng cho mọi sự kiện.
 - 💬 **Góp ý từ khách** — khách có thể gửi ý tưởng hoặc báo lỗi ngay trên trang
   `/guest`; người phụ trách xem, xóa, bật/tắt tính năng và theo dõi thống kê tại
   `/feedback`.
+- 🧠 **AI chat tự chủ (tùy chọn)** — AI đọc hội thoại theo ngân sách tối đa
+  100.000 ký tự, tự quyết định lúc nên trả lời hoặc im lặng, duy trì rolling
+  summary và memory sự kiện có thời hạn. Admin đặt tên, phong cách, kiến thức,
+  mức chủ động, cooldown và quota tại `/admin`.
 - 🔒 **Mật khẩu người phụ trách** — đăng nhập tùy chọn bảo vệ trang máy chiếu
   *và* các điều khiển WebSocket; khách không bị ảnh hưởng.
 - 🛡 **Rào chắn hàng đợi** — từ chối bài trùng, thời gian chờ theo từng điện
@@ -170,6 +174,32 @@ bài hát phản kháng sẽ bị phát hiện trong những sự kiện xã h�
 > bài trên web và đánh giá lời bài hát thực tế (~$0.005 cho mỗi yêu cầu được
 > kiểm duyệt, chậm hơn vài giây).
 
+## AI tự chủ trong phòng chat
+
+AI chat mặc định tắt và được quản lý tại tab **Góp ý & Chat** trong `/admin`.
+Khi bật, AI đánh giá hội thoại sau mỗi nhóm tin nhắn mà không cần người dùng tag
+hay gọi tên. Tin nhắn người dùng vẫn được phát ngay; request AI chạy nền, lỗi
+provider chỉ được ghi trạng thái cho admin và không làm gián đoạn chat.
+
+Chat được lưu trong SQLite. Client chỉ nhận 40 tin gần nhất để giữ UI nhẹ, còn AI
+có thể lấy lịch sử theo ngân sách ký tự do admin đặt (8.000–100.000). Phần cũ
+được rolling summary; các fact/preference/decision/topic ổn định có thể được lưu
+thành memory có nguồn, confidence và thời hạn. Admin có thể xem, ghim, xóa hoặc
+reset memory. AI không được tự thêm/xóa bài, chỉnh điểm hay dùng quyền admin.
+
+Chat AI dùng cấu hình provider riêng; nếu `CHAT_AI_API_KEY` trống thì fallback về
+`LLM_*` của bộ lọc:
+
+```ini
+CHAT_AI_API_KEY=sk-...
+CHAT_AI_BASE_URL=https://flowgiare.com/v1
+CHAT_AI_MODEL=antigravity/gemini-3.7-flash-high
+```
+
+API key chỉ được đặt trong `.env` của máy chạy. Khi AI bật, nội dung chat và phần
+ngữ cảnh liên quan có thể được gửi tới provider đã cấu hình; giao diện khách hiển
+thị thông báo này ngay trong panel chat.
+
 ## Chạy trên máy chủ gia đình (Docker + proxy ngược)
 
 Máy chủ tự xây dựng image từ mã nguồn — không cần registry, không cần đăng nhập:
@@ -242,13 +272,14 @@ danh sách đầy đủ kèm chú thích). Các mục chính:
 | `ADMIN_USERNAME` / `ADMIN_PASSWORD` | Tạo tài khoản admin đầu tiên; cần đặt trước lần khởi động đầu |
 | `APP_TIMEZONE` | Múi giờ tính ngày điểm danh (mặc định `Asia/Ho_Chi_Minh`) |
 | `LLM_API_KEY` / `LLM_BASE_URL` / `LLM_MODEL` | Bất kỳ nhà cung cấp nào tương thích OpenAI cho bộ lọc |
+| `CHAT_AI_API_KEY` / `CHAT_AI_BASE_URL` / `CHAT_AI_MODEL` | Provider tương thích OpenAI cho AI chat; fallback về `LLM_*` nếu key riêng trống |
 | `EVENT_CONTEXT` | Mô tả ban đầu về sự kiện cho AI (có thể sửa trực tiếp) |
 | `PORT` | Cổng lắng nghe (mặc định `45416`) |
 
-Trạng thái bộ lọc, chế độ kiểm duyệt, thời gian chờ và bối cảnh sự kiện đều có
-thể sửa từ trang máy chiếu khi đang chạy và được lưu trong
-`data/settings.json` — `.env` chỉ cung cấp giá trị khởi tạo cho lần chạy đầu
-tiên.
+Trạng thái bộ lọc, chế độ kiểm duyệt, thời gian chờ, bối cảnh sự kiện và cấu hình
+hành vi AI chat đều có thể sửa khi đang chạy và được lưu trong
+`data/settings.json`. Provider/key/model vẫn chỉ nằm ở `.env`; lịch sử chat,
+summary và memory nằm trong `data/jukebox.db`.
 
 ## Bố cục dự án
 

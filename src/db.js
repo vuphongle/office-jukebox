@@ -141,6 +141,47 @@ export function initDb({ dbPath = DEFAULT_DB_PATH, adminUser = process.env.ADMIN
       claimed_at TEXT NOT NULL,
       PRIMARY KEY(drop_id, user_id)
     );
+
+    CREATE TABLE IF NOT EXISTS chat_messages (
+      seq INTEGER PRIMARY KEY AUTOINCREMENT,
+      id TEXT UNIQUE NOT NULL,
+      event_id TEXT NOT NULL DEFAULT 'default_event' REFERENCES events(id),
+      user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+      sender_id TEXT NOT NULL DEFAULT '',
+      name TEXT NOT NULL,
+      text TEXT NOT NULL,
+      is_admin INTEGER NOT NULL DEFAULT 0,
+      is_ai INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_chat_messages_event_seq
+      ON chat_messages(event_id, seq DESC);
+
+    CREATE TABLE IF NOT EXISTS chat_ai_summaries (
+      event_id TEXT PRIMARY KEY REFERENCES events(id),
+      content TEXT NOT NULL DEFAULT '',
+      covered_through_seq INTEGER NOT NULL DEFAULT 0,
+      updated_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS chat_ai_memories (
+      id TEXT PRIMARY KEY,
+      event_id TEXT NOT NULL DEFAULT 'default_event' REFERENCES events(id),
+      memory_key TEXT NOT NULL,
+      memory_type TEXT NOT NULL CHECK(memory_type IN ('fact', 'preference', 'decision', 'topic')),
+      content TEXT NOT NULL,
+      confidence REAL NOT NULL DEFAULT 0,
+      pinned INTEGER NOT NULL DEFAULT 0,
+      status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active', 'deleted')),
+      source_message_ids TEXT NOT NULL DEFAULT '[]',
+      expires_at TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      last_used_at TEXT,
+      UNIQUE(event_id, memory_key)
+    );
+    CREATE INDEX IF NOT EXISTS idx_chat_ai_memories_event_status
+      ON chat_ai_memories(event_id, status, pinned DESC, updated_at DESC);
   `);
 
   // Existing databases created before repeat voting need a persistent
