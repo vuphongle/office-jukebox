@@ -88,6 +88,7 @@ const queueRepo = new QueueRepository(db);
 const dropRepo = new DropRepository(db);
 const chatRepo = new ChatRepository(db);
 const chatAiMemoryRepo = new ChatAiMemoryRepository(db);
+chatRepo.prune();
 
 if (!db.query("SELECT 1 FROM users WHERE role = 'admin' AND status = 'active' LIMIT 1").get()) {
   console.warn("[auth] Chưa có tài khoản admin active. Đặt ADMIN_USERNAME và ADMIN_PASSWORD trước lần khởi động đầu để tạo admin.");

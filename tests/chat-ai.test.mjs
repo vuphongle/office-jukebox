@@ -6,6 +6,7 @@ import { ChatRepository } from "../src/repositories/chatRepository.js";
 import { ChatAiMemoryRepository } from "../src/repositories/chatAiMemoryRepository.js";
 import {
   buildChatAiPrompt,
+  chatAiConfigured,
   decideChatAi,
   normalizeChatAiSettings,
   selectRecentMessagesByChars,
@@ -53,6 +54,21 @@ test("chat AI settings allow a 100k character context and keep bounded admin fie
   assert.equal(settings.name.length, 40);
   assert.equal(settings.stylePrompt.length, 1500);
   assert.equal(settings.knowledgePrompt.length, 3000);
+});
+
+test("chat AI provider detection falls back when the dedicated key is blank", () => {
+  const previousChatKey = process.env.CHAT_AI_API_KEY;
+  const previousLlmKey = process.env.LLM_API_KEY;
+  try {
+    process.env.CHAT_AI_API_KEY = "";
+    process.env.LLM_API_KEY = "fallback-test-key";
+    assert.equal(chatAiConfigured(), true);
+  } finally {
+    if (previousChatKey === undefined) delete process.env.CHAT_AI_API_KEY;
+    else process.env.CHAT_AI_API_KEY = previousChatKey;
+    if (previousLlmKey === undefined) delete process.env.LLM_API_KEY;
+    else process.env.LLM_API_KEY = previousLlmKey;
+  }
 });
 
 test("character context keeps complete newest messages and stays inside the configured budget", () => {
@@ -209,6 +225,53 @@ test("reset ignores an in-flight AI result after chat history is cleared", async
   closeDb();
 });
 
+test("reset prevents an in-flight summary from recreating cleared conversation state", async () => {
+  const db = initDb({ dbPath: ":memory:" });
+  const chatRepository = new ChatRepository(db);
+  const memoryRepository = new ChatAiMemoryRepository(db);
+  let latest;
+  for (let index = 0; index < 50; index += 1) {
+    latest = chatRepository.create(message(index, "x".repeat(280)));
+  }
+  let providerCall = 0;
+  let resolveSummary;
+  let markSummaryStarted;
+  const summaryStarted = new Promise((resolve) => {
+    markSummaryStarted = resolve;
+  });
+  const fetchImpl = async () => {
+    providerCall += 1;
+    if (providerCall === 1) {
+      return jsonResponse({ action: "stay_silent", confidence: 0.9, memoryUpdates: [] });
+    }
+    markSummaryStarted();
+    return new Promise((resolve) => {
+      resolveSummary = () => resolve(jsonResponse({ summary: "Tóm tắt đã cũ" }));
+    });
+  };
+  const coordinator = new ChatAiCoordinator({
+    chatRepository,
+    memoryRepository,
+    getSettings: () => ({ enabled: true, summaryEnabled: true, contextCharBudget: 100_000 }),
+    getRoomState: () => ({}),
+    onAiMessage() {},
+    providerOptions: { apiKey: "test-key", fetchImpl },
+    logger: { warn() {} },
+  });
+  coordinator.pendingSeq = latest.seq;
+  const run = coordinator.run("message");
+  await summaryStarted;
+  coordinator.reset();
+  chatRepository.clear();
+  memoryRepository.clearConversationState();
+  resolveSummary();
+  await run;
+
+  assert.equal(chatRepository.listRecent().length, 0);
+  assert.equal(memoryRepository.getSummary().content, "");
+  closeDb();
+});
+
 test("silent proactive checks are throttled while a manual admin kick remains immediate", async () => {
   const db = initDb({ dbPath: ":memory:" });
   const chatRepository = new ChatRepository(db);
@@ -259,5 +322,19 @@ test("clearing inferred AI state keeps pinned memory", () => {
   assert.equal(memories.length, 1);
   assert.equal(memories[0].key, "office_rule");
   assert.equal(memoryRepository.getSummary().content, "");
+  closeDb();
+});
+
+test("chat retention pruning keeps only the newest bounded messages", () => {
+  const db = initDb({ dbPath: ":memory:" });
+  const chatRepository = new ChatRepository(db);
+  for (let index = 0; index < 6; index += 1) {
+    chatRepository.create(message(index));
+  }
+  assert.equal(chatRepository.prune("default_event", 3), 3);
+  assert.deepEqual(
+    chatRepository.listRecent("default_event", 10).map((item) => item.id),
+    ["message-3", "message-4", "message-5"]
+  );
   closeDb();
 });

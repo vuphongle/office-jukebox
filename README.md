@@ -181,11 +181,12 @@ Khi bật, AI đánh giá hội thoại sau mỗi nhóm tin nhắn mà không c�
 hay gọi tên. Tin nhắn người dùng vẫn được phát ngay; request AI chạy nền, lỗi
 provider chỉ được ghi trạng thái cho admin và không làm gián đoạn chat.
 
-Chat được lưu trong SQLite. Client chỉ nhận 40 tin gần nhất để giữ UI nhẹ, còn AI
-có thể lấy lịch sử theo ngân sách ký tự do admin đặt (8.000–100.000). Phần cũ
-được rolling summary; các fact/preference/decision/topic ổn định có thể được lưu
-thành memory có nguồn, confidence và thời hạn. Admin có thể xem, ghim, xóa hoặc
-reset memory. AI không được tự thêm/xóa bài, chỉnh điểm hay dùng quyền admin.
+Chat được lưu trong SQLite và giữ tối đa khoảng 5.000 tin gần nhất cho mỗi sự
+kiện. Client chỉ nhận 40 tin gần nhất để giữ UI nhẹ, còn AI có thể lấy lịch sử
+theo ngân sách ký tự do admin đặt (8.000–100.000). Phần cũ được rolling summary;
+các fact/preference/decision/topic ổn định có thể được lưu thành memory có nguồn,
+confidence và thời hạn. Admin có thể xem, ghim, xóa hoặc reset memory. AI không
+được tự thêm/xóa bài, chỉnh điểm hay dùng quyền admin.
 
 Chat AI dùng cấu hình provider riêng; nếu `CHAT_AI_API_KEY` trống thì fallback về
 `LLM_*` của bộ lọc:

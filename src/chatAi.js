@@ -47,7 +47,11 @@ export function normalizeChatAiSettings(input = {}) {
 }
 
 export function chatAiConfigured(opts = {}) {
-  return !!(opts.apiKey ?? process.env.CHAT_AI_API_KEY ?? process.env.LLM_API_KEY ?? "");
+  const apiKey =
+    opts.apiKey !== undefined
+      ? opts.apiKey
+      : process.env.CHAT_AI_API_KEY || process.env.LLM_API_KEY || "";
+  return !!apiKey;
 }
 
 function truncate(text, maxLength) {

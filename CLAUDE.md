@@ -87,8 +87,9 @@ hình đánh giá mức phù hợp với dịp, không chỉ mức độ nhạy 
 **AI chat tự chủ** (`src/chatAi.js`, `src/chatAiCoordinator.js`) dùng WebSocket
 chat hiện có nhưng chỉ server được tạo message `isAI`. AI đánh giá từng batch tin
 người dùng mà không cần tag, giới hạn context theo ký tự (tối đa 100.000), và
-không chặn việc phát tin người dùng. Raw chat nằm trong SQLite; rolling summary
-và memory sự kiện được truy cập qua các repository riêng. `CHAT_AI_API_KEY`,
+không chặn việc phát tin người dùng. Raw chat nằm trong SQLite và được giới hạn
+khoảng 5.000 tin gần nhất mỗi event; rolling summary và memory sự kiện được truy
+cập qua các repository riêng. `CHAT_AI_API_KEY`,
 `CHAT_AI_BASE_URL`, `CHAT_AI_MODEL` ưu tiên cấu hình provider chat và fallback về
 `LLM_*`; key không bao giờ được đưa vào settings, API hoặc WebSocket. Cấu hình
 hành vi không bí mật được admin sửa và lưu dưới `chatAi` trong

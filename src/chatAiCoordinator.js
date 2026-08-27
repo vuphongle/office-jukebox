@@ -148,15 +148,16 @@ export class ChatAiCoordinator {
         this.lastStatus = { ...this.lastStatus, state: "provider_error", lastAction: null, reasonCode: "provider_error" };
         return;
       }
-      if (runGeneration !== this.generation || !this.getChatOn() || !normalizeChatAiSettings(this.getSettings()).enabled) {
+      const currentSettings = normalizeChatAiSettings(this.getSettings());
+      if (runGeneration !== this.generation || !this.getChatOn() || !currentSettings.enabled) {
         return;
       }
 
-      this.applyMemoryUpdates(result.memoryUpdates, settings);
+      this.applyMemoryUpdates(result.memoryUpdates, currentSettings);
       const shouldReply =
         result.action === "reply" &&
         result.reply &&
-        result.confidence >= confidenceThreshold(settings.autonomy, trigger);
+        result.confidence >= confidenceThreshold(currentSettings.autonomy, trigger);
       this.lastStatus = {
         state: "idle",
         lastRunAt: new Date().toISOString(),
@@ -169,7 +170,7 @@ export class ChatAiCoordinator {
         const saved = this.chatRepository.create(
           {
             id: randomUUID(),
-            name: settings.name,
+            name: currentSettings.name,
             text: result.reply,
             senderId: "system:chat-ai",
             userId: null,
@@ -185,7 +186,7 @@ export class ChatAiCoordinator {
         this.onAiMessage(saved);
       }
 
-      await this.maybeRefreshSummary(settings);
+      await this.maybeRefreshSummary(currentSettings, runGeneration);
     } catch (error) {
       this.logger.warn(`[chat-ai] coordinator error: ${error?.message || "unknown"}`);
       this.lastStatus = { ...this.lastStatus, state: "provider_error", reasonCode: "internal_error" };
@@ -209,7 +210,7 @@ export class ChatAiCoordinator {
     }
   }
 
-  async maybeRefreshSummary(settings) {
+  async maybeRefreshSummary(settings, runGeneration = this.generation) {
     if (!settings.summaryEnabled) return;
     const current = this.memoryRepository.getSummary(this.eventId);
     const stats = this.chatRepository.statsAfterSeq(this.eventId, current.coveredThroughSeq);
@@ -221,7 +222,17 @@ export class ChatAiCoordinator {
       { previousSummary: current.content, messages: batch, settings },
       this.providerOptions
     );
-    if (summary) this.memoryRepository.saveSummary(summary, batch.at(-1).seq, this.eventId);
+    const currentSettings = normalizeChatAiSettings(this.getSettings());
+    if (
+      !summary ||
+      runGeneration !== this.generation ||
+      !this.getChatOn() ||
+      !currentSettings.enabled ||
+      !currentSettings.summaryEnabled
+    ) {
+      return;
+    }
+    this.memoryRepository.saveSummary(summary, batch.at(-1).seq, this.eventId);
   }
 
   async maybeRunProactive() {

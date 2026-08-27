@@ -1,4 +1,6 @@
 export const DEFAULT_EVENT_ID = "default_event";
+export const CHAT_RETENTION_MESSAGES = 5000;
+const CHAT_PRUNE_INTERVAL = 100;
 
 function mapMessage(row) {
   if (!row) return null;
@@ -18,6 +20,7 @@ function mapMessage(row) {
 export class ChatRepository {
   constructor(db) {
     this.db = db;
+    this.insertsSincePrune = new Map();
   }
 
   create(message, eventId = DEFAULT_EVENT_ID) {
@@ -37,7 +40,15 @@ export class ChatRepository {
         message.createdAt,
       ]
     );
-    return mapMessage(this.db.query("SELECT * FROM chat_messages WHERE id = ?").get(message.id));
+    const created = mapMessage(this.db.query("SELECT * FROM chat_messages WHERE id = ?").get(message.id));
+    const inserts = (this.insertsSincePrune.get(eventId) || 0) + 1;
+    if (inserts >= CHAT_PRUNE_INTERVAL) {
+      this.prune(eventId);
+      this.insertsSincePrune.set(eventId, 0);
+    } else {
+      this.insertsSincePrune.set(eventId, inserts);
+    }
+    return created;
   }
 
   listRecent(eventId = DEFAULT_EVENT_ID, limit = 40) {
@@ -73,6 +84,20 @@ export class ChatRepository {
          FROM chat_messages WHERE event_id = ? AND seq > ?`
       )
       .get(eventId, Math.max(0, Number(afterSeq) || 0));
+  }
+
+  prune(eventId = DEFAULT_EVENT_ID, maxMessages = CHAT_RETENTION_MESSAGES) {
+    const boundedLimit = Math.min(100000, Math.max(1, Number(maxMessages) || CHAT_RETENTION_MESSAGES));
+    const result = this.db.run(
+      `DELETE FROM chat_messages
+       WHERE event_id = ?
+         AND seq <= COALESCE(
+           (SELECT seq FROM chat_messages WHERE event_id = ? ORDER BY seq DESC LIMIT 1 OFFSET ?),
+           -1
+         )`,
+      [eventId, eventId, boundedLimit]
+    );
+    return Number(result.changes || 0);
   }
 
   clear(eventId = DEFAULT_EVENT_ID) {
