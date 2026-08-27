@@ -451,6 +451,8 @@ let chatUnreadCount = 0;
 let chatPending = false;
 let chatMessages = [];
 let queueWs = null;
+const CHAT_DISPLAY_LIMIT = 40;
+const CHAT_BOTTOM_LOCK_PX = 64;
 const pendingRemovals = new Set();
 const pendingVotes = new Set();
 
@@ -464,7 +466,20 @@ function renderChatUnread() {
   chatUnread.classList.toggle("hidden", chatUnreadCount === 0 || chatOpen);
 }
 
-function renderChatMessages() {
+function isChatNearLatest() {
+  const distance = chatMessagesEl.scrollHeight - chatMessagesEl.scrollTop - chatMessagesEl.clientHeight;
+  return distance <= CHAT_BOTTOM_LOCK_PX;
+}
+
+function scheduleChatScrollToLatest() {
+  const schedule = window.requestAnimationFrame || ((callback) => window.setTimeout(callback, 0));
+  schedule(() => {
+    chatMessagesEl.scrollTop = chatMessagesEl.scrollHeight;
+  });
+}
+
+function renderChatMessages({ scrollToLatest = false } = {}) {
+  const shouldScroll = scrollToLatest || isChatNearLatest();
   chatMessagesEl.innerHTML = "";
   if (!chatMessages.length) {
     chatMessagesEl.innerHTML = '<p class="chat-empty">Chưa có tin nhắn. Hãy bắt đầu cuộc trò chuyện!</p>';
@@ -505,10 +520,10 @@ function renderChatMessages() {
     item.append(name, text, meta);
     chatMessagesEl.appendChild(item);
   }
-  chatMessagesEl.scrollTop = chatMessagesEl.scrollHeight;
+  if (shouldScroll) scheduleChatScrollToLatest();
 }
 
-function appendChatMessage(message, { notify = true } = {}) {
+function appendChatMessage(message, { notify = true, render = true } = {}) {
   if (!message || typeof message.name !== "string" || typeof message.text !== "string") return;
   chatMessages.push({
     name: message.name.slice(0, 40),
@@ -521,8 +536,8 @@ function appendChatMessage(message, { notify = true } = {}) {
       ? { name: String(message.rank.name || "").slice(0, 40), badge: String(message.rank.badge || "").slice(0, 8) }
       : null,
   });
-  if (chatMessages.length > 40) chatMessages = chatMessages.slice(-40);
-  renderChatMessages();
+  if (chatMessages.length > CHAT_DISPLAY_LIMIT) chatMessages = chatMessages.slice(-CHAT_DISPLAY_LIMIT);
+  if (render) renderChatMessages();
   if (notify && !chatOpen) {
     chatUnreadCount += 1;
     renderChatUnread();
@@ -537,6 +552,10 @@ function setChatOpen(open) {
   if (open) {
     chatUnreadCount = 0;
     renderChatUnread();
+    // The history can arrive while the panel is hidden, when scrollHeight is
+    // not measurable yet. Scroll again after the panel is visible so a reopen
+    // always starts at the newest message instead of the first one.
+    scheduleChatScrollToLatest();
     window.setTimeout(() => {
       if (chatOpen && chatOn) chatMessageEl.focus();
     }, 0);
@@ -1231,9 +1250,10 @@ function connectWs() {
       renderQueue(msg.state);
     } else if (msg.type === "chatHistory") {
       chatMessages = [];
-      for (const message of Array.isArray(msg.messages) ? msg.messages.slice(-40) : []) {
-        appendChatMessage(message, { notify: false });
+      for (const message of Array.isArray(msg.messages) ? msg.messages.slice(-CHAT_DISPLAY_LIMIT) : []) {
+        appendChatMessage(message, { notify: false, render: false });
       }
+      renderChatMessages({ scrollToLatest: true });
       chatUnreadCount = 0;
       renderChatUnread();
     } else if (msg.type === "chatMessage") {
