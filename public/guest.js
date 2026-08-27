@@ -437,12 +437,15 @@ const chatSend = document.getElementById("chat-send");
 const chatStatus = document.getElementById("chat-status");
 const chatUnread = document.getElementById("chat-unread");
 const chatOffState = document.getElementById("chat-off-state");
+const chatSubtitle = document.getElementById("chat-subtitle");
 let resolvedYouTubeSong = null;
 let queueLimitOn = false;
 let queueLimit = 10;
 let requireName = false;
 let feedbackOn = true;
 let chatOn = true;
+let chatAiOn = false;
+let chatAiName = "Office DJ";
 let chatOpen = false;
 let chatUnreadCount = 0;
 let chatPending = false;
@@ -469,14 +472,14 @@ function renderChatMessages() {
   }
   for (const message of chatMessages) {
     const item = document.createElement("article");
-    item.className = `chat-message${message.senderId === clientId ? " is-own" : ""}${message.isAdmin ? " is-admin" : ""}`;
+    item.className = `chat-message${message.senderId === clientId ? " is-own" : ""}${message.isAdmin ? " is-admin" : ""}${message.isAI ? " is-ai" : ""}`;
     const name = document.createElement("strong");
     name.className = "chat-message-name";
     name.textContent = message.name;
-    if (message.isAdmin) {
+    if (message.isAdmin || message.isAI) {
       const badge = document.createElement("span");
       badge.className = "chat-message-badge";
-      badge.textContent = "ADMIN";
+      badge.textContent = message.isAI ? "AI" : "ADMIN";
       name.append(" ", badge);
     }
     const text = document.createElement("p");
@@ -495,6 +498,7 @@ function appendChatMessage(message, { notify = true } = {}) {
     text: message.text.slice(0, 280),
     senderId: typeof message.senderId === "string" ? message.senderId.slice(0, 64) : "",
     isAdmin: message.isAdmin === true,
+    isAI: message.isAI === true,
   });
   if (chatMessages.length > 40) chatMessages = chatMessages.slice(-40);
   renderChatMessages();
@@ -522,6 +526,11 @@ function setChatOpen(open) {
 }
 
 function renderChatSettings() {
+  if (chatSubtitle) {
+    chatSubtitle.textContent = chatAiOn
+      ? `${chatAiName} có thể đọc ngữ cảnh và tự tham gia phòng chat`
+      : "Tin nhắn mới nhất trong phòng";
+  }
   if (!chatOn) {
     chatOpen = false;
     chatPanel.classList.add("hidden");
@@ -1187,6 +1196,8 @@ function connectWs() {
       if (typeof msg.requireName === "boolean") requireName = msg.requireName;
       if (typeof msg.feedbackOn === "boolean") feedbackOn = msg.feedbackOn;
       if (typeof msg.chatOn === "boolean") chatOn = msg.chatOn;
+      if (typeof msg.chatAiOn === "boolean") chatAiOn = msg.chatAiOn;
+      if (typeof msg.chatAiName === "string") chatAiName = msg.chatAiName.slice(0, 40);
       renderRequestSettings();
       renderFeedback();
       renderChatSettings();

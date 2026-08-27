@@ -84,6 +84,17 @@ khác nhau) và đừng đặt `temperature` trừ khi `LLM_TEMPERATURE` đượ
 (một số mô hình từ chối giá trị tùy ý). Prompt bao gồm `EVENT_CONTEXT` để mô
 hình đánh giá mức phù hợp với dịp, không chỉ mức độ nhạy cảm.
 
+**AI chat tự chủ** (`src/chatAi.js`, `src/chatAiCoordinator.js`) dùng WebSocket
+chat hiện có nhưng chỉ server được tạo message `isAI`. AI đánh giá từng batch tin
+người dùng mà không cần tag, giới hạn context theo ký tự (tối đa 100.000), và
+không chặn việc phát tin người dùng. Raw chat nằm trong SQLite và được giới hạn
+khoảng 5.000 tin gần nhất mỗi event; rolling summary và memory sự kiện được truy
+cập qua các repository riêng. `CHAT_AI_API_KEY`,
+`CHAT_AI_BASE_URL`, `CHAT_AI_MODEL` ưu tiên cấu hình provider chat và fallback về
+`LLM_*`; key không bao giờ được đưa vào settings, API hoặc WebSocket. Cấu hình
+hành vi không bí mật được admin sửa và lưu dưới `chatAi` trong
+`data/settings.json`.
+
 **Không phụ thuộc dotenv** — `server.js` có bộ nạp `.env` tối giản riêng.
 Dependency chỉ gồm express, ws, qrcode; hãy giữ nguyên như vậy trừ khi có lý do
 thực sự cần thiết.

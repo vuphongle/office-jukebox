@@ -759,6 +759,9 @@ header .desktop-intro { display: none; }
 .chat-message.is-own .chat-message-name { text-align: right; }
 .chat-message.is-admin { border-color: oklch(68% .18 32 / .42); background: oklch(68% .18 32 / .12); }
 .chat-message.is-admin .chat-message-name { color: oklch(82% .12 42); }
+.chat-message.is-ai { border-color: oklch(72% .15 250 / .44); background: oklch(62% .15 250 / .13); }
+.chat-message.is-ai .chat-message-name { color: oklch(86% .09 245); }
+.chat-message.is-ai .chat-message-badge { background: oklch(62% .15 250); color: oklch(98% .01 250); }
 .chat-message-badge { display: inline-block; margin-left: 4px; padding: 2px 5px; border-radius: 999px; background: var(--red); color: var(--red-ink); font: 700 8px/1 var(--sans); letter-spacing: .05em; vertical-align: 1px; }
 @keyframes chat-message-in { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
 .chat-message-name { display: block; margin-bottom: 3px; color: var(--gold); font: 700 11px/1.2 var(--sans); }

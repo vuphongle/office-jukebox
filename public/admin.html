@@ -256,6 +256,92 @@
           <div id="feedback-list" class="feedback-items-scroll"></div>
         </div>
       </div>
+
+      <div class="panel-card ai-settings-card mt-24">
+        <div class="panel-header">
+          <div>
+            <h2>AI tự chủ trong phòng Chat</h2>
+            <p class="card-desc">AI đọc ngữ cảnh theo ngân sách ký tự, tự quyết định trả lời và ghi nhớ thông tin hữu ích.</p>
+          </div>
+          <span id="chat-ai-provider-status" class="badge">Đang kiểm tra…</span>
+        </div>
+        <div class="grid-2col">
+          <form id="chat-ai-settings-form" class="admin-form ai-settings-form">
+            <label class="check-row" for="chat-ai-enabled">
+              <input id="chat-ai-enabled" type="checkbox" />
+              <span>Bật AI tự chủ</span>
+            </label>
+            <div class="form-group">
+              <label for="chat-ai-name">Tên AI</label>
+              <input id="chat-ai-name" type="text" maxlength="40" placeholder="Office DJ" />
+            </div>
+            <div class="form-group">
+              <label for="chat-ai-autonomy">Mức chủ động</label>
+              <select id="chat-ai-autonomy">
+                <option value="low">Thấp — chỉ nói khi rất hữu ích</option>
+                <option value="balanced">Cân bằng</option>
+                <option value="high">Cao — tham gia tích cực hơn</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label for="chat-ai-style">Phong cách trả lời</label>
+              <textarea id="chat-ai-style" maxlength="1500" rows="4"></textarea>
+            </div>
+            <div class="form-group">
+              <label for="chat-ai-knowledge">Kiến thức/FAQ do admin cung cấp</label>
+              <textarea id="chat-ai-knowledge" maxlength="3000" rows="5" placeholder="Nội quy, lịch sự kiện, thông tin AI được phép dùng…"></textarea>
+            </div>
+            <div class="ai-settings-grid">
+              <div class="form-group">
+                <label for="chat-ai-context-chars">Context tối đa (ký tự)</label>
+                <input id="chat-ai-context-chars" type="number" min="8000" max="100000" step="1000" />
+              </div>
+              <div class="form-group">
+                <label for="chat-ai-cooldown">Cooldown (giây)</label>
+                <input id="chat-ai-cooldown" type="number" min="10" max="300" />
+              </div>
+              <div class="form-group">
+                <label for="chat-ai-max-hour">Phản hồi tối đa/giờ</label>
+                <input id="chat-ai-max-hour" type="number" min="1" max="60" />
+              </div>
+              <div class="form-group">
+                <label for="chat-ai-idle-minutes">Khuấy động sau (phút, 0 = tắt)</label>
+                <input id="chat-ai-idle-minutes" type="number" min="0" max="120" />
+              </div>
+            </div>
+            <div class="ai-option-row">
+              <label class="check-row" for="chat-ai-memory-enabled">
+                <input id="chat-ai-memory-enabled" type="checkbox" />
+                <span>Tự cập nhật memory chọn lọc</span>
+              </label>
+              <label class="check-row" for="chat-ai-summary-enabled">
+                <input id="chat-ai-summary-enabled" type="checkbox" />
+                <span>Tự tóm tắt hội thoại cũ</span>
+              </label>
+            </div>
+            <div class="ai-form-actions">
+              <button id="chat-ai-save" type="submit" class="submit-btn gold">Lưu cấu hình AI</button>
+              <button id="chat-ai-kick" type="button" class="action-btn">Khuấy động ngay</button>
+            </div>
+            <div id="chat-ai-status" class="chat-status" aria-live="polite"></div>
+          </form>
+
+          <div class="ai-memory-panel">
+            <div class="panel-header">
+              <div>
+                <h2>Bộ nhớ AI</h2>
+                <p class="card-desc">Memory được suy luận từ hội thoại; memory đã ghim không bị AI ghi đè.</p>
+              </div>
+              <button id="chat-ai-memory-reset" type="button" class="action-btn btn-warn">Reset bộ nhớ</button>
+            </div>
+            <div class="ai-summary-box">
+              <strong>Tóm tắt hội thoại</strong>
+              <p id="chat-ai-summary">Chưa có tóm tắt.</p>
+            </div>
+            <div id="chat-ai-memory-list" class="ai-memory-list"></div>
+          </div>
+        </div>
+      </div>
     </section>
   </main>
 
