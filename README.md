@@ -236,6 +236,9 @@ comments.
 | CHAT_AI_API_KEY / CHAT_AI_BASE_URL / CHAT_AI_MODEL | Chat provider, falling back to LLM_* when its key is empty |
 | EVENT_CONTEXT | Initial event description sent to the AI |
 | TRUST_PROXY | Trusted reverse-proxy hop count for client-IP rate limits (default `false`) |
+| WS_MAX_CONNECTIONS_PER_IP | Concurrent WebSocket connections allowed per effective client IP (default `200`) |
+| WS_MAX_MESSAGES_PER_IP | Aggregate WebSocket messages per effective client IP per minute (default `600`) |
+| WS_MAX_TRACKED_IPS | Maximum inactive IP limiter records retained in memory (default `5000`) |
 | PORT | Listening port, default 45416 |
 
 Filter status, moderation mode, cooldown, event context, and chat AI behavior are

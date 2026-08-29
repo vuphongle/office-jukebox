@@ -10,7 +10,7 @@
 //   3. moderate()          — optional event-specific LLM decision (fail-open)
 //   4. state.add()         — add to the queue (SQLite SSOT); broadcast over WebSocket
 
-import { readFileSync, writeFileSync, mkdirSync, existsSync, renameSync } from "node:fs";
+import { readFileSync, writeFileSync, mkdirSync, existsSync, renameSync, unlinkSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
@@ -29,6 +29,7 @@ import {
   sanitizeThumbnail,
   isValidYouTubeVideoId,
 } from "./src/youtube.js";
+import { prepareRequestSong } from "./src/requestPipeline.js";
 import { moderate, moderationConfigured } from "./src/moderation.js";
 import { JukeboxState } from "./src/state.js";
 import { detectLanIp } from "./src/net.js";
@@ -65,6 +66,9 @@ import { createFixedWindowRateLimiter } from "./src/rateLimit.js";
 import { canUseHostControls, refreshSocketIdentity } from "./src/socketAuth.js";
 import { performCheckin, getLocalDate } from "./src/checkin.js";
 import { parsePagination } from "./src/pagination.js";
+import { getClientIp, parseTrustProxy } from "./src/clientIp.js";
+import { WebSocketRateLimiter } from "./src/websocketRateLimit.js";
+import { parseDurationSeconds } from "./src/duration.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -81,6 +85,8 @@ if (existsSync(envPath)) {
 
 const PORT = parseInt(process.env.PORT || "45416", 10);
 const MAX_PASSWORD_LENGTH = 256;
+const MAX_MODERATION_REASON_LENGTH = 200;
+const MAX_POINT_DROP_TITLE_LENGTH = 200;
 const LAN_IP = detectLanIp(process.env.HOST_IP);
 const PUBLIC_BASE = (process.env.PUBLIC_URL || "").replace(/\/+$/, "");
 const GUEST_URL = PUBLIC_BASE ? `${PUBLIC_BASE}/guest` : `http://${LAN_IP}:${PORT}/guest`;
@@ -159,7 +165,7 @@ function publicStateSnapshot() {
 }
 
 // --- Persisted host settings ------------------------------------------------
-const DATA_DIR = path.join(__dirname, "data");
+const DATA_DIR = process.env.JUKEBOX_DATA_DIR || path.join(__dirname, "data");
 const SETTINGS_PATH = path.join(DATA_DIR, "settings.json");
 const FEEDBACK_PATH = path.join(DATA_DIR, "feedback.json");
 let savedSettings = {};
@@ -203,39 +209,73 @@ let feedbackDigest = savedSettings.feedbackDigest && typeof savedSettings.feedba
 
 function writeJsonAtomically(filePath, value) {
   const tempPath = `${filePath}.${process.pid}.tmp`;
-  writeFileSync(tempPath, JSON.stringify(value, null, 2));
-  renameSync(tempPath, filePath);
+  let renamed = false;
+  try {
+    writeFileSync(tempPath, JSON.stringify(value, null, 2));
+    renameSync(tempPath, filePath);
+    renamed = true;
+  } finally {
+    if (!renamed) {
+      try { unlinkSync(tempPath); } catch {}
+    }
+  }
 }
 
 function saveSettings() {
-  try {
-    mkdirSync(DATA_DIR, { recursive: true });
-    writeJsonAtomically(SETTINGS_PATH, {
-      filterOn,
-      moderationMode,
-      eventContext,
-      cooldownSeconds,
-      queueLimitOn,
-      queueLimit,
-      requireName,
-      feedbackOn,
-      chatOn,
-      voteSortOn,
-      chatAi: chatAiSettings,
-      feedbackDigest,
-    });
-  } catch (err) {
-    console.warn(`[settings] unable to save: ${err.message}`);
-  }
+  mkdirSync(DATA_DIR, { recursive: true });
+  writeJsonAtomically(SETTINGS_PATH, {
+    filterOn,
+    moderationMode,
+    eventContext,
+    cooldownSeconds,
+    queueLimitOn,
+    queueLimit,
+    requireName,
+    feedbackOn,
+    chatOn,
+    voteSortOn,
+    chatAi: chatAiSettings,
+    feedbackDigest,
+  });
 }
 
 function saveFeedback() {
-  try {
-    mkdirSync(DATA_DIR, { recursive: true });
-    writeJsonAtomically(FEEDBACK_PATH, feedbackItems);
-  } catch (err) {
-    console.warn(`[feedback] unable to save: ${err.message}`);
-  }
+  mkdirSync(DATA_DIR, { recursive: true });
+  writeJsonAtomically(FEEDBACK_PATH, feedbackItems);
+}
+
+function settingsSnapshot() {
+  return {
+    filterOn,
+    moderationMode,
+    eventContext,
+    cooldownSeconds,
+    queueLimitOn,
+    queueLimit,
+    requireName,
+    feedbackOn,
+    chatOn,
+    voteSortOn,
+    chatAi: chatAiSettings,
+    feedbackDigest,
+  };
+}
+
+function restoreSettings(snapshot) {
+  ({
+    filterOn,
+    moderationMode,
+    eventContext,
+    cooldownSeconds,
+    queueLimitOn,
+    queueLimit,
+    requireName,
+    feedbackOn,
+    chatOn,
+    voteSortOn,
+    chatAi: chatAiSettings,
+    feedbackDigest,
+  } = snapshot);
 }
 
 function feedbackStats() {
@@ -255,10 +295,8 @@ app.use((_req, res, next) => {
   res.setHeader("Referrer-Policy", "same-origin");
   next();
 });
-const TRUST_PROXY = (process.env.TRUST_PROXY || "false").trim().toLowerCase();
-if (TRUST_PROXY === "true") app.set("trust proxy", true);
-else if (/^\d+$/.test(TRUST_PROXY)) app.set("trust proxy", Number(TRUST_PROXY));
-else app.set("trust proxy", false);
+const TRUST_PROXY = parseTrustProxy(process.env.TRUST_PROXY || "false");
+app.set("trust proxy", TRUST_PROXY);
 app.use(express.json({ limit: "32kb" }));
 app.use(createAuthMiddleware(db));
 
@@ -293,7 +331,7 @@ app.use(
 const loginIpLimit = createFixedWindowRateLimiter({
   windowMs: 15 * 60 * 1000,
   max: 60,
-  key: (req) => req.ip,
+  key: (req) => getClientIp(req, TRUST_PROXY),
   reason: "Có quá nhiều lần đăng nhập từ mạng này. Vui lòng thử lại sau.",
 });
 const loginUsernameLimit = createFixedWindowRateLimiter({
@@ -305,7 +343,7 @@ const loginUsernameLimit = createFixedWindowRateLimiter({
 const registerIpLimit = createFixedWindowRateLimiter({
   windowMs: 60 * 60 * 1000,
   max: 20,
-  key: (req) => req.ip,
+  key: (req) => getClientIp(req, TRUST_PROXY),
   reason: "Mạng này đã tạo quá nhiều tài khoản. Vui lòng thử lại sau.",
 });
 const registerGlobalLimit = createFixedWindowRateLimiter({
@@ -317,7 +355,7 @@ const registerGlobalLimit = createFixedWindowRateLimiter({
 const passwordIpLimit = createFixedWindowRateLimiter({
   windowMs: 15 * 60 * 1000,
   max: 20,
-  key: (req) => req.ip,
+  key: (req) => getClientIp(req, TRUST_PROXY),
   reason: "Có quá nhiều lần thử đổi mật khẩu từ mạng này. Vui lòng thử lại sau.",
 });
 const passwordUserLimit = createFixedWindowRateLimiter({
@@ -329,25 +367,25 @@ const passwordUserLimit = createFixedWindowRateLimiter({
 const hostAuthLimit = createFixedWindowRateLimiter({
   windowMs: 15 * 60 * 1000,
   max: 30,
-  key: (req) => req.ip,
+  key: (req) => getClientIp(req, TRUST_PROXY),
   reason: "Có quá nhiều lần thử truy cập host. Vui lòng thử lại sau.",
 });
 const publicReadLimit = createFixedWindowRateLimiter({
   windowMs: 60 * 1000,
   max: 120,
-  key: (req) => req.ip,
+  key: (req) => getClientIp(req, TRUST_PROXY),
   reason: "Có quá nhiều yêu cầu tìm kiếm. Vui lòng thử lại sau.",
 });
 const songRequestIpLimit = createFixedWindowRateLimiter({
   windowMs: 60 * 1000,
   max: 30,
-  key: (req) => req.ip,
+  key: (req) => getClientIp(req, TRUST_PROXY),
   reason: "Có quá nhiều yêu cầu thêm bài hát. Vui lòng thử lại sau.",
 });
 const feedbackSubmitLimit = createFixedWindowRateLimiter({
   windowMs: 30 * 1000,
   max: 1,
-  key: (req) => req.ip,
+  key: (req) => getClientIp(req, TRUST_PROXY),
   reason: "Bạn vừa gửi góp ý. Vui lòng thử lại sau ít phút.",
 });
 
@@ -668,8 +706,7 @@ const browseCache = new Map();
 const BROWSE_TTL_MS = 30 * 60 * 1000;
 const MAX_SINGLE_SECONDS = 10 * 60;
 function durationSeconds(d) {
-  if (!d || !/^[\d:]+$/.test(d)) return Infinity;
-  return d.split(":").reduce((acc, part) => acc * 60 + Number(part), 0);
+  return parseDurationSeconds(d, { maxSeconds: MAX_SINGLE_SECONDS }) ?? Infinity;
 }
 
 app.get("/api/browse", publicReadLimit, async (req, res) => {
@@ -749,10 +786,9 @@ app.post("/api/request", songRequestIpLimit, async (req, res) => {
   if (!isValidYouTubeVideoId(videoId)) {
     return res.status(400).json({ ok: false, reason: "Mã video YouTube không hợp lệ." });
   }
-  if (typeof title !== "string" || !title.trim()) {
-    return res.status(400).json({ ok: false, reason: "Thiếu thông tin bài hát." });
+  if (title !== undefined && typeof title !== "string") {
+    return res.status(400).json({ ok: false, reason: "Thông tin bài hát không hợp lệ." });
   }
-  const normalizedTitle = title.trim().slice(0, 200);
   if (channel !== undefined && typeof channel !== "string") {
     return res.status(400).json({ ok: false, reason: "Thông tin kênh không hợp lệ." });
   }
@@ -762,11 +798,10 @@ app.post("/api/request", songRequestIpLimit, async (req, res) => {
   if (thumbnail !== undefined && thumbnail !== null && typeof thumbnail !== "string") {
     return res.status(400).json({ ok: false, reason: "Ảnh bài hát không hợp lệ." });
   }
-  const normalizedChannel = typeof channel === "string" ? channel.trim().slice(0, 120) : "";
   const normalizedDuration = typeof duration === "string" ? duration.trim().slice(0, 20) : "";
   if (normalizedDuration) {
     const durationLimit = durationSeconds(normalizedDuration);
-    if (!Number.isFinite(durationLimit) || durationLimit > MAX_SINGLE_SECONDS) {
+    if (!Number.isFinite(durationLimit)) {
       return res.status(400).json({ ok: false, reason: "Thời lượng bài hát không hợp lệ hoặc vượt quá 10 phút." });
     }
   }
@@ -775,7 +810,7 @@ app.post("/api/request", songRequestIpLimit, async (req, res) => {
   if (requireName && !requesterName) {
     return res.json({ ok: false, reason: "Vui lòng nhập tên để thêm bài hát." });
   }
-  const floodKey = `${req.ip}|${requesterId}`;
+  const floodKey = `${getClientIp(req, TRUST_PROXY)}|${requesterId}`;
   const last = lastRequestAt.get(floodKey);
   if (cooldownSeconds > 0 && last) {
     const waitMs = cooldownSeconds * 1000 - (Date.now() - last);
@@ -797,21 +832,21 @@ app.post("/api/request", songRequestIpLimit, async (req, res) => {
   pruneLastRequestAt();
 
   try {
-    const playable = await checkPlayable(videoId);
-    if (!playable.ok) {
-      return res.json({ ok: false, reason: playable.reason });
-    }
-
-    if (filterOn) {
-      const details = await fetchVideoDetails(videoId);
-      const verdict = await moderate({ title: normalizedTitle, channel: normalizedChannel }, details, {
+    const prepared = await prepareRequestSong({
+      videoId,
+      clientMetadata: { duration: normalizedDuration },
+      checkPlayable,
+      fetchMetadata: fetchYouTubeMetadata,
+      moderationOn: filterOn,
+      fetchDetails: fetchVideoDetails,
+      moderateSong: moderate,
+      moderationOptions: {
         strict: moderationMode === "strict",
         ...(eventContext ? { eventContext } : {}),
-      });
-      if (!verdict.approved) {
-        return res.json({ ok: false, reason: verdict.reason });
-      }
-    }
+      },
+    });
+    if (!prepared.ok) return res.status(prepared.unavailable ? 502 : 200).json({ ok: false, reason: prepared.reason });
+    const canonical = prepared.song;
 
     if (state.queue.length >= MAX_QUEUE_LENGTH || (queueLimitOn && state.queue.length >= queueLimit)) {
       return res.json({ ok: false, reason: "Hàng đợi đã đầy — vui lòng thử lại sau khi phát bớt bài." });
@@ -822,10 +857,10 @@ app.post("/api/request", songRequestIpLimit, async (req, res) => {
 
     const { item, position } = state.add({
       videoId,
-      title: normalizedTitle,
-      channel: normalizedChannel,
-      duration: normalizedDuration,
-      thumbnail: sanitizeThumbnail(thumbnail),
+      title: canonical.title,
+      channel: canonical.channel,
+      duration: canonical.duration,
+      thumbnail: canonical.thumbnail,
       addedBy: requesterName,
       requesterId,
       userId: req.user?.id || null,
@@ -863,6 +898,9 @@ app.post("/api/admin/users/:id/points", requireAdmin, (req, res) => {
   }
   if (!reason) {
     return res.status(400).json({ ok: false, reason: "Vui lòng nhập lý do điều chỉnh điểm." });
+  }
+  if (reason.length > MAX_MODERATION_REASON_LENGTH) {
+    return res.status(400).json({ ok: false, reason: `Lý do không được vượt quá ${MAX_MODERATION_REASON_LENGTH} ký tự.` });
   }
 
   try {
@@ -919,6 +957,9 @@ app.get("/api/admin/users/:id/ledger", requireAdmin, (req, res) => {
 app.post("/api/admin/point-drops", requireAdmin, (req, res) => {
   const { type, title, points } = req.body || {};
   const cleanTitle = typeof title === "string" ? title.trim() : "";
+  if (cleanTitle.length > MAX_POINT_DROP_TITLE_LENGTH) {
+    return res.status(400).json({ ok: false, reason: `Tiêu đề không được vượt quá ${MAX_POINT_DROP_TITLE_LENGTH} ký tự.` });
+  }
   const numPoints = Number(points);
   if (!Number.isSafeInteger(numPoints) || numPoints <= 0 || numPoints > 1000) {
     return res.status(400).json({ ok: false, reason: "Số điểm phải là số nguyên từ 1 đến 1000." });
@@ -981,9 +1022,16 @@ app.post("/api/feedback", feedbackSubmitLimit, (req, res) => {
   const content = typeof req.body?.content === "string" ? req.body.content.trim().slice(0, 1000) : "";
   if (!name || !content) return res.status(400).json({ ok: false, reason: "Vui lòng nhập tên và nội dung góp ý." });
   const item = { id: randomUUID(), name, content, createdAt: new Date().toISOString() };
+  const previousItems = feedbackItems.slice();
   feedbackItems.unshift(item);
   if (feedbackItems.length > 1000) feedbackItems.length = 1000;
-  saveFeedback();
+  try {
+    saveFeedback();
+  } catch (err) {
+    feedbackItems = previousItems;
+    console.error(`[feedback] unable to save: ${err.message}`);
+    return res.status(500).json({ ok: false, reason: "Không thể lưu góp ý lúc này. Vui lòng thử lại." });
+  }
   res.json({ ok: true });
 });
 
@@ -997,30 +1045,50 @@ app.patch("/api/feedback/settings", requireAdmin, (req, res) => {
   if (!hasFeedbackSetting && !hasChatSetting) {
     return res.status(400).json({ ok: false, reason: "Giá trị không hợp lệ." });
   }
+  const previous = settingsSnapshot();
   if (hasFeedbackSetting) feedbackOn = req.body.on;
-  if (hasChatSetting) {
-    chatOn = req.body.chatOn;
-    if (!chatOn) {
+  if (hasChatSetting) chatOn = req.body.chatOn;
+  try {
+    saveSettings();
+  } catch (err) {
+    restoreSettings(previous);
+    console.error(`[settings] unable to save: ${err.message}`);
+    return res.status(500).json({ ok: false, reason: "Không thể lưu cài đặt lúc này. Vui lòng thử lại." });
+  }
+  if (hasChatSetting && !chatOn && previous.chatOn) {
+    try {
       chatAiCoordinator.reset();
-      chatMessages.length = 0;
       chatRepo.clear();
       chatAiMemoryRepo.clearConversationState();
+      chatMessages.length = 0;
       const message = JSON.stringify({ type: "chatCleared" });
       for (const client of wss.clients) {
         if (client.readyState === 1) client.send(message);
       }
+    } catch (err) {
+      // The durable setting has already been accepted. Keep chat disabled but
+      // do not claim that its history was cleared when the delete failed.
+      console.error(`[chat] unable to clear history after disabling chat: ${err.message}`);
+      broadcastState();
+      return res.status(500).json({ ok: false, reason: "Đã tắt chat nhưng không thể xóa lịch sử lúc này." });
     }
   }
-  saveSettings();
   broadcastState();
   res.json({ ok: true, feedbackOn, chatOn });
 });
 
 app.delete("/api/feedback/:id", requireAdmin, (req, res) => {
+  const previousItems = feedbackItems;
   const before = feedbackItems.length;
   feedbackItems = feedbackItems.filter((item) => item.id !== req.params.id);
   if (feedbackItems.length === before) return res.status(404).json({ ok: false, reason: "Không tìm thấy góp ý." });
-  saveFeedback();
+  try {
+    saveFeedback();
+  } catch (err) {
+    feedbackItems = previousItems;
+    console.error(`[feedback] unable to save: ${err.message}`);
+    return res.status(500).json({ ok: false, reason: "Không thể xóa góp ý lúc này. Vui lòng thử lại." });
+  }
   res.json({ ok: true });
 });
 
@@ -1051,13 +1119,20 @@ app.get("/api/admin/chat-ai/settings", requireAdmin, (_req, res) => {
 
 app.patch("/api/admin/chat-ai/settings", requireAdmin, (req, res) => {
   const patch = req.body && typeof req.body === "object" ? req.body : {};
+  const previousSettings = settingsSnapshot();
   chatAiSettings = normalizeChatAiSettings({
     ...chatAiSettings,
     ...patch,
     features: { ...chatAiSettings.features, ...(patch.features || {}) },
   });
+  try {
+    saveSettings();
+  } catch (err) {
+    restoreSettings(previousSettings);
+    console.error(`[settings] unable to save: ${err.message}`);
+    return res.status(500).json({ ok: false, reason: "Không thể lưu cài đặt lúc này. Vui lòng thử lại." });
+  }
   if (!chatAiSettings.enabled) chatAiCoordinator.reset();
-  saveSettings();
   broadcastState();
   res.json({ ok: true, configured: chatAiConfigured(), settings: chatAiSettings, status: chatAiCoordinator.status() });
 });
@@ -1086,8 +1161,15 @@ app.post("/api/admin/chat-ai/feedback-digest", requireAdmin, async (_req, res) =
   try {
     const digest = await summarizeFeedback({ feedback: feedbackItems, settings: chatAiSettings });
     if (!digest) return res.status(502).json({ ok: false, reason: "AI chưa tạo được digest góp ý. Vui lòng thử lại." });
+    const previousDigest = feedbackDigest;
     feedbackDigest = { ...digest, generatedAt: new Date().toISOString() };
-    saveSettings();
+    try {
+      saveSettings();
+    } catch (err) {
+      feedbackDigest = previousDigest;
+      console.error(`[settings] unable to save: ${err.message}`);
+      return res.status(500).json({ ok: false, reason: "Không thể lưu digest lúc này. Vui lòng thử lại." });
+    }
     res.json({ ok: true, digest: feedbackDigest });
   } catch {
     res.status(502).json({ ok: false, reason: "Không thể tạo digest góp ý lúc này." });
@@ -1155,12 +1237,30 @@ app.get("/feedback", (_req, res) => {
 // --- WebSocket: REALTIME SYNC AND HOST CONTROLS ----------------------------
 
 const server = http.createServer(app);
+function boundedEnvInteger(name, fallback, min, max) {
+  const parsed = Number.parseInt(process.env[name] || "", 10);
+  return Number.isInteger(parsed) ? Math.min(max, Math.max(min, parsed)) : fallback;
+}
+const wsRateLimiter = new WebSocketRateLimiter({
+  maxConnections: boundedEnvInteger("WS_MAX_CONNECTIONS_PER_IP", 200, 1, 10_000),
+  maxMessages: boundedEnvInteger("WS_MAX_MESSAGES_PER_IP", 600, 1, 100_000),
+  maxTrackedIps: boundedEnvInteger("WS_MAX_TRACKED_IPS", 5_000, 100, 100_000),
+});
 const wss = new WebSocketServer({
   server,
   // Application messages are capped at 4,000 bytes below; keep the frame
   // limit close to that bound so oversized payloads are rejected before ws
   // buffers them in memory.
   maxPayload: 8 * 1024,
+  verifyClient: (info, done) => {
+    const clientIp = getClientIp(info.req, TRUST_PROXY);
+    if (!wsRateLimiter.allowConnection(clientIp)) {
+      done(false, 429, "Too many WebSocket connections", { "Retry-After": "60" });
+      return;
+    }
+    info.req.__jukeboxClientIp = clientIp;
+    done(true);
+  },
 });
 const wsHeartbeatTimer = setInterval(() => {
   for (const client of wss.clients) {
@@ -1380,11 +1480,18 @@ function revokeSocket(client, reason) {
   client.close(4003, "Session revoked");
 }
 
+function reportSettingsPersistenceFailure(ws, err) {
+  console.error(`[settings] unable to save: ${err.message}`);
+  if (ws.readyState === 1) ws.send(JSON.stringify({ type: "error", reason: "Không thể lưu cài đặt lúc này. Vui lòng thử lại." }));
+}
+
 state.onBalanceChange = ({ userId, newBalance, pointsRefunded, reason }) => {
   notifyUserBalance(userId, newBalance, { delta: pointsRefunded, reason });
 };
 
 wss.on("connection", (ws, request) => {
+  const clientIp = request.__jukeboxClientIp || getClientIp(request, TRUST_PROXY);
+  ws.__jukeboxClientIp = clientIp;
   ws.isAlive = true;
   ws.on("pong", () => { ws.isAlive = true; });
   ws.sessionToken = getSessionTokenFromCookieHeader(request.headers.cookie);
@@ -1400,8 +1507,19 @@ wss.on("connection", (ws, request) => {
     console.warn(`[ws] client error: ${err?.message || err}`);
   });
 
+  ws.on("close", () => {
+    wsRateLimiter.releaseConnection(clientIp);
+  });
+
   ws.on("message", (raw) => {
     try {
+      if (!wsRateLimiter.allowMessage(clientIp)) {
+        if (ws.readyState === 1) {
+          ws.send(JSON.stringify({ type: "error", reason: "Kết nối gửi quá nhiều yêu cầu. Vui lòng thử lại sau." }));
+          ws.close(1008, "Message rate limit exceeded");
+        }
+        return;
+      }
       if (raw.length > 4000) return;
       let msg;
       try {
@@ -1476,14 +1594,16 @@ wss.on("connection", (ws, request) => {
 
       switch (msg.type) {
         case "ended":
-          if (!isValidYouTubeVideoId(msg.videoId)) break;
+          if (typeof msg.playbackToken !== "string" || !msg.playbackToken) break;
+          if (msg.videoId !== undefined && msg.videoId !== null && !isValidYouTubeVideoId(msg.videoId)) break;
           console.log(`[host] finished playing ${msg.videoId}`);
-          settleRankTransition(state.advance(msg.videoId, { finishReason: "ended" }));
+          settleRankTransition(state.advance(msg.videoId || null, { finishReason: "ended", playbackToken: msg.playbackToken, playedSeconds: msg.playedSeconds }));
           break;
         case "error":
-          if (!isValidYouTubeVideoId(msg.videoId)) break;
+          if (typeof msg.playbackToken !== "string" || !msg.playbackToken) break;
+          if (msg.videoId !== undefined && msg.videoId !== null && !isValidYouTubeVideoId(msg.videoId)) break;
           console.warn(`[host] playback error ${msg.code} on ${msg.videoId} — skipping and refunding points`);
-          settleRankTransition(state.advance(msg.videoId, { isError: true, finishReason: "error" }));
+          settleRankTransition(state.advance(msg.videoId || null, { isError: true, finishReason: "error", playbackToken: msg.playbackToken }));
           break;
         case "skip":
           settleRankTransition(state.skip({ playedSeconds: msg.playedSeconds }));
@@ -1501,42 +1621,85 @@ wss.on("connection", (ws, request) => {
           state.unpin(msg.id);
           break;
         case "setVoteSort":
-          voteSortOn = !!msg.on;
-          state.setVoteSort(voteSortOn);
-          saveSettings();
+          {
+            const previous = settingsSnapshot();
+            voteSortOn = !!msg.on;
+            try {
+              saveSettings();
+            } catch (err) {
+              restoreSettings(previous);
+              state.setVoteSort(voteSortOn);
+              reportSettingsPersistenceFailure(ws, err);
+              break;
+            }
+            state.setVoteSort(voteSortOn);
+          }
           broadcastState();
           break;
         case "setFilter":
-          filterOn = !!msg.on;
-          if (msg.mode === "strict" || msg.mode === "default") moderationMode = msg.mode;
-          saveSettings();
+          {
+            const previous = settingsSnapshot();
+            filterOn = !!msg.on;
+            if (msg.mode === "strict" || msg.mode === "default") moderationMode = msg.mode;
+            try {
+              saveSettings();
+            } catch (err) {
+              restoreSettings(previous);
+              reportSettingsPersistenceFailure(ws, err);
+              break;
+            }
+          }
           broadcastState();
           break;
         case "setCooldown": {
           const s = Math.round(Number(msg.seconds));
           if (Number.isFinite(s) && s >= 0 && s <= 300) {
+            const previous = settingsSnapshot();
             cooldownSeconds = s;
-            saveSettings();
+            try { saveSettings(); } catch (err) {
+              restoreSettings(previous);
+              reportSettingsPersistenceFailure(ws, err);
+              break;
+            }
             broadcastState();
           }
           break;
         }
         case "setEventContext":
-          eventContext = (msg.context || "").toString().slice(0, 300);
-          saveSettings();
+          {
+            const previous = settingsSnapshot();
+            eventContext = (msg.context || "").toString().slice(0, 300);
+            try { saveSettings(); } catch (err) {
+              restoreSettings(previous);
+              reportSettingsPersistenceFailure(ws, err);
+              break;
+            }
+          }
           broadcastState();
           break;
         case "setQueueLimit": {
+          const previous = settingsSnapshot();
           const nextLimit = Number(msg.limit);
           if (typeof msg.on === "boolean") queueLimitOn = msg.on;
           if (QUEUE_LIMIT_STEPS.includes(nextLimit)) queueLimit = nextLimit;
-          saveSettings();
+          try { saveSettings(); } catch (err) {
+            restoreSettings(previous);
+            reportSettingsPersistenceFailure(ws, err);
+            break;
+          }
           broadcastState();
           break;
         }
         case "setRequireName":
-          requireName = !!msg.on;
-          saveSettings();
+          {
+            const previous = settingsSnapshot();
+            requireName = !!msg.on;
+            try { saveSettings(); } catch (err) {
+              restoreSettings(previous);
+              reportSettingsPersistenceFailure(ws, err);
+              break;
+            }
+          }
           broadcastState();
           break;
       }
