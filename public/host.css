@@ -1,6 +1,6 @@
-/* Trang host (máy chiếu) — triển khai giao diện máy phát nhạc sự kiện:
-   sân khấu màu mận tối, vàng = đang phát/bộ lọc bật, đỏ cam = số lượng/thao tác,
-   Noto Serif cho tiêu đề, dễ đọc từ xa trong không gian tối. */
+/* Host projector page — event music player visual system:
+   dark plum stage, yellow = current/filter enabled, orange-red = counts/actions,
+   Noto Serif headings for readability in a dark room at a distance. */
 
 :root {
   --bg-a: oklch(17% 0.03 325);
@@ -42,7 +42,7 @@ html, body {
   50% { transform: scaleY(1); }
 }
 
-/* ---- Lớp phủ bắt đầu ---- */
+/* ---- Start overlay ---- */
 #start-overlay {
   position: fixed;
   inset: 0;
@@ -70,7 +70,7 @@ html, body {
 @keyframes brand-breathe { 0%, 100% { transform: translateY(0) scale(1); } 50% { transform: translateY(-4px) scale(1.015); } }
 @media (prefers-reduced-motion: no-preference) { .start-logo { animation: brand-breathe 4s ease-in-out infinite; } }
 
-/* ---- Bố cục sân khấu ---- */
+/* ---- Stage layout ---- */
 #stage {
   height: 100vh;
   display: grid;
@@ -141,7 +141,7 @@ html, body {
 }
 #resume-playback:hover { background: oklch(60% 0.19 28); }
 
-/* ---- Thông tin bài đang phát ---- */
+/* ---- Current-song information ---- */
 .now-label { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
 .now-label .np-zh { font: 700 15px/1 var(--sans); color: var(--gold); letter-spacing: 0.04em; }
 .now-label .np-en { font: 600 11px/1 var(--sans); color: var(--faint); letter-spacing: 0.14em; text-transform: uppercase; }
@@ -162,7 +162,7 @@ html, body {
 }
 #now-channel { font: 500 19px/1.4 var(--sans); color: var(--warm); }
 
-/* ---- Điều khiển ---- */
+/* ---- Controls ---- */
 #controls { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
 #controls button {
   width: 56px;
@@ -203,8 +203,8 @@ html, body {
   color: var(--red-ink);
 }
 #controls button.pill.strict:hover { background: oklch(60% 0.19 28); }
-/* Nút thời gian chờ vẫn giữ màu trung tính khi bật (chỉ nút bộ lọc chuyển
-   sang màu vàng theo thiết kế) — cần độ ưu tiên cao hơn quy tắc .on. */
+/* Keep the cooldown button neutral when enabled (only the filter turns yellow
+   by design); this needs higher specificity than the generic .on rule. */
 #controls #cooldown-toggle.pill.on {
   background: var(--fill);
   border-color: oklch(100% 0 0 / 0.1);
@@ -228,7 +228,7 @@ html, body {
 }
 .feedback-link:hover { background: var(--fill-hover); }
 
-/* Trình chỉnh sửa bối cảnh sự kiện (hiện ra khi nhấn nút Bối cảnh) */
+/* Event-context editor (revealed by the context button). */
 .context-row { display: flex; gap: 10px; }
 .context-row input {
   flex: 1;
@@ -256,7 +256,7 @@ html, body {
 }
 .context-row button:hover { background: oklch(84% 0.14 85); }
 
-/* ---- Thanh bên ---- */
+/* ---- Sidebar ---- */
 .sidebar {
   display: flex;
   flex-direction: column;

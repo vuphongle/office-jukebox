@@ -12,7 +12,7 @@
   <link rel="stylesheet" href="/host.css" />
 </head>
 <body>
-  <!-- Nhấp một lần để bật tính năng tự động phát của trình duyệt, giúp âm thanh truyền đến hệ thống âm thanh. -->
+  <!-- One click unlocks browser autoplay so audio can reach the venue sound system. -->
   <div id="start-overlay">
     <div class="start-card">
       <img class="start-logo" src="/assets/logo.png" alt="Laztar" />
@@ -53,14 +53,14 @@
         <button id="skip" title="Bỏ qua (n)" aria-label="Bỏ qua bài hát">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><path d="M6 5v14l10-7z"></path><rect x="17" y="5" width="2.6" height="14" rx="1"></rect></svg>
         </button>
-        <!-- Tạm ẩn khỏi UI theo yêu cầu; giữ nguyên DOM/id để không ảnh hưởng logic bộ lọc hiện có. -->
+        <!-- Hidden from the UI by design; keep the DOM/id for existing filter logic. -->
         <button id="filter-toggle" class="pill hidden" title="Bộ lọc nội dung — nhấp để chuyển: tắt → bật → nghiêm ngặt (chỉ nội dung phù hợp với gia đình)">Bộ lọc</button>
         <span id="filter-hint" class="filter-hint hidden">Chưa có khóa LLM — chấp nhận tất cả</span>
         <button id="cooldown-toggle" class="pill" title="Thời gian chờ giữa các yêu cầu của từng khách — nhấp để thay đổi">Thời gian chờ</button>
         <button id="queue-limit-toggle" class="pill" title="Giới hạn số bài sắp phát — nhấp để chuyển Tắt, 5, 10, 15, 20">Hàng đợi</button>
         <button id="require-name-toggle" class="pill" title="Bắt buộc khách nhập tên order">Tên order</button>
         <button id="vote-sort-toggle" class="pill" title="Xếp theo lượt vote của khách — nhấp để bật/tắt">Xếp theo vote: Bật</button>
-        <!-- Tạm ẩn khỏi UI theo yêu cầu; tính năng bối cảnh và WebSocket vẫn được giữ nguyên. -->
+        <!-- Hidden from the UI by design; retain event-context and WebSocket behavior. -->
         <button id="context-toggle" class="pill hidden" title="Bối cảnh sự kiện — cho bộ lọc AI biết đây là loại sự kiện nào">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 21s-6.5-4.3-6.5-10a6.5 6.5 0 0113 0c0 5.7-6.5 10-6.5 10z"></path><circle cx="12" cy="10.5" r="2.4"></circle></svg>
           <span>Bối cảnh</span>

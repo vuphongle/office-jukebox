@@ -11,7 +11,7 @@ let usersPage = 1;
 let dropsPage = 1;
 let ledgerPage = 1;
 
-// --- Khởi tạo & Tab Navigation -------------------------------------------
+// --- Initialization and tab navigation ------------------------------------
 document.addEventListener("DOMContentLoaded", async () => {
   setupTabs();
   document.getElementById("admin-login-form")?.addEventListener("submit", handleAdminLogin);
@@ -150,7 +150,7 @@ async function initAuthAndProfile() {
       return true;
     }
   } catch (err) {
-    console.error("Lỗi lấy thông tin admin:", err);
+    console.error("Failed to load admin information:", err);
   }
   return false;
 }
@@ -584,7 +584,7 @@ async function loadFeedback() {
       )
       .join("");
   } catch (err) {
-    console.error("Lỗi tải feedback:", err);
+    console.error("Failed to load feedback:", err);
   }
 }
 

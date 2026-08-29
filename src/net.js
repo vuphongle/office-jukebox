@@ -1,8 +1,8 @@
 import os from "node:os";
 
-// Chọn địa chỉ IPv4 LAN có khả năng cao nhất để khách kết nối tới máy này.
-// Lọc các địa chỉ IPv4 không nội bộ trong dải riêng tư và ưu tiên tên interface
-// Wi-Fi/Ethernet phổ biến hơn interface ảo (VPN, Docker, vEthernet).
+// Select the most likely LAN IPv4 address for guests to use when connecting.
+// Filter out non-private IPv4 addresses and prefer common Wi-Fi/Ethernet
+// interface names over virtual interfaces (VPN, Docker, vEthernet).
 export function detectLanIp(override) {
   if (override) return override;
 
@@ -21,8 +21,8 @@ export function detectLanIp(override) {
 
   const score = (name) => {
     const n = name.toLowerCase();
-    if (/(docker|veth|vmnet|vboxnet|bridge|tun|tap|utun|llw|awdl)/.test(n)) return -1; // ảo/VPN
-    if (/^en0|wlan0|wi-?fi|wlp/.test(n)) return 2; // Wi-Fi chính
+    if (/(docker|veth|vmnet|vboxnet|bridge|tun|tap|utun|llw|awdl)/.test(n)) return -1; // virtual/VPN
+    if (/^en0|wlan0|wi-?fi|wlp/.test(n)) return 2; // primary Wi-Fi
     if (/^en\d|eth\d|enp/.test(n)) return 1; // Ethernet
     return 0;
   };

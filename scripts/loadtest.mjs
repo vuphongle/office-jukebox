@@ -1,24 +1,23 @@
-// Kiểm thử tải: mô phỏng N khách dùng điện thoại trên một bản triển khai đang chạy.
+// Load test: simulate N guests using phones against a running deployment.
 //
 //   bun scripts/loadtest.mjs --url https://your-public-url --guests 140
 //
-// Mỗi khách ảo hoạt động như người dùng thật: tải /guest, giữ WebSocket mở
-// (kết nối lại nếu bị ngắt, giống guest.js), chạm các tab duyệt,
-// thỉnh thoảng tìm kiếm và thỉnh thoảng yêu cầu bài hát. In percentile độ trễ
-// và số lỗi ở cuối.
+// Each virtual guest behaves like a real user: load /guest, keep a WebSocket
+// open (reconnecting like guest.js), browse tabs, occasionally search, and
+// occasionally request a song. Print latency percentiles and error counts at the end.
 //
-// Tùy chọn (mặc định thực tế cho sự kiện khoảng 140 người):
-//   --url URL             đích đến (mặc định http://localhost:45416)
-//   --guests N            số khách đồng thời (mặc định 140)
-//   --duration SECS       thời gian duy trì sau khi tăng dần (mặc định 120)
-//   --ramp SECS           khoảng thời gian giãn kết nối (mặc định 20)
-//   --browse-per-min N    tổng lượt duyệt/phút của mọi khách (mặc định 60; cache phía server)
-//   --search-per-min N    tổng lượt tìm kiếm trực tiếp/phút (mặc định 6 — mỗi lượt gọi YouTube, giữ thấp)
-//   --request-per-min N   tổng request bài hát/phút (mặc định 20 — gọi YouTube oEmbed + LLM nếu bộ lọc BẬT)
+// Options (realistic defaults for an event of about 140 people):
+//   --url URL             target (default http://localhost:45416)
+//   --guests N            concurrent guests (default 140)
+//   --duration SECS       hold time after ramp-up (default 120)
+//   --ramp SECS           connection ramp-up period (default 20)
+//   --browse-per-min N    total browse requests/minute (default 60; server-cached)
+//   --search-per-min N    total direct searches/minute (default 6 — each calls YouTube, keep low)
+//   --request-per-min N   total song requests/minute (default 20 — YouTube oEmbed + LLM when enabled)
 //
-// Trước khi chạy trên production: TẮT bộ lọc từ trang host (hoặc chấp nhận khoảng
-// request-per-min lần gọi LLM), rồi khởi động lại container sau đó để xóa hàng đợi
-// thử nghiệm.
+// Before running in production: disable the filter from the host page (or accept
+// roughly request-per-min LLM calls), then restart the container afterward to
+// clear the test queue.
 
 const args = {};
 for (let i = 2; i < process.argv.length; i++) {
@@ -35,7 +34,7 @@ const BROWSE_PER_MIN = parseFloat(args["browse-per-min"] || "60");
 const SEARCH_PER_MIN = parseFloat(args["search-per-min"] || "6");
 const REQUEST_PER_MIN = parseFloat(args["request-per-min"] || "20");
 
-// Các query tab/chip định sẵn của trang khách — thân thiện với cache.
+// Predefined guest-page tab/chip queries — cache-friendly.
 const BROWSE_QUERIES = [
   "__vn_hits",
   "V-pop 2026",
@@ -49,7 +48,7 @@ const SEARCH_QUERIES = [
   "aespa", "Ed Sheeran", "Mỹ Tâm", "Bích Phương", "IU",
 ];
 
-// --- chỉ số -----------------------------------------------------------------
+// --- metrics ----------------------------------------------------------------
 const lat = { page: [], wsFirstState: [], browse: [], search: [], request: [] };
 const counts = {
   wsConnected: 0, wsDropped: 0, wsReconnects: 0, wsFailed: 0,
@@ -68,11 +67,11 @@ function pct(arr, p) {
   return s[Math.min(s.length - 1, Math.floor((p / 100) * s.length))];
 }
 function fmt(arr) {
-  if (!arr.length) return "  (không có mẫu)";
+  if (!arr.length) return "  (no samples)";
   return `  n=${arr.length}  p50=${pct(arr, 50)}ms  p95=${pct(arr, 95)}ms  max=${Math.max(...arr)}ms`;
 }
 
-// --- lấy videoId thật để /api/request chạy qua pipeline thực -----------------
+// --- harvest real videoIds for the /api/request pipeline --------------------
 async function harvestVideoIds() {
   const ids = [];
   for (const q of BROWSE_QUERIES.slice(0, 4)) {
@@ -81,13 +80,13 @@ async function harvestVideoIds() {
       const j = await r.json();
       for (const item of j.results || []) ids.push(item);
     } catch {
-      /* server vẫn được kiểm thử; chỉ bỏ qua request */
+      /* the server is still tested; only skip the request */
     }
   }
   return ids;
 }
 
-// --- một khách ảo -----------------------------------------------------------
+// --- virtual guest ----------------------------------------------------------
 let stopping = false;
 const sockets = new Set();
 
@@ -148,7 +147,7 @@ function connectWs(guest) {
 }
 
 function poisson(perMinutePerGuest) {
-  // số mili giây tới hành động tiếp theo của khách này, phân phối mũ
+  // Milliseconds until this guest's next action, exponentially distributed.
   if (perMinutePerGuest <= 0) return Infinity;
   return -Math.log(1 - Math.random()) * (60000 / perMinutePerGuest);
 }
@@ -156,7 +155,7 @@ function poisson(perMinutePerGuest) {
 async function runGuest(i, videoPool) {
   const clientId = `loadtest-${i}-${Math.random().toString(36).slice(2, 10)}`;
 
-  // 1. tải trang
+  // 1. load the page
   const t0 = Date.now();
   try {
     await fetch(`${BASE}/guest`);
@@ -166,10 +165,10 @@ async function runGuest(i, videoPool) {
     noteErr(`page: ${err.message}`);
   }
 
-  // 2. WebSocket duy trì
+  // 2. maintain the WebSocket
   connectWs(i);
 
-  // 3. vòng lặp hành vi — tốc độ theo từng khách để tổng đạt mục tiêu cấu hình
+  // 3. behavior loops — per-guest rates add up to the configured targets
   const loops = [
     [BROWSE_PER_MIN / GUESTS, async () => {
       const q = BROWSE_QUERIES[Math.floor(Math.random() * BROWSE_QUERIES.length)];
@@ -187,8 +186,8 @@ async function runGuest(i, videoPool) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ ...v, name: `LoadTester ${i}`, clientId }),
       });
-      // ok:false (thời gian chờ / trùng / hàng đợi đầy / bộ lọc) là traffic dự kiến,
-      // không phải lỗi — phân loại lại.
+      // ok:false (cooldown, duplicate, full queue, or filter) is expected traffic,
+      // not an error; classify it separately.
       if (j && j.ok === false) {
         counts.requestAccepted--;
         counts.requestRejected++;
@@ -209,14 +208,14 @@ async function runGuest(i, videoPool) {
   }
 }
 
-// --- chính -------------------------------------------------------------------
-console.log(`Mục tiêu: ${BASE}`);
-console.log(`Khách: ${GUESTS}, tăng dần ${RAMP_MS / 1000}s, duy trì ${DURATION_MS / 1000}s`);
-console.log(`Tốc độ/phút (tổng): browse=${BROWSE_PER_MIN} search=${SEARCH_PER_MIN} request=${REQUEST_PER_MIN}\n`);
+// --- main --------------------------------------------------------------------
+console.log(`Target: ${BASE}`);
+console.log(`Guests: ${GUESTS}, ramp ${RAMP_MS / 1000}s, hold ${DURATION_MS / 1000}s`);
+console.log(`Total rate/minute: browse=${BROWSE_PER_MIN} search=${SEARCH_PER_MIN} request=${REQUEST_PER_MIN}\n`);
 
 const videoPool = await harvestVideoIds();
-console.log(`Đã lấy ${videoPool.length} videoId thật cho traffic request.`);
-if (!videoPool.length) console.log("(!) Không lấy được videoId — /api/request sẽ không được kiểm thử.");
+console.log(`Harvested ${videoPool.length} real videoIds for request traffic.`);
+if (!videoPool.length) console.log("(!) No videoIds harvested — /api/request will not be exercised.");
 
 for (let i = 0; i < GUESTS; i++) {
   setTimeout(() => runGuest(i, videoPool), Math.random() * RAMP_MS);
@@ -238,20 +237,20 @@ stopping = true;
 clearInterval(ticker);
 for (const ws of sockets) try { ws.close(); } catch { /* ignore */ }
 
-console.log("\n\n=== KẾT QUẢ ==============================================");
-console.log(`WebSocket   đã kết nối=${counts.wsConnected} ngắt=${counts.wsDropped} kết nối lại=${counts.wsReconnects} thất bại=${counts.wsFailed}`);
-console.log(`Broadcast    đã nhận=${counts.broadcasts} (từ mọi khách)`);
-console.log(`\nĐộ trễ:`);
-console.log(`  Trang /guest     ${fmt(lat.page)}`);
-console.log(`  WS -> trạng thái đầu tiên ${fmt(lat.wsFirstState)}`);
+console.log("\n\n=== RESULTS ==============================================");
+console.log(`WebSocket   connected=${counts.wsConnected} dropped=${counts.wsDropped} reconnects=${counts.wsReconnects} failed=${counts.wsFailed}`);
+console.log(`Broadcast   received=${counts.broadcasts} (from all guests)`);
+console.log(`\nLatency:`);
+console.log(`  /guest page       ${fmt(lat.page)}`);
+console.log(`  WS -> first state ${fmt(lat.wsFirstState)}`);
 console.log(`  /api/browse      ${fmt(lat.browse)}`);
 console.log(`  /api/search      ${fmt(lat.search)}`);
 console.log(`  /api/request     ${fmt(lat.request)}`);
-console.log(`\nRequest: chấp nhận=${counts.requestAccepted} từ chối(chờ/trùng/đầy/bộ lọc)=${counts.requestRejected} lỗi=${counts.requestErr}`);
+console.log(`\nRequests: accepted=${counts.requestAccepted} rejected(cooldown/duplicate/full/filter)=${counts.requestRejected} errors=${counts.requestErr}`);
 if (errors.size) {
-  console.log(`\nLỗi:`);
+  console.log(`\nErrors:`);
   for (const [msg, n] of errors) console.log(`  ${n}x  ${msg}`);
 } else {
-  console.log(`\nKhông có lỗi. 🎉`);
+  console.log(`\nNo errors. 🎉`);
 }
 process.exit(0);

@@ -1,7 +1,7 @@
-// Trạng thái hàng đợi — Quản lý trong bộ nhớ kết hợp SQLite SSOT.
-// Hỗ trợ xếp thứ tự đa tầng: pinned DESC, pinned_order ASC, vote_score DESC,
+// Queue state — managed in memory with SQLite as the SSOT.
+// Supports multi-tier ordering: pinned DESC, pinned_order ASC, vote_score DESC,
 // vote_rank_sequence ASC, queue_sequence ASC.
-// Hoàn điểm 100% khi xóa bài hoặc lỗi phát YouTube (101/150).
+// Refunds 100% of votes when a song is removed or hits a YouTube playback error (101/150).
 
 import { randomUUID } from "node:crypto";
 import { QueueRepository } from "./repositories/queueRepository.js";
@@ -13,9 +13,9 @@ export class JukeboxState {
   constructor(db = null) {
     this.db = db;
     this.queueRepo = db ? new QueueRepository(db) : null;
-    this.nowPlaying = null; // mục hiện tại hoặc null
-    this.queue = []; // các mục sắp phát
-    this.history = []; // các mục đã phát (mới nhất ở cuối), có giới hạn
+    this.nowPlaying = null; // current item or null
+    this.queue = []; // upcoming items
+    this.history = []; // played items (newest last), bounded
     this.voteSortOn = true;
     this.onChange = () => {};
     this.onBalanceChange = () => {};
@@ -72,11 +72,11 @@ export class JukeboxState {
       this._sortQueue();
       this._promoteIfIdle();
     } catch (err) {
-      console.warn(`[state] initFromDb error: ${err.message}`);
+      console.warn(`[state] initFromDb failed: ${err.message}`);
     }
   }
 
-  // Video này đang phát hay đã ở đâu đó trong hàng đợi?
+  // Is this video currently playing or already somewhere in the queue?
   has(videoId) {
     return this.nowPlaying?.videoId === videoId || this.queue.some((s) => s.videoId === videoId);
   }
@@ -160,7 +160,7 @@ export class JukeboxState {
     });
   }
 
-  // Đưa bài tiếp theo trong hàng đợi lên phát nếu hiện không có bài nào.
+  // Promote the next queued item when nothing is currently playing.
   _promoteIfIdle() {
     if (!this.nowPlaying && this.queue.length > 0) {
       this.nowPlaying = this.queue.shift();
@@ -171,7 +171,7 @@ export class JukeboxState {
     }
   }
 
-  // Thêm bài hát đã được kiểm duyệt/chấp thuận. Trả về mục đã tạo kèm vị trí.
+  // Add a moderated/approved song and return the created item with its position.
   add({ videoId, title, channel, duration, thumbnail, addedBy, requesterId, userId = null }) {
     let dbItem = null;
     if (this.queueRepo) {
@@ -213,7 +213,7 @@ export class JukeboxState {
     return { item, position };
   }
 
-  // Vote cho bài hát
+  // Vote for a song.
   vote(itemId, userId) {
     if (!this.queueRepo) throw new Error("Không có kết nối database để vote");
     const res = this.queueRepo.addVote(itemId, userId);
@@ -232,11 +232,11 @@ export class JukeboxState {
     return this.queueRepo.hasVoted(itemId, userId);
   }
 
-  // Chuyển sang bài tiếp theo. finishedVideoId ngăn chuyển hai lần do các event
-  // "ended"/"error" trùng lặp của cùng một bài.
+  // Move to the next song. finishedVideoId prevents duplicate "ended"/"error"
+  // events for the same song from advancing twice.
   advance(finishedVideoId, { isError = false, finishReason = null, playedSeconds = null } = {}) {
     if (finishedVideoId && this.nowPlaying && this.nowPlaying.videoId !== finishedVideoId) {
-      return null; // event cũ của bài đã được chuyển qua
+      return null; // stale event for a song that has already advanced
     }
     const finishedItem = this.nowPlaying;
     const nextItem = this.queue[0] || null;
@@ -291,12 +291,12 @@ export class JukeboxState {
     };
   }
 
-  // Điều khiển host: bỏ qua bài hiện tại bất kể bài nào đang phát.
+  // Host control: skip the current song regardless of what is playing.
   skip({ playedSeconds = null } = {}) {
     return this.advance(this.nowPlaying?.videoId, { finishReason: "skipped", playedSeconds });
   }
 
-  // Xóa một mục sắp phát theo id (điều khiển host).
+  // Remove an upcoming item by id (host control).
   remove(id) {
     const index = this.queue.findIndex((item) => item.id === id);
     if (index === -1) return;
@@ -308,7 +308,7 @@ export class JukeboxState {
     this._emitBalanceChanges(refunds, "Hoàn điểm do bài hát bị xóa khỏi hàng đợi");
   }
 
-  // Xóa một mục sắp phát khi clientId trùng với người đã thêm mục đó (hoặc userId).
+  // Remove an upcoming item when clientId (or userId) matches its requester.
   removeOwned(id, requesterId, userId = null) {
     if (typeof id !== "string") return false;
     const index = this.queue.findIndex(
@@ -324,7 +324,7 @@ export class JukeboxState {
     return true;
   }
 
-  // Di chuyển một mục sắp phát lên/xuống (điều khiển host).
+  // Move an upcoming item up or down (host control).
   move(id, dir) {
     const i = this.queue.findIndex((s) => s.id === id);
     if (i === -1) return;
@@ -336,7 +336,7 @@ export class JukeboxState {
     this._emit();
   }
 
-  // Đưa một mục tới ngay trước beforeId; beforeId null/undefined = đưa xuống cuối.
+  // Move an item immediately before beforeId; null/undefined appends it to the end.
   reorder(id, beforeId = null) {
     if (typeof id !== "string") return false;
     if (beforeId !== null && beforeId !== undefined && typeof beforeId !== "string") return false;

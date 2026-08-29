@@ -1,27 +1,23 @@
-// Kiểm duyệt bài hát bằng LLM thông qua bất kỳ API chat tương thích OpenAI nào.
+// Moderate songs with an LLM through any OpenAI-compatible chat API.
 //
-// Nhà cung cấp mặc định là Kimi (Moonshot). Đổi sang DeepSeek / GLM / ... bằng cách
-// thay đổi LLM_BASE_URL + LLM_MODEL + LLM_API_KEY trong .env — không cần sửa code.
+// The default provider is Kimi (Moonshot). Switch to DeepSeek, GLM, or another
+// provider by changing LLM_BASE_URL, LLM_MODEL, and LLM_API_KEY in .env.
 //
-// Ghi chú thiết kế:
-//  - Không phụ thuộc vào `response_format: json_object` (mức hỗ trợ khác nhau
-//    giữa các nhà cung cấp). Thay vào đó, yêu cầu JSON trong prompt và chủ động
-//    trích xuất block {...} đầu tiên từ câu trả lời.
-//  - Không đặt `temperature` (kimi-k2.x từ chối các giá trị tùy ý); mặc định của
-//    API được sử dụng trừ khi đặt rõ LLM_TEMPERATURE.
-//  - Chỉ FAIL-OPEN khi lỗi hạ tầng (thiếu key, lỗi HTTP, lỗi mạng): sự cố kiểm
-//    duyệt không bao giờ dừng buổi tiệc và không ném lỗi vào luồng request.
-//  - FAIL-CLOSED khi hết thời gian chờ, với lý do cho phép khách thử lại:
-//    các phán quyết chậm thường tập trung ở đúng những bài hát cần bộ lọc,
-//    nên không được phát bài hát đã hết thời gian chờ mà chưa kiểm duyệt.
-//  - FAIL-CLOSED khi model trả lời nhưng không đưa ra phán quyết: provider che
-//    nội dung bằng content_filter hoặc trả lời không có JSON {"approved": ...}
-//    hợp lệ đều có nghĩa model né câu hỏi — từ chối bài hát.
-//  - LLM_WEB_SEARCH=true (chỉ OpenRouter) gắn web plugin của OpenRouter để model
-//    thấy kết quả tìm kiếm trực tiếp — thường là lời bài hát thực tế — thay vì
-//    chỉ phán đoán theo tiêu đề. Chi phí khoảng ~$0.005 cho mỗi request kiểm
-//    duyệt (tìm kiếm Exa), cộng thêm token; nhà cung cấp khác sẽ từ chối field
-//    bổ sung nên tính năng này phải được bật chủ động.
+// Design notes:
+//  - Do not depend on response_format: json_object because provider support
+//    differs. Instead, request JSON in the prompt and extract the first object.
+//  - Do not set temperature (kimi-k2.x rejects arbitrary values); use the API
+//    default unless LLM_TEMPERATURE is explicitly configured.
+//  - FAIL-OPEN only for infrastructure failures (missing key, HTTP error, or
+//    network error); moderation must never stop the party or throw in the request flow.
+//  - FAIL-CLOSED on timeout with a retryable reason. Slow decisions often cluster
+//    around songs that need filtering, so a timed-out song must not play unchecked.
+//  - FAIL-CLOSED when the model responds without a verdict. A provider
+//    content_filter or invalid/missing {"approved": ...} JSON means evasion.
+//  - LLM_WEB_SEARCH=true (OpenRouter only) enables its web plugin so the model can
+//    inspect live results, often actual lyrics, instead of relying only on titles.
+//    It costs about $0.005 per moderated request plus tokens; other providers may
+//    reject the extra field, so the feature must remain opt-in.
 
 function config(opts = {}) {
   return {
@@ -33,9 +29,9 @@ function config(opts = {}) {
       opts.eventContext ??
       (process.env.EVENT_CONTEXT ||
         "một buổi tiệc tối mừng lễ tốt nghiệp trung học (giống dạ tiệc) ở Hồng Kông"),
-    temperature: opts.temperature ?? process.env.LLM_TEMPERATURE, // undefined = dùng mặc định của API
+    temperature: opts.temperature ?? process.env.LLM_TEMPERATURE, // undefined = use the API default
     webSearch: opts.webSearch ?? (process.env.LLM_WEB_SEARCH || "").toLowerCase() === "true",
-    timeoutMs: opts.timeoutMs, // xử lý bên dưới — web search cần thêm thời gian
+    timeoutMs: opts.timeoutMs, // handled below; web search needs more time
   };
 }
 
@@ -44,15 +40,13 @@ export function moderationConfigured() {
 }
 
 function buildMessages(song, details, { strict, eventContext, webSearch }) {
-  // Prompt được ghép theo THỨ TỰ RA QUYẾT ĐỊNH: từ chối ngay trước (quy tắc 1 —
-  // không điều gì phía sau được ghi đè), sau đó là tiêu chuẩn của chế độ, các
-  // quy tắc theo tình huống và cuối cùng là định dạng đầu ra. Quốc ca được nêu
-  // rõ trong quy tắc 1 vì model thường suy luận "yêu nước = an toàn cho gia đình
-  // = chấp thuận"; ngoại lệ cho Beyond là chính sách có chủ đích của host — một
-  // ca khúc kinh điển chỉ tình cờ có liên hệ chính trị không phải là bài hát
-  // chính trị. 'Stay' xuất hiện như ví dụ hiệu chỉnh ở cả hai nhánh với phán
-  // quyết trái ngược về mục đích: mỗi lần chỉ gửi một nhánh, qua đó xác định
-  // chính xác ngưỡng nghiêm ngặt/mặc định.
+  // Build the prompt in DECISION ORDER: the immediate rejection rule first (rule
+  // 1 cannot be overridden), then the mode standard, contextual rules, and the
+  // output format. Anthems are explicit in rule 1 because models often infer
+  // "patriotic = family-safe = approved". The Beyond exception is intentional:
+  // a classic song with incidental political associations is not a political
+  // song. 'Stay' calibrates both branches with opposite decisions; only one
+  // branch is sent at a time to define the strict/default threshold precisely.
   const rules = [
     `Bạn kiểm duyệt các yêu cầu bài hát cho hàng đợi âm nhạc công khai tại ${eventContext}. ` +
       "Hãy quyết định theo thứ tự này: quy tắc 1 trước, sau đó là tiêu chuẩn ở quy tắc 2, rồi các quy tắc còn lại. " +
@@ -95,8 +89,8 @@ function buildMessages(song, details, { strict, eventContext, webSearch }) {
       "khi bài hát vẫn rõ ràng không phù hợp vì chủ đề cốt lõi vẫn mô tả tình dục hoặc bạo lực quá trực diện. Bản trong sạch " +
       "không bao giờ cứu được bài hát thuộc quy tắc 1.",
 
-    // Quy tắc của host: bài hát không thể kiểm tra lời thì không được phát. Quy tắc này
-    // cố ý ghi đè xu hướng chấp thuận khi không chắc ở quy tắc 2.
+    // Host rule: a song whose lyrics cannot be checked must not play. This
+    // intentionally overrides the uncertainty-approval tendency in rule 2.
     webSearch
       ? "QUY TẮC 5 — có thể đính kèm KẾT QUẢ TÌM KIẾM WEB về bài hát. Hãy dùng chúng để đánh giá nội dung và ý nghĩa " +
         "THỰC TẾ của lời bài hát, không chỉ tiêu đề; bỏ qua kết quả nói về bài hát khác. Tiêu đề nghe có vẻ trong sáng nhưng " +
@@ -113,10 +107,10 @@ function buildMessages(song, details, { strict, eventContext, webSearch }) {
   const policy = rules.filter(Boolean).join("\n\n");
 
   const ctx = [
-    // Web plugin lấy truy vấn tìm kiếm từ message này (không có field query riêng),
-    // nên khi bật tìm kiếm, đặt một dòng giống truy vấn lời bài hát ở đầu để hướng
-    // plugin tới trang lời bài hát thay vì trang đánh giá/video.
-    // "歌詞" giúp tìm các trang lời tiếng Hoa cho yêu cầu Cantopop/Mandopop.
+    // The web plugin takes its search query from this message (there is no
+    // separate query field). When search is enabled, put a lyrics-like query
+    // first so it targets lyric pages rather than reviews or video pages.
+    // The "歌詞" token helps find Chinese-language lyric pages for Cantopop/Mandopop.
     webSearch ? `Tìm lời bài hát này: ${song.title} lyrics 歌詞` : null,
     `Tiêu đề: ${song.title}`,
     `Kênh: ${song.channel || details?.author || "không rõ"}`,
@@ -133,8 +127,8 @@ function buildMessages(song, details, { strict, eventContext, webSearch }) {
   ];
 }
 
-// Trích xuất object JSON {...} cân bằng tương đối đầu tiên trong câu trả lời LLM,
-// cho phép có markdown fence và phần văn bản bao quanh.
+// Extract the first roughly balanced JSON object from the LLM response, allowing
+// Markdown fences and surrounding prose.
 function extractJson(text) {
   if (!text) return null;
   const cleaned = text.replace(/```(?:json)?/gi, "");
@@ -156,13 +150,13 @@ export async function moderate(song, details = null, opts = {}) {
 
   const body = { model: c.model, messages: buildMessages(song, details, c) };
   if (c.temperature !== undefined) body.temperature = Number(c.temperature);
-  // Web plugin của OpenRouter: tìm kiếm bài hát trên web (user message là nguồn
-  // truy vấn) rồi chèn kết quả — thường là trang lời bài hát — trước khi model
-  // trả lời. https://openrouter.ai/docs/guides/features/plugins/web-search
+  // OpenRouter web plugin: search the web for the song (the user message is the
+  // query source) and inject results, usually lyric pages, before the response.
+  // https://openrouter.ai/docs/guides/features/plugins/web-search
   if (c.webSearch) body.plugins = [{ id: "web", max_results: 5 }];
 
-  // Vòng tìm kiếm cần thêm thời gian: model thường trả lời trong 6-14 giây khi
-  // bật tìm kiếm, nhưng có thể suy xét lâu hơn nhiều với các bài nhạy cảm.
+  // Web search needs more time: models often answer in 6–14 seconds with search
+  // enabled, but sensitive songs can take considerably longer.
   const timeoutMs = c.timeoutMs ?? (c.webSearch ? 35000 : 8000);
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -175,40 +169,42 @@ export async function moderate(song, details = null, opts = {}) {
     });
     if (!res.ok) {
       const t = await res.text().catch(() => "");
-      console.warn(`[moderation] HTTP ${res.status} — cho phép khi lỗi. ${t.slice(0, 200)}`);
+      console.warn(`[moderation] HTTP ${res.status} — allowing on infrastructure failure. ${t.slice(0, 200)}`);
       return APPROVED;
     }
     const data = await res.json();
     const choice = data?.choices?.[0];
     const text = choice?.message?.content || "";
-    // Ghi lại citation của web plugin để log máy chủ cho biết mỗi phán quyết
-    // thực sự dựa trên trang nào (tốt nhất là các trang lời bài hát).
+    // Record web-plugin citations so server logs show which pages informed each
+    // verdict, preferably lyric pages.
     const sources = (choice?.message?.annotations || [])
       .map((a) => a?.url_citation?.url)
       .filter(Boolean);
     if (sources.length) {
-      console.log(`[moderation] "${song.title}" nguồn web: ${sources.slice(0, 5).join(" ")}`);
+      console.log(`[moderation] "${song.title}" web sources: ${sources.slice(0, 5).join(" ")}`);
     }
-    // Nếu lớp an toàn của provider tự che câu trả lời (finish_reason
-    // "content_filter"), chủ đề quá nhạy cảm để model
-    // thảo luận — ví dụ bài phản kháng bị cấm với model do Trung Quốc lưu trữ.
-    // Đây là TỪ CHỐI, không phải lỗi nhất thời: fail-closed ở đây, khác với lỗi mạng.
+    // If the provider safety layer masks the response (finish_reason
+    // "content_filter"), the topic is too sensitive for the model to discuss.
+    // This is a rejection, not a transient failure: fail-closed here, unlike a
+    // network error.
     if (choice?.finish_reason === "content_filter") {
-      console.warn(`[moderation] provider content_filter — từ chối. ${text.slice(0, 150)}`);
+      console.warn(`[moderation] provider content_filter — rejecting. ${text.slice(0, 150)}`);
       return { approved: false, reason: "Bài hát này không phù hợp với dịp này.", moderated: true };
     }
-    // Không có phán quyết có cấu trúc (văn bản từ chối, JSON thiếu/không hợp lệ):
-    // model đã né câu hỏi — từ chối. Chỉ lỗi hạ tầng mới fail-open.
+    // No structured verdict (a refusal, missing JSON, or invalid JSON) means the
+    // model avoided the question and must be rejected. Only infrastructure
+    // failures fail open.
     const parsed = extractJson(text);
     if (!parsed || typeof parsed.approved !== "boolean") {
-      console.warn(`[moderation] không có phán quyết có cấu trúc — từ chối. ${text.slice(0, 150)}`);
+      console.warn(`[moderation] no structured verdict — rejecting. ${text.slice(0, 150)}`);
       return { approved: false, reason: "Bài hát này không phù hợp với dịp này.", moderated: true };
     }
-    // Web plugin có thể khiến model thêm link citation markdown ("[youtube.com](https://…)");
-    // reason được hiển thị nguyên văn cho khách nên cần loại bỏ chúng.
+    // The web plugin can make the model add Markdown citation links
+    // ("[youtube.com](https://…)"). The reason is shown verbatim to guests, so
+    // remove those links.
     const reason = String(parsed.reason || (parsed.approved ? "Đã thêm!" : "Bài hát này không phù hợp với dịp này."))
       .replace(/\s*\[[^\]]*\]\([^)]*\)/g, "")
-      .replace(/\s*\b(?:see|source|sources|xem(?:\s+(?:nguồn|nguon))?|nguồn|nguon)\s*[:.]?\s*$/iu, "") // phần còn lại sau khi bỏ citation cuối dòng
+      .replace(/\s*\b(?:see|source|sources|xem(?:\s+(?:nguồn|nguon))?|nguồn|nguon)\s*[:.]?\s*$/iu, "") // trailing text after removing a final citation
       .trim();
     return {
       approved: parsed.approved,
@@ -216,17 +212,15 @@ export async function moderate(song, details = null, opts = {}) {
       moderated: true,
     };
   } catch (err) {
-    // Hết thời gian chờ là fail-CLOSED với thông báo cho phép thử lại: các phán
-    // quyết chậm thường tập trung ở đúng những bài hát cần bộ lọc (từng có bài
-    // phản kháng bị cấm lọt qua theo cách này), nên không được phát bài đã hết
-    // thời gian chờ mà chưa kiểm duyệt. Khách chỉ cần chạm lại; nếu provider
-    // thực sự ngừng hoạt động, host có thể tắt bộ lọc trực tiếp. Lỗi mạng bên
-    // dưới vẫn fail-open.
+    // A timeout is fail-CLOSED with a retryable message: slow decisions often
+    // cluster around songs that need filtering, so a timed-out song must not play
+    // unchecked. Guests can tap again; if the provider is actually down, the host
+    // can disable the filter directly. Lower-level network failures still fail open.
     if (err?.name === "AbortError") {
-      console.warn(`[moderation] hết thời gian chờ sau ${timeoutMs}ms — từ chối (khách có thể thử lại).`);
+      console.warn(`[moderation] timed out after ${timeoutMs}ms — rejecting (guest can retry).`);
       return { approved: false, reason: "Hệ thống đang bận, vui lòng thử lại.", moderated: false };
     }
-    console.warn(`[moderation] lỗi — cho phép khi lỗi. ${err?.message || ""}`);
+    console.warn(`[moderation] error — allowing on infrastructure failure. ${err?.message || ""}`);
     return APPROVED;
   } finally {
     clearTimeout(timer);

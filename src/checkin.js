@@ -26,8 +26,8 @@ export function getYesterdayLocalDate(timezone = null, date = new Date()) {
 }
 
 export function calculateMilestoneBonus(streakAfter) {
-  // Bonus mốc: Ngày 3: +2, Ngày 7: +5, Ngày 14: +10, Ngày 30: +20.
-  // Sau 30 ngày, lặp lại modulo 30.
+  // Milestone bonuses: day 3: +2, day 7: +5, day 14: +10, day 30: +20.
+  // After day 30, the cycle repeats modulo 30.
   const cycleDay = ((streakAfter - 1) % 30) + 1;
   if (cycleDay === 3) return { bonus: 2, isMilestone: true, milestoneDay: 3 };
   if (cycleDay === 7) return { bonus: 5, isMilestone: true, milestoneDay: 7 };
