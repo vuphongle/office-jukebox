@@ -205,6 +205,16 @@ test("parseYouTubeVideoId rejects non-YouTube URLs and malformed IDs", () => {
   assert.equal(youtube.parseYouTubeVideoId("https://youtu.be/not-video"), null);
 });
 
+test("request metadata accepts only valid video IDs and YouTube image URLs", () => {
+  assert.equal(youtube.isValidYouTubeVideoId("W7rindfYUHk"), true);
+  assert.equal(youtube.isValidYouTubeVideoId("not-video"), false);
+  assert.equal(youtube.sanitizeThumbnail("https://i.ytimg.com/vi/W7rindfYUHk/hqdefault.jpg"), "https://i.ytimg.com/vi/W7rindfYUHk/hqdefault.jpg");
+  assert.equal(youtube.sanitizeThumbnail("https://attacker.example/track.gif"), null);
+  const encoded = youtube.sanitizeThumbnail('https://i.ytimg.com/" onerror="alert(1)');
+  assert.ok(encoded);
+  assert.equal(encoded.includes('"'), false);
+});
+
 test("fetchYouTubeMetadata maps oEmbed response to a request song", async () => {
   const song = await youtube.fetchYouTubeMetadata("W7rindfYUHk", {
     fetchImpl: async () =>
@@ -212,7 +222,7 @@ test("fetchYouTubeMetadata maps oEmbed response to a request song", async () => 
         JSON.stringify({
           title: "A song",
           author_name: "An artist",
-          thumbnail_url: "https://img.test/thumb.jpg",
+          thumbnail_url: "https://img.youtube.com/thumb.jpg",
         }),
         { status: 200 }
       ),
@@ -222,7 +232,7 @@ test("fetchYouTubeMetadata maps oEmbed response to a request song", async () => 
     title: "A song",
     channel: "An artist",
     duration: "",
-    thumbnail: "https://img.test/thumb.jpg",
+    thumbnail: "https://img.youtube.com/thumb.jpg",
   });
 });
 

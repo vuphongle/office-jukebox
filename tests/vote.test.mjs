@@ -1,8 +1,10 @@
-import test from "node:test";
+import test, { afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { initDb } from "../src/db.js";
+import { initDb, closeDb } from "../src/db.js";
 import { JukeboxState } from "../src/state.js";
 import { UserRepository } from "../src/repositories/userRepository.js";
+
+afterEach(() => closeDb());
 
 test("Multi-tier queue sorting: pinned > vote_score > sequence", () => {
   const db = initDb({ dbPath: ":memory:" });

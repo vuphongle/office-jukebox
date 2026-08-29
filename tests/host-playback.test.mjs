@@ -1,4 +1,5 @@
 import { test, expect } from "bun:test";
+import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import vm from "node:vm";
 
@@ -94,4 +95,12 @@ test("host offers a user-gesture recovery when YouTube blocks the first autoplay
   player.state = context.YT.PlayerState.PLAYING;
   getPlayerEvents().onStateChange({ data: context.YT.PlayerState.PLAYING });
   expect(elements.get("playback-recovery").classList.contains("hidden")).toBe(true);
+});
+
+test("host registers the YouTube callback before loading the iframe API", () => {
+  const html = readFileSync(new URL("../public/host.html", import.meta.url), "utf8");
+  const hostScript = html.indexOf('src="/host.js"');
+  const iframeApiScript = html.indexOf('src="https://www.youtube.com/iframe_api"');
+  assert.ok(hostScript >= 0);
+  assert.ok(iframeApiScript > hostScript);
 });

@@ -1,4 +1,4 @@
-import test from "node:test";
+import test, { afterEach } from "node:test";
 import assert from "node:assert/strict";
 import { initDb, closeDb } from "../src/db.js";
 import { UserRepository } from "../src/repositories/userRepository.js";
@@ -6,6 +6,8 @@ import { SessionRepository } from "../src/repositories/sessionRepository.js";
 import { LedgerRepository } from "../src/repositories/ledgerRepository.js";
 import { QueueRepository } from "../src/repositories/queueRepository.js";
 import { DropRepository } from "../src/repositories/dropRepository.js";
+
+afterEach(() => closeDb());
 
 test("Database does not create a predictable admin without explicit credentials", () => {
   const db = initDb({ dbPath: ":memory:", adminUser: "", adminPass: "" });

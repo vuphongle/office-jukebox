@@ -1,8 +1,10 @@
-import test from "node:test";
+import test, { afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { initDb } from "../src/db.js";
+import { initDb, closeDb } from "../src/db.js";
 import { UserRepository } from "../src/repositories/userRepository.js";
 import { DropRepository } from "../src/repositories/dropRepository.js";
+
+afterEach(() => closeDb());
 
 test("Direct Airdrop to all active users", () => {
   const db = initDb({ dbPath: ":memory:", adminUser: "admin", adminPass: "test-admin-password" });
