@@ -45,6 +45,10 @@ test("WebSocket limits cap concurrent sockets, aggregate messages, and release o
     limiter.releaseConnection("same-ip");
     limiter.releaseConnection("same-ip");
     assert.deepEqual(limiter.snapshot(), { connections: 0, messages: 1 });
+    const bounded = new WebSocketRateLimiter({ maxConnections: 2, maxMessages: 2, maxTrackedIps: 100 });
+    for (let i = 0; i < 100; i++) assert.equal(bounded.allowMessage(`scan-${i}`), true);
+    assert.equal(bounded.allowMessage("scan-overflow"), false);
+    assert.equal(bounded.snapshot().messages, 100);
     return;
   }
   const server = http.createServer();
