@@ -28,6 +28,7 @@ class FakeElement {
 
 function createHostContext() {
   const elements = new Map();
+  const sent = [];
   const getElementById = (id) => {
     if (!elements.has(id)) elements.set(id, new FakeElement());
     return elements.get(id);
@@ -55,7 +56,10 @@ function createHostContext() {
       querySelectorAll: () => [],
     },
     Element: FakeElement,
-    WebSocket: class { readyState = 0; send() {} },
+    WebSocket: class {
+      readyState = 1;
+      send(payload) { sent.push(JSON.parse(payload)); }
+    },
     YT: {
       PlayerState: { ENDED: 0, PLAYING: 1, PAUSED: 2, BUFFERING: 3 },
       Player: function (_id, options) {
@@ -72,7 +76,7 @@ function createHostContext() {
     requestAnimationFrame: (callback) => callback(),
   });
   context.globalThis = context;
-  return { context, elements, player, getPlayerEvents: () => playerEvents };
+  return { context, elements, player, sent, getPlayerEvents: () => playerEvents };
 }
 
 test("host offers a user-gesture recovery when YouTube blocks the first autoplay", () => {
@@ -95,6 +99,28 @@ test("host offers a user-gesture recovery when YouTube blocks the first autoplay
   player.state = context.YT.PlayerState.PLAYING;
   getPlayerEvents().onStateChange({ data: context.YT.PlayerState.PLAYING });
   expect(elements.get("playback-recovery").classList.contains("hidden")).toBe(true);
+});
+
+test("host ignores ended events that identify a different video", () => {
+  const { context, elements, sent, getPlayerEvents } = createHostContext();
+  const source = readFileSync(new URL("../public/host.js", import.meta.url), "utf8");
+  vm.runInContext(source, context);
+  context.connectWs();
+  context.window.onYouTubeIframeAPIReady();
+  getPlayerEvents().onReady();
+  elements.get("start-btn").onclick();
+  vm.runInContext('latestState = { nowPlaying: { videoId: "current-song" }, queue: [] }; syncPlayer();', context);
+
+  getPlayerEvents().onStateChange({
+    data: context.YT.PlayerState.ENDED,
+    target: { getVideoData: () => ({ video_id: "previous-song" }) },
+  });
+  getPlayerEvents().onStateChange({
+    data: context.YT.PlayerState.ENDED,
+    target: { getVideoData: () => ({ video_id: "current-song" }) },
+  });
+
+  assert.deepEqual(sent, [{ type: "ended", videoId: "current-song" }]);
 });
 
 test("host registers the YouTube callback before loading the iframe API", () => {

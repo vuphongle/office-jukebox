@@ -18,7 +18,6 @@ let voteSortOn = true;
 let hostToken = null; // WebSocket control token (only issued to authenticated hosts)
 let ws = null;
 let draggedQueueId = null;
-let playerLoadStartedAt = 0;
 const NO_THUMB = 'data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22/%3E';
 
 function safeImageUrl(value) {
@@ -182,11 +181,10 @@ window.onYouTubeIframeAPIReady = function () {
       },
       onStateChange: (e) => {
         if (e.data === YT.PlayerState.ENDED) {
-          // A load transition can deliver a late ENDED event from the previous
-          // video. Ignore that transient callback instead of advancing the
-          // newly selected queue item.
+          // A late callback from a previous video must not advance the newly
+          // selected queue item.
           const eventVideoId = e.target?.getVideoData?.()?.video_id;
-          if (Date.now() - playerLoadStartedAt >= 1000 && (!eventVideoId || eventVideoId === currentVideoId)) {
+          if (eventVideoId === currentVideoId) {
             send({ type: "ended", videoId: currentVideoId });
           }
         }
@@ -220,7 +218,6 @@ function syncPlayer() {
   if (!np) {
     clearTimeout(playbackWatchdog);
     currentVideoId = null;
-    playerLoadStartedAt = 0;
     if (player.stopVideo) player.stopVideo();
     hidePlaybackRecovery();
     idle.classList.remove("hidden");
@@ -229,7 +226,6 @@ function syncPlayer() {
   idle.classList.add("hidden");
   if (np.videoId !== currentVideoId) {
     currentVideoId = np.videoId;
-    playerLoadStartedAt = Date.now();
     player.loadVideoById(np.videoId);
     player.playVideo();
     armPlaybackWatchdog(np.videoId);
