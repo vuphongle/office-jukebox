@@ -62,8 +62,15 @@ function connectWs() {
   const socket = new WebSocket(`${proto}://${location.host}`);
   ws = socket;
   socket.onopen = () => {
+    // A terminal send can be acknowledged locally by WebSocket.send() and
+    // still be lost while the connection is closing. Re-arm reporting on each
+    // reconnect; the server-side playback token makes duplicate reports safe.
+    terminalReportedForToken = null;
     sendAuth(); // re-authenticate after every connection/reconnection
     reportIfEnded();
+    if (currentVideoId && currentPlaybackToken) {
+      armPlaybackWatchdog(currentVideoId, currentPlaybackToken);
+    }
   };
   socket.onmessage = (e) => {
     let msg;
@@ -96,6 +103,8 @@ function connectWs() {
   socket.onclose = () => {
     if (ws !== socket) return;
     ws = null;
+    terminalReportedForToken = null;
+    clearTimeout(playbackWatchdog);
     setTimeout(() => {
       if (!ws) connectWs();
     }, 1500);

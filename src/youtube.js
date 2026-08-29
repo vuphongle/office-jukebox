@@ -211,10 +211,13 @@ export async function fetchYouTubeMetadata(videoId, { timeoutMs = 5000, fetchImp
     const res = await fetchImpl(url, { headers: { "User-Agent": UA }, signal: controller.signal });
     if (!res.ok) return null;
     const data = await res.json();
+    const title = typeof data.title === "string" ? data.title.trim() : "";
+    const channel = typeof data.author_name === "string" ? data.author_name.trim() : "";
+    if (!title || !channel) return null;
     return {
       videoId,
-      title: data.title || "(không có tiêu đề)",
-      channel: data.author_name || "Không rõ",
+      title,
+      channel,
       duration: "",
       thumbnail: sanitizeThumbnail(data.thumbnail_url) || `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`,
     };

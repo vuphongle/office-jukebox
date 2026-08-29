@@ -798,7 +798,11 @@ app.post("/api/request", songRequestIpLimit, async (req, res) => {
   if (thumbnail !== undefined && thumbnail !== null && typeof thumbnail !== "string") {
     return res.status(400).json({ ok: false, reason: "Ảnh bài hát không hợp lệ." });
   }
-  const normalizedDuration = typeof duration === "string" ? duration.trim().slice(0, 20) : "";
+  const rawDuration = typeof duration === "string" ? duration.trim() : "";
+  if (rawDuration.length > 20) {
+    return res.status(400).json({ ok: false, reason: "Thời lượng bài hát không hợp lệ hoặc vượt quá 10 phút." });
+  }
+  const normalizedDuration = rawDuration;
   if (normalizedDuration) {
     const durationLimit = durationSeconds(normalizedDuration);
     if (!Number.isFinite(durationLimit)) {

@@ -29,6 +29,7 @@ class FakeElement {
 function createHostContext() {
   const elements = new Map();
   const sent = [];
+  const sockets = [];
   const getElementById = (id) => {
     if (!elements.has(id)) elements.set(id, new FakeElement());
     return elements.get(id);
@@ -67,6 +68,7 @@ function createHostContext() {
     Element: FakeElement,
     WebSocket: class {
       readyState = 1;
+      constructor() { sockets.push(this); }
       send(payload) { sent.push(JSON.parse(payload)); }
     },
     YT: {
@@ -85,7 +87,7 @@ function createHostContext() {
     requestAnimationFrame: (callback) => callback(),
   });
   context.globalThis = context;
-  return { context, elements, player, sent, getPlayerEvents: () => playerEvents };
+  return { context, elements, player, sent, sockets, getPlayerEvents: () => playerEvents };
 }
 
 test("host offers a user-gesture recovery when YouTube blocks the first autoplay", () => {
@@ -138,6 +140,27 @@ test("host binds playback callbacks to the server-issued generation token", () =
     { type: "ended", videoId: "first-song", playbackToken: "token-a", playedSeconds: 0 },
     { type: "error", videoId: "current-song", playbackToken: "token-b", code: 150 },
     { type: "ended", videoId: "reconnected-song", playbackToken: "token-c", playedSeconds: 0 },
+  ]);
+});
+
+test("host retries an ended report after reconnecting with the same playback token", () => {
+  const { context, elements, sent, player, sockets, getPlayerEvents } = createHostContext();
+  const source = readFileSync(new URL("../public/host.js", import.meta.url), "utf8");
+  vm.runInContext(source, context);
+  context.connectWs();
+  context.window.onYouTubeIframeAPIReady();
+  getPlayerEvents().onReady();
+  elements.get("start-btn").onclick();
+  vm.runInContext('latestState = { nowPlaying: { videoId: "same-song", playbackToken: "same-token" }, queue: [] }; syncPlayer();', context);
+  player.state = context.YT.PlayerState.ENDED;
+  context.reportIfEnded();
+  const firstSocket = sockets[0];
+  firstSocket.onclose();
+  context.connectWs();
+  sockets[1].onopen();
+  assert.deepEqual(sent.filter((message) => message.type === "ended"), [
+    { type: "ended", videoId: "same-song", playbackToken: "same-token", playedSeconds: 0 },
+    { type: "ended", videoId: "same-song", playbackToken: "same-token", playedSeconds: 0 },
   ]);
 });
 

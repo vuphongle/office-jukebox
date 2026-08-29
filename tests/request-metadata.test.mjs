@@ -4,6 +4,7 @@ import { initDb, closeDb } from "../src/db.js";
 import { JukeboxState } from "../src/state.js";
 import { resolveCanonicalRequestMetadata } from "../src/requestMetadata.js";
 import { prepareRequestSong } from "../src/requestPipeline.js";
+import { fetchYouTubeMetadata } from "../src/youtube.js";
 
 test("request metadata uses canonical YouTube title/channel for moderation and storage", async () => {
   const canonical = {
@@ -65,6 +66,12 @@ test("request metadata rejects unavailable or incomplete canonical data", async 
   assert.equal(
     await resolveCanonicalRequestMetadata("W7rindfYUHk", {
       fetchMetadata: async () => ({ title: "Only title", channel: "" }),
+    }),
+    null
+  );
+  assert.equal(
+    await fetchYouTubeMetadata("W7rindfYUHk", {
+      fetchImpl: async () => new Response(JSON.stringify({ title: "Only title" }), { status: 200 }),
     }),
     null
   );

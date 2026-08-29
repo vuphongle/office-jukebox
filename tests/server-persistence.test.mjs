@@ -65,6 +65,12 @@ test("settings and feedback handlers report atomic persistence failures and roll
   const { child, baseUrl } = await startServer(dataDir);
   try {
     const cookie = await login(baseUrl);
+    const malformedDuration = await fetch(`${baseUrl}/api/request`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ videoId: "W7rindfYUHk", duration: "00000000000000010:00x" }),
+    });
+    assert.equal(malformedDuration.status, 400);
     const oversizedReason = await fetch(`${baseUrl}/api/admin/users/admin_root/points`, {
       method: "POST",
       headers: { "Content-Type": "application/json", Cookie: cookie },
