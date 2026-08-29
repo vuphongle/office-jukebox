@@ -5,6 +5,7 @@ import { mkdtempSync, mkdirSync, existsSync, rmSync, unlinkSync, chmodSync } fro
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { WebSocket } from "ws";
 
 const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 
@@ -57,6 +58,29 @@ async function login(baseUrl) {
   assert.equal(response.status, 200);
   const cookie = response.headers.get("set-cookie").split(";", 1)[0];
   return cookie;
+}
+
+function openSocket(baseUrl, cookie) {
+  return new Promise((resolve, reject) => {
+    const socket = new WebSocket(baseUrl.replace(/^http/, "ws"), { headers: { Cookie: cookie } });
+    socket.once("open", () => resolve(socket));
+    socket.once("error", reject);
+  });
+}
+
+function waitForMessage(socket, predicate) {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error("timed out waiting for WebSocket message")), 1500);
+    const onMessage = (raw) => {
+      let message;
+      try { message = JSON.parse(raw.toString()); } catch { return; }
+      if (!predicate(message)) return;
+      clearTimeout(timer);
+      socket.off("message", onMessage);
+      resolve(message);
+    };
+    socket.on("message", onMessage);
+  });
 }
 
 test("settings and feedback handlers report atomic persistence failures and rollback memory", async () => {
@@ -129,6 +153,31 @@ test("feedback submission reports a rename failure instead of claiming success",
     assert.equal((await response.json()).ok, false);
     assert.equal(existsSync(path.join(dataDir, "feedback.json")), true);
   } finally {
+    await stopServer(child);
+    rmSync(dataDir, { recursive: true, force: true });
+  }
+});
+
+test("WebSocket settings failures do not broadcast unpersisted state", async () => {
+  const dataDir = mkdtempSync(path.join(os.tmpdir(), "office-jukebox-ws-settings-"));
+  mkdirSync(path.join(dataDir, "settings.json"));
+  const { child, baseUrl } = await startServer(dataDir);
+  let socket;
+  try {
+    const cookie = await login(baseUrl);
+    socket = await openSocket(baseUrl, cookie);
+    await waitForMessage(socket, (message) => message.type === "state");
+    socket.send(JSON.stringify({ type: "setCooldown", seconds: 5 }));
+    const error = await waitForMessage(socket, (message) => message.type === "error");
+    assert.match(error.reason, /Không thể lưu cài đặt/);
+    const messages = [];
+    const onMessage = (raw) => { try { messages.push(JSON.parse(raw.toString())); } catch {} };
+    socket.on("message", onMessage);
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    socket.off("message", onMessage);
+    assert.equal(messages.some((message) => message.type === "state" && message.cooldownSeconds === 5), false);
+  } finally {
+    socket?.close();
     await stopServer(child);
     rmSync(dataDir, { recursive: true, force: true });
   }
