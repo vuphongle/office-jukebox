@@ -72,7 +72,11 @@ export class JukeboxState {
       this._sortQueue();
       this._promoteIfIdle();
     } catch (err) {
-      console.warn(`[state] initFromDb failed: ${err.message}`);
+      // Starting with an empty in-memory queue after a hydration failure would
+      // make a healthy-looking server disagree with SQLite and could overwrite
+      // the persisted queue on the next mutation. Fail startup instead so the
+      // operator sees the actual storage problem.
+      throw new Error(`Unable to hydrate queue state from SQLite: ${err.message}`, { cause: err });
     }
   }
 

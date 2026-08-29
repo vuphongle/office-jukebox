@@ -123,14 +123,6 @@ export class QueueRepository {
     return this.findById(id);
   }
 
-  setPin(id, pinned, pinnedOrder = 0) {
-    this.db.run(
-      "UPDATE queue_items SET pinned = ?, pinned_order = ? WHERE id = ?",
-      [pinned ? 1 : 0, pinnedOrder, id]
-    );
-    return this.findById(id);
-  }
-
   reorderPinned(items) {
     const tx = this.db.transaction(() => {
       for (let i = 0; i < items.length; i++) {
