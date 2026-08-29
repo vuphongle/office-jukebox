@@ -42,7 +42,7 @@ event.
 - 🤖 Optional AI content filter — any OpenAI-compatible LLM can evaluate requests
   using event context, YouTube category, family-safety flags, and descriptions.
   The projector controls off, on, and strict modes.
-- 🎛 Live host controls — play/pause/skip, volume, removal, per-guest cooldown,
+- 🎛 Live host controls — play/pause/skip, removal, per-guest cooldown,
   filter mode, and event context, persisted across restarts.
 - 💬 Guest feedback at /guest, with review, deletion, toggle, and statistics
   controls at /feedback.

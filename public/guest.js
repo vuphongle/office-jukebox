@@ -1340,10 +1340,13 @@ function connectWs() {
     }
   };
   ws.onclose = () => {
-    if (queueWs === ws) queueWs = null;
+    if (queueWs !== ws) return;
+    queueWs = null;
     resetChatPending();
     setChatStatus("Mất kết nối chat, đang thử kết nối lại…", "bad");
-    setTimeout(connectWs, 2000);
+    setTimeout(() => {
+      if (!queueWs) connectWs();
+    }, 2000);
   };
 }
 

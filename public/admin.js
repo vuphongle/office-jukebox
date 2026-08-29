@@ -868,13 +868,18 @@ function handleAdminChatSubmit(e) {
   const name = nameInput.value.trim() || "Admin";
   if (!text || !ws || ws.readyState !== WebSocket.OPEN) return;
 
-  ws.send(JSON.stringify({
-    type: "chatSend",
-    name,
-    text,
-    admin: true,
-    clientId: "admin_panel",
-  }));
+  try {
+    ws.send(JSON.stringify({
+      type: "chatSend",
+      name,
+      text,
+      admin: true,
+      clientId: "admin_panel",
+    }));
+  } catch {
+    showStatus("Mất kết nối chat, vui lòng thử lại.", true);
+    return;
+  }
   input.value = "";
 }
 

@@ -46,12 +46,13 @@ function reportIfEnded() {
 
 function connectWs() {
   const proto = location.protocol === "https:" ? "wss" : "ws";
-  ws = new WebSocket(`${proto}://${location.host}`);
-  ws.onopen = () => {
+  const socket = new WebSocket(`${proto}://${location.host}`);
+  ws = socket;
+  socket.onopen = () => {
     sendAuth(); // re-authenticate after every connection/reconnection
     reportIfEnded();
   };
-  ws.onmessage = (e) => {
+  socket.onmessage = (e) => {
     let msg;
     try {
       msg = JSON.parse(e.data);
@@ -79,10 +80,22 @@ function connectWs() {
       syncPlayer();
     }
   };
-  ws.onclose = () => setTimeout(connectWs, 1500); // reconnect automatically
+  socket.onclose = () => {
+    if (ws !== socket) return;
+    ws = null;
+    setTimeout(() => {
+      if (!ws) connectWs();
+    }, 1500);
+  }; // reconnect automatically
 }
 function send(obj) {
-  if (ws && ws.readyState === 1) ws.send(JSON.stringify(obj));
+  if (!ws || ws.readyState !== 1) return false;
+  try {
+    ws.send(JSON.stringify(obj));
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 // ---- Queue drag and drop ---------------------------------------------------
@@ -172,7 +185,7 @@ window.onYouTubeIframeAPIReady = function () {
           // A load transition can deliver a late ENDED event from the previous
           // video. Ignore that transient callback instead of advancing the
           // newly selected queue item.
-          const eventVideoId = e.target?.getVideoData?.().video_id;
+          const eventVideoId = e.target?.getVideoData?.()?.video_id;
           if (Date.now() - playerLoadStartedAt >= 1000 && (!eventVideoId || eventVideoId === currentVideoId)) {
             send({ type: "ended", videoId: currentVideoId });
           }
@@ -189,7 +202,7 @@ window.onYouTubeIframeAPIReady = function () {
       onAutoplayBlocked: () => showPlaybackRecovery(),
       onError: (e) => {
         // 101/150 = owner disallows embedding; 100 = removed; 2 = invalid code.
-        const eventVideoId = e.target?.getVideoData?.().video_id;
+        const eventVideoId = e.target?.getVideoData?.()?.video_id;
         if (eventVideoId && eventVideoId !== currentVideoId) return;
         console.warn("Player error", e.data, "for", currentVideoId);
         send({ type: "error", videoId: currentVideoId, code: e.data });
