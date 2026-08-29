@@ -1476,10 +1476,12 @@ wss.on("connection", (ws, request) => {
 
       switch (msg.type) {
         case "ended":
+          if (!isValidYouTubeVideoId(msg.videoId)) break;
           console.log(`[host] finished playing ${msg.videoId}`);
           settleRankTransition(state.advance(msg.videoId, { finishReason: "ended" }));
           break;
         case "error":
+          if (!isValidYouTubeVideoId(msg.videoId)) break;
           console.warn(`[host] playback error ${msg.code} on ${msg.videoId} — skipping and refunding points`);
           settleRankTransition(state.advance(msg.videoId, { isError: true, finishReason: "error" }));
           break;

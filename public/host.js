@@ -201,7 +201,7 @@ window.onYouTubeIframeAPIReady = function () {
       onError: (e) => {
         // 101/150 = owner disallows embedding; 100 = removed; 2 = invalid code.
         const eventVideoId = e.target?.getVideoData?.()?.video_id;
-        if (eventVideoId && eventVideoId !== currentVideoId) return;
+        if (eventVideoId !== currentVideoId) return;
         console.warn("Player error", e.data, "for", currentVideoId);
         send({ type: "error", videoId: currentVideoId, code: e.data });
       },
