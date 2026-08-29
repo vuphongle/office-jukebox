@@ -1,13 +1,13 @@
-# Hệ thống âm nhạc sự kiện — chạy trên Bun.
+# Event music system — runs on Bun.
 FROM oven/bun:1-alpine
 
 WORKDIR /app
 
-# Cài dependency trước (tận dụng cache của layer tốt hơn).
+# Install dependencies first so the Docker layer cache can be reused.
 COPY package.json bun.lockb* ./
 RUN bun install --frozen-lockfile --production
 
-# Mã nguồn ứng dụng.
+# Application source.
 COPY server.js ./
 COPY src ./src
 COPY public ./public

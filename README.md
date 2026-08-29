@@ -1,307 +1,263 @@
 <div align="center">
 
-# 🎶 Hệ thống âm nhạc sự kiện
+# 🎶 Office Jukebox
 
-**Biến mọi máy chiếu thành một jukebox do cả đám đông điều khiển.**
+**Turn any projector into a crowd-controlled jukebox.**
 
-Khách quét mã QR, tìm kiếm trên YouTube bằng điện thoại và xếp bài hát vào hàng
-đợi. Nhạc phát trên màn hình lớn — với một DJ AI tùy chọn giúp các yêu cầu phù
-hợp với từng dịp, bất kể đó là dịp gì.
+Guests scan a QR code, search YouTube from their phones, and add songs to the
+queue. Music plays on the big screen, with an optional AI DJ that evaluates
+requests against the occasion.
 
 [![Runtime: Bun](https://img.shields.io/badge/runtime-bun-f9f1e1?logo=bun&logoColor=black)](https://bun.sh)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
-[![Không cần khóa API](https://img.shields.io/badge/YouTube%20API%20key-not%20needed-red)](#cách-hoạt-động)
-[![Tự lưu trữ](https://img.shields.io/badge/self--hosted-Docker-blue?logo=docker&logoColor=white)](#chạy-trên-máy-chủ-gia-đình-docker--proxy-ngược)
+[![No YouTube API key required](https://img.shields.io/badge/YouTube%20API%20key-not%20needed-red)](#how-it-works)
+[![Self-hosted](https://img.shields.io/badge/self--hosted-Docker-blue?logo=docker&logoColor=white)](#self-hosting-with-docker-and-a-reverse-proxy)
 
-<img src="docs/host-vi.png" alt="Màn hình máy chiếu — bài đang phát, mã QR và hàng đợi trực tiếp" width="100%" />
+<img src="docs/host-vi.png" alt="Projector screen showing the current song, QR code, and live queue" width="100%" />
 
-<em>Màn hình chính được chiếu: trình phát, mã QR để quét và hàng đợi trực tiếp kèm tên người yêu cầu.</em>
+<em>Projected host screen: player, scannable QR code, and live queue with requester names.</em>
 
 </div>
 
-## Vì sao dự án này tồn tại
+## Why this exists
 
-Danh sách nhạc trong tiệc thường thất bại theo một trong hai cách: một người
-làm DJ suốt đêm, hoặc hàng đợi không được kiểm duyệt đầy những meme và những
-thứ tệ hơn. Đây là giải pháp cân bằng — mọi khách có thể thêm bài hát từ điện
-thoại của mình chỉ trong vài giây (không cần ứng dụng, không cần tài khoản),
-trong khi người phụ trách vẫn có quyền kiểm soát vừa đủ: bỏ qua, xóa, giới hạn
-tần suất và dùng bộ lọc LLM tùy chọn hiểu được sự khác biệt giữa *"đây là bữa
-tối ở trường"* và *"đây là hộp đêm"* để đánh giá yêu cầu cho phù hợp.
+Party music usually fails in one of two ways: one person DJs all night, or the
+queue fills with memes and worse. This project is the middle ground. Guests can
+add songs from their phones in seconds (no app and no account required), while
+the host retains enough control to skip, remove, rate-limit, and optionally use
+an LLM filter that understands the difference between a school dinner and a
+nightclub.
 
-Được xây dựng cho một bữa tối tốt nghiệp có thật ở Hồng Kông; được thiết kế để
-dùng cho mọi sự kiện.
+It was built for a real graduation dinner in Hong Kong and designed for any
+event.
 
-## Tính năng
+## Features
 
-- 📱 **Yêu cầu tức thì** — quét QR → tìm kiếm → chạm. Không cần ứng dụng, không
-  cần đăng nhập.
-- 🔑 **Không cần khóa API YouTube** — tìm kiếm đọc dữ liệu từ trang kết quả công
-  khai; phát nhạc dùng trình phát nhúng tiêu chuẩn.
-- 🎤 **Khám phá kiểu KTV** — các tab thể loại (K-pop, V-pop, nhạc trữ tình / bolero,
-  nhạc phương Tây, nhạc tiệc, nhạc kinh điển Việt Nam) và các chip ca sĩ với kết
-  quả thực tế, cập nhật theo thời gian thực — khách không biết chọn gì chỉ cần
-  chạm.
-- 🤖 **Bộ lọc nội dung AI (tùy chọn)** — mọi LLM tương thích với OpenAI sẽ đánh
-  giá từng yêu cầu theo *sự kiện của bạn*, bổ sung danh mục YouTube, cờ an toàn
-  cho gia đình và mô tả video. Ba chế độ được chuyển từ trang máy chiếu:
-  **tắt / bật / nghiêm ngặt**. Khi gặp sự cố, hệ thống cho phép yêu cầu đi tiếp
-  — việc kiểm duyệt không thể làm nhạc dừng.
-- 🎛 **Điều khiển trực tiếp cho người phụ trách** — phát/tạm dừng/bỏ qua, âm
-  lượng trong trình phát YouTube, xóa bài, thời gian chờ yêu cầu theo từng khách, chế độ lọc và mô tả
-  sự kiện cung cấp cho AI — tất cả từ trang được chiếu, tất cả vẫn được lưu sau
-  khi khởi động lại.
-- 💬 **Góp ý từ khách** — khách có thể gửi ý tưởng hoặc báo lỗi ngay trên trang
-  `/guest`; người phụ trách xem, xóa, bật/tắt tính năng và theo dõi thống kê tại
-  `/feedback`.
-- 🧠 **AI chat tự chủ (tùy chọn)** — AI đọc hội thoại theo ngân sách tối đa
-  100.000 ký tự, tự quyết định lúc nên trả lời hoặc im lặng, duy trì rolling
-  summary và memory sự kiện có thời hạn. Admin đặt tên, phong cách, kiến thức,
-  mức chủ động, cooldown và quota tại `/admin`.
-- 🔒 **Mật khẩu người phụ trách** — đăng nhập tùy chọn bảo vệ trang máy chiếu
-  *và* các điều khiển WebSocket; khách không bị ảnh hưởng.
-- 🛡 **Rào chắn hàng đợi** — từ chối bài trùng, thời gian chờ theo từng điện
-  thoại (hoạt động sau NAT của địa điểm), giới hạn 50 bài, kiểm tra khả năng
-  phát trước và bộ giám sát tự động bỏ qua video không bắt đầu được.
-- ⚡ **Mọi thứ trực tiếp** — một lần phát WebSocket giữ máy chiếu và mọi điện
-  thoại đồng bộ; khách nhìn thấy huy hiệu "Bạn" trên các bài hát của mình.
-- 👤 **Tài khoản tùy chọn** — khách vãng lai vẫn dùng toàn bộ luồng chọn bài;
-  thành viên có thể đăng ký, điểm danh hằng ngày và tích điểm theo streak.
-- ❤️ **Vote bằng điểm** — mỗi lần vote tốn một điểm, có thể vote nhiều lần cho cùng bài; bài chỉ vượt nhóm khi có điểm cao hơn
-  Host ghim → số vote → thứ tự thêm; điểm được hoàn khi bài bị xóa hoặc lỗi phát.
-- 🎁 **Bảng điều khiển Admin** — quản lý thành viên, điều chỉnh điểm, phát airdrop
-  trực tiếp hoặc quà chờ nhận, xem ledger và điều hành góp ý/chat tại `/admin`.
+- 📱 Instant requests — scan QR, search, and tap. No app or login required.
+- 🔑 No YouTube API key — search reads public result pages and playback uses the
+  standard embedded player.
+- 🎤 KTV-style discovery — genre tabs for K-pop, V-pop, Vietnamese bolero,
+  Western music, party music, and Vietnamese classics, plus singer chips with
+  fresh real results.
+- 🤖 Optional AI content filter — any OpenAI-compatible LLM can evaluate requests
+  using event context, YouTube category, family-safety flags, and descriptions.
+  The projector controls off, on, and strict modes.
+- 🎛 Live host controls — play/pause/skip, volume, removal, per-guest cooldown,
+  filter mode, and event context, persisted across restarts.
+- 💬 Guest feedback at /guest, with review, deletion, toggle, and statistics
+  controls at /feedback.
+- 🧠 Optional autonomous AI chat with bounded context, rolling summaries, expiring
+  event memory, and admin-controlled behavior.
+- 🔒 Optional host password protecting the projector page and WebSocket controls.
+- 🛡 Queue guardrails — duplicate detection, per-phone rate limits, a 50-song
+  queue cap, playability checks, and a no-start watchdog.
+- ⚡ Realtime state broadcast to the projector and every guest phone.
+- 👤 Optional accounts for daily check-ins, streaks, points, and voting.
+- 🎁 Admin dashboard for members, points, airdrops, ledger, feedback, and chat.
 
 <div align="center">
-<img src="docs/guest-vi.png" alt="Trang khách trên điện thoại — khám phá, tìm kiếm và xếp hàng" width="330" />
+<img src="docs/guest-vi.png" alt="Guest mobile page for discovery, search, and queueing" width="330" />
 
-<em>Trang khách trên điện thoại: tên, tìm kiếm, chip ca sĩ và yêu cầu chỉ bằng một chạm.</em>
+<em>Guest mobile page: name, search, singer chips, and one-tap requests.</em>
 </div>
 
-## Bắt đầu nhanh
+## Language policy
 
-```bash
+Developer-facing documentation, code comments, test descriptions, configuration
+comments, and operational logs use English. User-facing UI copy, API reasons
+surfaced to users, AI responses shown in chat, and song or artist metadata remain
+Vietnamese or in their original language by product decision.
+
+## Quick start
+
+~~~bash
 git clone https://github.com/Hangton-Code/event-music-system.git
 cd event-music-system
 bun install
-cp .env.example .env      # giá trị mặc định dùng được — bộ lọc AI đang tắt
-# đặt ADMIN_PASSWORD mạnh trong .env nếu cần dùng /admin
+cp .env.example .env      # defaults are usable; the AI filter is off
+# set a strong ADMIN_PASSWORD in .env if /admin is needed
 bun start
-```
+~~~
 
-Mở **http://localhost:45416/** trên máy, kéo cửa sổ sang máy chiếu và nhấn
-**Bắt đầu** một lần để trình duyệt cho phép âm thanh. Khách quét mã QR trên màn
-hình.
+Open http://localhost:45416/ on the host machine, move the window to the
+projector, and press “Bắt đầu” once so the browser allows audio. Guests scan the
+QR code on the screen.
 
-> Ứng dụng yêu cầu Bun vì SQLite dùng module tích hợp `bun:sqlite`.
+Bun is required because SQLite uses the built-in bun:sqlite module.
 
-## Cách hoạt động
+## How it works
 
-```
-   Máy chiếu (laptop / server)        Điện thoại khách
+~~~
+   Projector (laptop / server)        Guest phone
   ┌────────────────────┐             ┌──────────────┐
-  │  ▶ Đang phát       │   quét QR   │  🔍 tìm kiếm │
-  │  [ video YouTube ] │  ◀───────▶  │  + thêm bài  │
+  │  ▶ Đang phát       │   scan QR   │  🔍 tìm kiếm │
+  │  [ YouTube video ] │  ◀───────▶  │  + thêm bài  │
   │  ▣ QR   Sắp phát ▤▤│   Wi-Fi     │  hàng đợi    │
   └────────────────────┘             └──────────────┘
-            │ âm thanh → hệ thống AV địa điểm
-```
+            │ audio → venue AV system
+~~~
 
-| Đường dẫn | Mục đích |
+| Path | Purpose |
 |------|---------|
-| `/` | Trang người phụ trách/máy chiếu — trình phát, mã QR, hàng đợi, các điều khiển |
-| `/guest` | Trang di động khách mở qua mã QR |
-| `/feedback` | Chuyển tới tab góp ý trong bảng điều khiển `/admin` |
-| `/admin` | Bảng điều khiển tài khoản, điểm, airdrop, ledger, góp ý và chat (cần tài khoản admin) |
-| `GET /api/search?q=` | Đọc kết quả tìm kiếm YouTube (không cần khóa API) |
-| `GET /api/browse?q=` | Tìm kiếm chỉ gồm đĩa đơn có bộ nhớ đệm, dùng cho các tab khám phá |
-| `POST /api/request` | Rào chắn → kiểm tra khả năng phát → (bộ lọc AI tùy chọn) → thêm vào hàng đợi |
-| `POST /api/feedback` | Lưu góp ý của khách khi tính năng đang bật |
-| `GET/PATCH/DELETE /api/feedback` | Xem thống kê/danh sách, bật/tắt và xóa góp ý (host) |
-| WebSocket `/` | Phát trạng thái hàng đợi; truyền các điều khiển của người phụ trách |
+| / | Host/projector page: player, QR code, queue, and controls |
+| /guest | Guest mobile page opened through the QR code |
+| /feedback | Redirects to the feedback tab in /admin |
+| /admin | Account, points, airdrop, ledger, feedback, and chat dashboard |
+| GET /api/search?q= | Read YouTube search results without an API key |
+| GET /api/browse?q= | Cached single-track search used by discovery tabs |
+| POST /api/request | Guardrails, playability check, optional AI filter, and queue insertion |
+| POST /api/feedback | Save guest feedback when enabled |
+| GET/PATCH/DELETE /api/feedback | Host feedback statistics, listing, toggling, and deletion |
+| WebSocket / | Broadcast queue state and carry host controls |
 
-Tìm kiếm trực tiếp ưu tiên context Việt Nam giống YouTube Music web để các bài
-nằm ở đầu kết quả gần với lúc người dùng tìm trên web. Nếu kết quả không đủ,
-máy chủ bổ sung bằng truy vấn lọc "Songs"; các tab khám phá vẫn chỉ dùng truy
-vấn "Songs" và không dùng cookie đăng nhập của người dùng.
+Direct search prioritizes a Vietnam-like YouTube Music context. If the primary
+result set is too small, the server supplements it with a Songs-filtered query.
+Discovery tabs use only the Songs query and do not use login cookies.
 
-**Máy chủ quản lý hàng đợi** (`src/state.js`). Trang máy chiếu chỉ là trình
-phát: khi một bài kết thúc hoặc gặp lỗi, trang báo cho máy chủ, máy chủ đưa bài
-tiếp theo lên và phát trạng thái mới cho mọi người. Tài khoản, điểm, vote và
-hàng đợi được lưu trong `data/jukebox.db`; các thiết lập trên trang máy chiếu
-(chế độ lọc, thời gian chờ, bối cảnh sự kiện) vẫn nằm trong
-`data/settings.json`.
+The queue server in src/state.js is authoritative. The projector is only a
+player: when a song ends or errors, it reports the event to the server, which
+promotes the next item and broadcasts the new state. Accounts, points, votes, and
+the queue are stored in data/jukebox.db; projector settings are stored in
+data/settings.json.
 
-Luồng yêu cầu: kiểm soát tràn → kiểm tra trùng/giới hạn → kiểm tra khả năng phát
-bằng oEmbed → phán quyết LLM tùy chọn → thêm vào hàng đợi. Các video bị tắt nhúng
-hoặc khóa theo khu vực nhưng vẫn lọt qua sẽ được trình phát tự động bỏ qua (mã
-lỗi iframe + bộ giám sát 20 giây nếu video chưa bao giờ bắt đầu).
+The request pipeline is overflow protection → duplicate/cooldown checks → oEmbed
+playability check → optional LLM decision → queue insertion. Videos that are
+embed-disabled or region-locked but pass the first check are automatically
+skipped by the player through iframe error handling and a 20-second no-start
+watchdog.
 
-## Bộ lọc AI
+## AI content filter
 
-Mặc định bộ lọc tắt; có thể chuyển chế độ từ trang máy chiếu (nút 🛡 **Bộ lọc**):
-**tắt → bật → nghiêm ngặt**. Bộ lọc hoạt động với mọi API trò chuyện tương
-thích OpenAI — OpenRouter, Kimi/Moonshot, DeepSeek, GLM… Đổi nhà cung cấp bằng
-cách thay đổi ba giá trị `.env`, không cần sửa mã:
+The filter is off by default and can be cycled from the projector page with the
+“Bộ lọc” button: “tắt → bật → nghiêm ngặt”. It works with any OpenAI-compatible
+chat API, including OpenRouter, Kimi/Moonshot, DeepSeek, and GLM.
 
-```ini
+~~~ini
 LLM_API_KEY=sk-...
 LLM_BASE_URL=https://openrouter.ai/api/v1
 LLM_MODEL=deepseek/deepseek-v4-flash
-```
+~~~
 
-Xác minh khóa và liệt kê các mô hình bằng `bun run check-llm`.
+Verify the key and list available models with bun run check-llm.
 
-**Hiểu ngữ cảnh, không máy móc.** Hãy cho biết sự kiện là gì (nút **Bối cảnh**
-trên trang máy chiếu — ví dụ *"một tiệc cưới"*, *"một bữa tiệc ở hộp đêm"*) để
-hệ thống đặt tiêu chuẩn phù hợp: những bài phổ biến có nội dung nhạy cảm có thể
-được phát ở hộp đêm nhưng không phù hợp với bữa tối ở trường; quốc ca và các
-bài hát phản kháng sẽ bị phát hiện trong những sự kiện xã hội thông thường. Chế
-độ **Nghiêm ngặt** bỏ qua địa điểm và chỉ cho phép nhạc phù hợp với gia đình.
+Set event context with the “Bối cảnh” button so the filter can apply an
+appropriate standard. “Nghiêm ngặt” ignores the venue and permits only
+family-safe music. Infrastructure failures are allowed so moderation never
+stops the party; a model response that avoids a structured verdict is rejected.
 
-### Cơ chế xử lý lỗi cần biết:
+The filter reads titles, channels, categories, and descriptions, not audio. On
+OpenRouter, LLM_WEB_SEARCH=true enables web search for each song and evaluation
+of actual lyrics, at roughly $0.005 per moderated request with extra latency.
 
-- **Cho phép tiếp tục** khi có sự cố hạ tầng (không có khóa, lỗi HTTP, hết thời
-  gian chờ) — sự cố không bao giờ làm bữa tiệc dừng lại.
-- **Từ chối** khi mô hình trả lời nhưng né tránh câu hỏi (bộ lọc nội dung của
-  nhà cung cấp hoặc không có phán quyết có cấu trúc) — né tránh được xem là
-  từ chối.
+## Autonomous AI chat
 
-> Bộ lọc đọc tiêu đề, kênh, danh mục và mô tả — không đọc âm thanh. Theo mặc
-> định, nó phát hiện nội dung không phải âm nhạc và siêu dữ liệu nhạy cảm, nhưng
-> không phát hiện lời bài hát nhạy cảm ẩn sau tiêu đề sạch. Trên OpenRouter, đặt
-> `LLM_WEB_SEARCH=true` để khắc phục khoảng trống này: mô hình sẽ tìm kiếm từng
-> bài trên web và đánh giá lời bài hát thực tế (~$0.005 cho mỗi yêu cầu được
-> kiểm duyệt, chậm hơn vài giây).
+AI chat is off by default and is managed in the “Góp ý & Chat” tab at /admin.
+User messages are broadcast immediately; AI work runs in the background and
+provider failures are recorded for admins without interrupting chat.
 
-## AI tự chủ trong phòng chat
+Chat is stored in SQLite and retains roughly the latest 5,000 messages per event.
+The client receives only the latest 40 messages, while the AI can read a history
+within the configured character budget. Older content becomes a rolling summary;
+stable facts, preferences, decisions, and topics can become sourced, expiring
+memory. The AI cannot add/remove songs, adjust points, or use admin privileges.
 
-AI chat mặc định tắt và được quản lý tại tab **Góp ý & Chat** trong `/admin`.
-Khi bật, AI đánh giá hội thoại sau mỗi nhóm tin nhắn mà không cần người dùng tag
-hay gọi tên. Tin nhắn người dùng vẫn được phát ngay; request AI chạy nền, lỗi
-provider chỉ được ghi trạng thái cho admin và không làm gián đoạn chat.
+If CHAT_AI_API_KEY is empty, chat AI falls back to the filter's LLM_* values:
 
-Chat được lưu trong SQLite và giữ tối đa khoảng 5.000 tin gần nhất cho mỗi sự
-kiện. Client chỉ nhận 40 tin gần nhất để giữ UI nhẹ, còn AI có thể lấy lịch sử
-theo ngân sách ký tự do admin đặt (8.000–100.000). Phần cũ được rolling summary;
-các fact/preference/decision/topic ổn định có thể được lưu thành memory có nguồn,
-confidence và thời hạn. Admin có thể xem, ghim, xóa hoặc reset memory. AI không
-được tự thêm/xóa bài, chỉnh điểm hay dùng quyền admin.
-
-Chat AI dùng cấu hình provider riêng; nếu `CHAT_AI_API_KEY` trống thì fallback về
-`LLM_*` của bộ lọc:
-
-```ini
+~~~ini
 CHAT_AI_API_KEY=sk-...
 CHAT_AI_BASE_URL=https://flowgiare.com/v1
 CHAT_AI_MODEL=antigravity/gemini-3.7-flash-high
-```
+~~~
 
-API key chỉ được đặt trong `.env` của máy chạy. Khi AI bật, nội dung chat và phần
-ngữ cảnh liên quan có thể được gửi tới provider đã cấu hình; giao diện khách hiển
-thị thông báo này ngay trong panel chat.
+API keys belong only in the .env file on the running machine. When AI is enabled,
+chat content and relevant context may be sent to the configured provider; the
+guest UI displays this notice in the chat panel.
 
-## Chạy trên máy chủ gia đình (Docker + proxy ngược)
+## Self-hosting with Docker and a reverse proxy
 
-Máy chủ tự xây dựng image từ mã nguồn — không cần registry, không cần đăng nhập:
+The server builds its own image from source — no registry or login is required:
 
-```bash
+~~~bash
 git clone https://github.com/Hangton-Code/event-music-system.git
 cd event-music-system
-cp .env.example .env          # đặt PUBLIC_URL là domain của bạn, cùng HOST_PASSWORD
+cp .env.example .env          # set PUBLIC_URL to your domain and configure HOST_PASSWORD
 docker compose up -d --build
-```
+~~~
 
-Container tham gia mạng Docker bên ngoài `reverseproxy` và mở cổng `45416`. Trỏ
-proxy ngược tới `event-music:45416`, đặt `PUBLIC_URL` thành tên miền của bạn
-(mã QR khách quét sẽ dùng địa chỉ này) và bảo đảm proxy chuyển tiếp
-**nâng cấp WebSocket**. Các thiết lập trên trang máy chiếu được lưu trong
-`./data`.
+The container joins the external reverseproxy Docker network and exposes port
+45416. Point the reverse proxy at event-music:45416, set PUBLIC_URL to your
+domain, and ensure the proxy forwards WebSocket upgrades. Projector settings are
+stored in ./data.
 
-> Mạng `reverseproxy` phải tồn tại từ trước (mạng này đã có nếu proxy của bạn
-> tạo ra). Nếu chưa có: `docker network create reverseproxy`.
+The reverseproxy network must already exist. If it does not:
+docker network create reverseproxy.
 
-### Cập nhật hệ thống
+### Updating the system
 
-**Đẩy mã để triển khai (khuyến nghị)** — một runner GitHub Actions tự lưu trữ
-xây dựng lại sau mỗi lần đẩy lên `main` (`.github/workflows/deploy.yml`). Thiết
-lập một lần:
+Push to deploy (recommended): a self-hosted GitHub Actions runner rebuilds after
+every push to main. Register a Linux runner, grant its account Docker access, and
+set the DEPLOY_DIR repository variable if the clone is not at
+~/event-music-system.
 
-1. **Đăng ký runner** — kho mã → **Settings → Actions → Runners → New
-   self-hosted runner**, chọn Linux, chạy các lệnh được hiển thị trên máy chủ
-   gia đình bằng tài khoản sở hữu bản sao repo, rồi chạy `sudo ./svc.sh install <youruser> &&
-   sudo ./svc.sh start`.
-2. **Quyền truy cập Docker** — chạy `sudo usermod -aG docker <youruser>` (đăng
-   nhập lại sau đó).
-3. **Vị trí bản sao mã** — quy trình triển khai tới `~/event-music-system` theo
-   mặc định; đặt biến repo `DEPLOY_DIR` nếu bản sao của bạn nằm ở nơi khác.
+Manual: run git pull && docker compose up -d --build whenever needed.
 
-**Thủ công** — chạy `git pull && docker compose up -d --build` bất cứ khi nào
-muốn.
-**Cron** — `update.sh` chỉ kéo mã và xây dựng lại khi có thay đổi (dùng runner
-*hoặc* cron, không dùng cả hai).
+Cron: update.sh pulls and rebuilds only when the revision changes. Use a runner
+or cron, not both.
 
-> **Lưu ý bảo mật:** runner tự lưu trữ và kho mã công khai cần được quản lý cẩn
-> thận. Quy trình này chỉ chạy khi đẩy trực tiếp lên `main` hoặc kích hoạt thủ
-> công — không bao giờ chạy trên `pull_request` — nên các bản fork không thể
-> thực thi mã trên runner của bạn. Hãy giữ nguyên như vậy.
+Security note: this public-repository workflow runs only for direct pushes to
+main or manual dispatch, never for pull_request, so forks cannot execute code on
+the self-hosted runner.
 
-## ⚠️ Điều số một thường làm sự kiện gặp sự cố: mạng
+## ⚠️ The most common event failure: networking
 
-Điện thoại của khách phải truy cập được máy chủ. Nhiều **mạng Wi-Fi của địa điểm
-hoặc khách chặn lưu lượng giữa các thiết bị** ("cô lập máy khách"), khiến mã QR
-không tải được gì dù mọi thứ đã được cấu hình đúng.
+Guest phones must be able to reach the server. Many venue or guest Wi-Fi
+networks block traffic between devices (client isolation), so the QR code appears
+not to work even when the configuration is correct.
 
-Các cách khắc phục đáng tin cậy (chọn một):
+Reliable options are exposing the server through a domain, creating a dedicated
+hotspot, or bringing a travel router. The event server always needs Internet
+access for YouTube playback.
 
-- **Đưa lên Internet** phía sau một tên miền (theo thiết lập Docker ở trên) —
-  điện thoại dùng dữ liệu riêng; không cần xử lý sự cố tại địa điểm.
-- **Tạo điểm phát sóng riêng** và cho khách kết nối vào đó.
-- **Mang theo bộ định tuyến du lịch** và đưa mọi người vào mạng của thiết bị.
+## Configuration
 
-Máy chủ sự kiện luôn cần Internet để phát YouTube.
+All configuration lives in .env; see .env.example for the complete list and
+comments.
 
-## Cấu hình
+| Variable | Purpose |
+|----------|---------|
+| PUBLIC_URL | Public address used by the QR code behind the reverse proxy |
+| HOST_PASSWORD | Protects the projector page and controls |
+| ADMIN_USERNAME / ADMIN_PASSWORD | Creates the first admin account before startup |
+| APP_TIMEZONE | Time zone used for check-in dates |
+| LLM_API_KEY / LLM_BASE_URL / LLM_MODEL | OpenAI-compatible content-filter provider |
+| CHAT_AI_API_KEY / CHAT_AI_BASE_URL / CHAT_AI_MODEL | Chat provider, falling back to LLM_* when its key is empty |
+| EVENT_CONTEXT | Initial event description sent to the AI |
+| PORT | Listening port, default 45416 |
 
-Mọi cấu hình nằm trong `.env` (xem [`.env.example`](.env.example) để biết
-danh sách đầy đủ kèm chú thích). Các mục chính:
+Filter status, moderation mode, cooldown, event context, and chat AI behavior are
+stored in data/settings.json. Provider, key, and model values remain only in
+.env; chat history, summaries, and memory are in data/jukebox.db.
 
-| Biến | Chức năng |
-|----------|--------------|
-| `PUBLIC_URL` | Địa chỉ công khai mà mã QR trỏ tới (phía sau proxy ngược) |
-| `HOST_PASSWORD` | Khóa trang máy chiếu và các điều khiển (khuyến nghị khi công khai) |
-| `ADMIN_USERNAME` / `ADMIN_PASSWORD` | Tạo tài khoản admin đầu tiên; cần đặt trước lần khởi động đầu |
-| `APP_TIMEZONE` | Múi giờ tính ngày điểm danh (mặc định `Asia/Ho_Chi_Minh`) |
-| `LLM_API_KEY` / `LLM_BASE_URL` / `LLM_MODEL` | Bất kỳ nhà cung cấp nào tương thích OpenAI cho bộ lọc |
-| `CHAT_AI_API_KEY` / `CHAT_AI_BASE_URL` / `CHAT_AI_MODEL` | Provider tương thích OpenAI cho AI chat; fallback về `LLM_*` nếu key riêng trống |
-| `EVENT_CONTEXT` | Mô tả ban đầu về sự kiện cho AI (có thể sửa trực tiếp) |
-| `PORT` | Cổng lắng nghe (mặc định `45416`) |
+## Project layout
 
-Trạng thái bộ lọc, chế độ kiểm duyệt, thời gian chờ, bối cảnh sự kiện và cấu hình
-hành vi AI chat đều có thể sửa khi đang chạy và được lưu trong
-`data/settings.json`. Provider/key/model vẫn chỉ nằm ở `.env`; lịch sử chat,
-summary và memory nằm trong `data/jukebox.db`.
-
-## Bố cục dự án
-
-```
+~~~
 server.js                  Express + WebSocket server, request pipeline, settings
-src/youtube.js             Tìm kiếm không cần khóa, kiểm tra oEmbed, metadata trang xem
-src/moderation.js          Bộ lọc nội dung LLM (tương thích OpenAI, fail-open)
-src/state.js               Hàng đợi trong bộ nhớ có thẩm quyền
-src/net.js                 Phát hiện IP LAN
-public/host.*              Trang máy chiếu (trình phát, QR, điều khiển)
-public/guest.*             Trang di động (tìm kiếm, khám phá, hàng đợi trực tiếp)
-scripts/check-llm.mjs      Xác minh khóa LLM và liệt kê model
-Dockerfile                 Image dựa trên Bun
-docker-compose.yml         Triển khai máy chủ gia đình (xây dựng cục bộ)
-update.sh                  Cách khác dùng Cron: kéo mã và xây dựng lại nếu có thay đổi
-```
+src/youtube.js             Keyless search, oEmbed checks, watch-page metadata
+src/moderation.js          OpenAI-compatible LLM content filter
+src/state.js               Authoritative in-memory queue state
+src/net.js                 LAN IP detection
+public/host.*              Projector page (player, QR, controls)
+public/guest.*             Mobile page (search, discovery, live queue)
+scripts/check-llm.mjs      Verify the LLM key and list models
+Dockerfile                 Bun-based image
+docker-compose.yml         Home-server deployment (local build)
+update.sh                  Cron alternative: pull and rebuild on revision changes
+~~~
 
-Không dùng framework, không có bước build, chỉ có ba dependency
-(`express`, `ws`, `qrcode`). Toàn bộ dự án chỉ khoảng 1.200 dòng, có thể đọc
-xong trong một buổi chiều.
+There is no framework or build step, and only three runtime dependencies:
+express, ws, and qrcode. The project is intentionally small enough to read in an
+afternoon.
 
-## Giấy phép
+## License
 
-[MIT](LICENSE) — hãy sử dụng có trách nhiệm khi tổ chức tiệc. 🎉
+[MIT](LICENSE) — please use responsibly when organizing a party. 🎉

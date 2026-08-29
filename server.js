@@ -1,14 +1,14 @@
-// Hệ thống âm nhạc sự kiện — jukebox QR cho máy chiếu.
+// Event music system — a QR jukebox for the projector.
 //
-//   /        -> trang host (chiếu trang này; hiển thị QR + trình phát + hàng đợi)
-//   /guest   -> trang khách (điện thoại mở trang này qua mã QR)
-//   /admin   -> bảng điều khiển quản trị (thành viên, airdrop, điểm, góp ý, chat)
+//   /        -> host page (projector view with QR code, player, and queue)
+//   /guest   -> guest page (opened on a phone through the QR code)
+//   /admin   -> admin dashboard (members, airdrops, points, feedback, and chat)
 //
-// Quy trình khi khách yêu cầu bài hát:
-//   1. rào chắn           — thời gian chờ, trùng lặp, giới hạn hàng đợi
-//   2. checkPlayable()    — từ chối video đã xóa/riêng tư/không tồn tại
-//   3. moderate()         — phán quyết LLM tùy chọn cho sự kiện này (fail-open)
-//   4. state.add()        — thêm vào hàng đợi (SQLite SSOT); phát tới mọi client qua WebSocket
+// Guest song-request flow:
+//   1. guardrails          — cooldown, duplicates, and queue limits
+//   2. checkPlayable()     — reject deleted, private, or missing videos
+//   3. moderate()          — optional event-specific LLM decision (fail-open)
+//   4. state.add()         — add to the queue (SQLite SSOT); broadcast over WebSocket
 
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from "node:fs";
 import { randomUUID } from "node:crypto";
@@ -65,7 +65,7 @@ import { performCheckin, getLocalDate } from "./src/checkin.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
-// --- Bộ nạp .env tối giản (không phụ thuộc) -------------------------------
+// --- Minimal dependency-free .env loader ----------------------------------
 const envPath = path.join(__dirname, ".env");
 if (existsSync(envPath)) {
   for (const line of readFileSync(envPath, "utf8").split("\n")) {
@@ -81,7 +81,7 @@ const LAN_IP = detectLanIp(process.env.HOST_IP);
 const PUBLIC_BASE = (process.env.PUBLIC_URL || "").replace(/\/+$/, "");
 const GUEST_URL = PUBLIC_BASE ? `${PUBLIC_BASE}/guest` : `http://${LAN_IP}:${PORT}/guest`;
 
-// --- Khởi tạo SQLite Database & Repositories (SSOT) -----------------------
+// --- Initialize SQLite database and repositories (SSOT) --------------------
 const db = initDb();
 const userRepo = new UserRepository(db);
 const sessionRepo = new SessionRepository(db);
@@ -94,7 +94,7 @@ const rankRepo = new RankRepository(db);
 chatRepo.prune();
 
 if (!db.query("SELECT 1 FROM users WHERE role = 'admin' AND status = 'active' LIMIT 1").get()) {
-  console.warn("[auth] Chưa có tài khoản admin active. Đặt ADMIN_USERNAME và ADMIN_PASSWORD trước lần khởi động đầu để tạo admin.");
+  console.warn("[auth] No active admin account. Set ADMIN_USERNAME and ADMIN_PASSWORD before the first startup to create one.");
 }
 
 const state = new JukeboxState(db);
@@ -135,7 +135,7 @@ function publicStateSnapshot() {
   return { ...snapshot, nowPlaying: decorate(snapshot.nowPlaying), queue: snapshot.queue.map(decorate) };
 }
 
-// --- Cài đặt host được lưu bền vững ----------------------------------------
+// --- Persisted host settings ------------------------------------------------
 const DATA_DIR = path.join(__dirname, "data");
 const SETTINGS_PATH = path.join(DATA_DIR, "settings.json");
 const FEEDBACK_PATH = path.join(DATA_DIR, "feedback.json");
@@ -143,7 +143,7 @@ let savedSettings = {};
 try {
   savedSettings = JSON.parse(readFileSync(SETTINGS_PATH, "utf8"));
 } catch {
-  /* lần chạy đầu tiên — dùng .env bên dưới */
+  /* first run — use the values from .env below */
 }
 
 let filterOn =
@@ -172,7 +172,7 @@ try {
   const storedFeedback = JSON.parse(readFileSync(FEEDBACK_PATH, "utf8"));
   feedbackItems = Array.isArray(storedFeedback) ? storedFeedback : [];
 } catch {
-  /* lần chạy đầu tiên — chưa có góp ý */
+  /* first run — no feedback yet */
 }
 let feedbackDigest = savedSettings.feedbackDigest && typeof savedSettings.feedbackDigest === "object"
   ? savedSettings.feedbackDigest
@@ -203,7 +203,7 @@ function saveSettings() {
       )
     );
   } catch (err) {
-    console.warn(`[settings] không thể lưu: ${err.message}`);
+    console.warn(`[settings] unable to save: ${err.message}`);
   }
 }
 
@@ -212,7 +212,7 @@ function saveFeedback() {
     mkdirSync(DATA_DIR, { recursive: true });
     writeFileSync(FEEDBACK_PATH, JSON.stringify(feedbackItems, null, 2));
   } catch (err) {
-    console.warn(`[feedback] không thể lưu: ${err.message}`);
+    console.warn(`[feedback] unable to save: ${err.message}`);
   }
 }
 
@@ -231,7 +231,7 @@ app.set("trust proxy", true);
 app.use(express.json());
 app.use(createAuthMiddleware(db));
 
-// --- Xác thực host (Basic Auth hoặc Admin Session) ------------------------
+// --- Host authentication (Basic Auth or admin session) ---------------------
 const HOST_PASSWORD = process.env.HOST_PASSWORD || "";
 const hostToken = randomUUID();
 
@@ -255,7 +255,7 @@ app.use(
   })
 );
 
-// --- API XÁC THỰC & THÀNH VIÊN --------------------------------------------
+// --- AUTHENTICATION AND MEMBER API -----------------------------------------
 
 const loginIpLimit = createFixedWindowRateLimiter({
   windowMs: 15 * 60 * 1000,
@@ -503,7 +503,7 @@ app.post(
   }
 );
 
-// --- API ĐIỂM DANH & QUÀ TẶNG (POINT DROPS) -------------------------------
+// --- CHECK-IN AND POINT-DROP API -------------------------------------------
 
 app.post("/api/me/checkin", requireAuth, (req, res) => {
   try {
@@ -572,7 +572,7 @@ app.post("/api/me/point-drops/:dropId/claim", requireAuth, (req, res) => {
   }
 });
 
-// --- API BÌNH CHỌN (VOTING) ------------------------------------------------
+// --- VOTING API -------------------------------------------------------------
 
 app.post("/api/queue/:itemId/vote", requireAuth, (req, res) => {
   try {
@@ -583,7 +583,7 @@ app.post("/api/queue/:itemId/vote", requireAuth, (req, res) => {
   }
 });
 
-// --- API HỆ THỐNG & YOUTUBE -----------------------------------------------
+// --- SYSTEM AND YOUTUBE API ------------------------------------------------
 
 app.get("/api/info", async (_req, res) => {
   try {
@@ -756,7 +756,7 @@ app.post("/api/request", async (req, res) => {
   res.json({ ok: true, reason: "Đã thêm!", position, id: item.id });
 });
 
-// --- API QUẢN TRỊ ADMIN (/api/admin/*) --------------------------------------
+// --- ADMIN API (/api/admin/*) -----------------------------------------------
 
 app.get("/api/admin/users", requireAdmin, (req, res) => {
   const search = (req.query.search || "").toString().trim();
@@ -901,7 +901,7 @@ app.get("/api/admin/ledger", requireAdmin, (req, res) => {
   res.json({ ok: true, page, limit, ...result });
 });
 
-// --- GÓP Ý & CHAT ---------------------------------------------------------
+// --- FEEDBACK AND CHAT -----------------------------------------------------
 
 const feedbackLastSubmittedAt = new Map();
 app.post("/api/feedback", (req, res) => {
@@ -1049,7 +1049,7 @@ app.delete("/api/admin/chat-ai/memory", requireAdmin, (_req, res) => {
   res.json({ ok: true });
 });
 
-// --- PHỤC VỤ TRANG HTML ---------------------------------------------------
+// --- SERVE HTML PAGES ------------------------------------------------------
 
 const BOOT_ID = Date.now().toString(36);
 function versionedPage(name) {
@@ -1086,7 +1086,7 @@ app.get("/feedback", (_req, res) => {
   res.redirect(302, "/admin#feedback");
 });
 
-// --- WebSocket: ĐỒNG BỘ REALTIME & ĐIỀU KHIỂN HOST ------------------------
+// --- WebSocket: REALTIME SYNC AND HOST CONTROLS ----------------------------
 
 const server = http.createServer(app);
 const wss = new WebSocketServer({ server });
@@ -1385,11 +1385,11 @@ wss.on("connection", (ws, request) => {
 
     switch (msg.type) {
       case "ended":
-        console.log(`[host] đã phát xong ${msg.videoId}`);
+        console.log(`[host] finished playing ${msg.videoId}`);
         settleRankTransition(state.advance(msg.videoId, { finishReason: "ended" }));
         break;
       case "error":
-        console.warn(`[host] mã lỗi phát ${msg.code} trên ${msg.videoId} — bỏ qua & hoàn điểm`);
+        console.warn(`[host] playback error ${msg.code} on ${msg.videoId} — skipping and refunding points`);
         settleRankTransition(state.advance(msg.videoId, { isError: true, finishReason: "error" }));
         break;
       case "skip":
@@ -1451,18 +1451,18 @@ wss.on("connection", (ws, request) => {
 });
 
 server.listen(PORT, "0.0.0.0", () => {
-  console.log("\n  🎶  Hệ thống âm nhạc sự kiện đang chạy\n");
-  console.log(`  Máy chiếu (host) : http://localhost:${PORT}/`);
-  console.log(`  Khách quét QR    : ${GUEST_URL}`);
-  console.log(`  Quản trị (admin) : http://localhost:${PORT}/admin`);
+  console.log("\n  🎶  Office Jukebox is running\n");
+  console.log(`  Projector (host) : http://localhost:${PORT}/`);
+  console.log(`  Guest QR         : ${GUEST_URL}`);
+  console.log(`  Admin            : http://localhost:${PORT}/admin`);
   console.log(
-    `  Bộ lọc           : ${filterOn ? `BẬT (${moderationMode})` : "TẮT"} (đổi từ trang host) · ` +
-      `LLM ${moderationConfigured() ? "đã cấu hình" : "CHƯA CẤU HÌNH — bộ lọc chấp thuận tất cả"}`
+    `  Filter           : ${filterOn ? `ON (${moderationMode})` : "OFF"} (change from the host page) · ` +
+      `LLM ${moderationConfigured() ? "configured" : "NOT CONFIGURED — filter approves everything"}`
   );
   console.log(
-    `  Mật khẩu host    : ${HOST_PASSWORD ? "ĐÃ ĐẶT — trang host yêu cầu đăng nhập" : "CHƯA ĐẶT — trang host mở cho mọi người"}\n`
+    `  Host password    : ${HOST_PASSWORD ? "SET — host page requires authentication" : "NOT SET — host page is public"}\n`
   );
   if (LAN_IP === "127.0.0.1") {
-    console.warn("  ⚠  Không phát hiện được IP LAN — khách trên thiết bị khác sẽ không thể kết nối.\n");
+    console.warn("  ⚠  No LAN IP detected — guests on other devices cannot connect.\n");
   }
 });

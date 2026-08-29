@@ -1,6 +1,6 @@
-/* Trang dành cho khách trên điện thoại — triển khai thiết kế "Event Jukebox":
-   bề mặt màu mận tối, vàng = đang phát/của bạn, đỏ cam = thao tác,
-   Noto Serif cho tiêu đề và Noto Sans cho các nội dung còn lại. */
+/* Mobile guest page — "Event Jukebox" visual system:
+   dark plum surfaces, yellow = current/owned, orange-red = actions,
+   Noto Serif for headings and Noto Sans for everything else. */
 
 :root {
   --bg-a: oklch(17% 0.03 325);
@@ -59,7 +59,7 @@ body {
   min-height: 100vh;
 }
 
-/* ---- Đầu trang ---- */
+/* ---- Header ---- */
 header .brand-heading { display: flex; align-items: center; gap: 12px; }
 .brand-logo { width: 54px; height: 54px; flex: 0 0 auto; object-fit: contain; filter: drop-shadow(0 6px 14px oklch(10% 0.03 325 / 0.35)); }
 header h1 { font: 700 34px/1.25 var(--serif); color: var(--text-hi); }
@@ -67,7 +67,7 @@ header .h-sub { font: 600 15px/1.3 var(--sans); color: var(--warm); margin-top: 
 header p { font: 400 13.5px/1.6 var(--sans); color: var(--muted); margin-top: 10px; }
 header .desktop-intro { display: none; }
 
-/* ---- Trường tên ---- */
+/* ---- Name field ---- */
 .name-wrap {
   margin-top: 22px;
   height: 50px;
@@ -94,7 +94,7 @@ header .desktop-intro { display: none; }
 .name-wrap input::placeholder { color: var(--faint); font-weight: 400; }
 .name-hint { font: 400 11.5px/1.3 var(--sans); color: var(--faint); margin-top: 6px; }
 
-/* ---- Tìm kiếm ---- */
+/* ---- Search ---- */
 #search-form { margin-top: 18px; display: flex; gap: 10px; }
 #q {
   flex: 1;
@@ -124,7 +124,7 @@ header .desktop-intro { display: none; }
 }
 #search-btn:active { background: var(--red-hover); }
 
-/* ---- Khám phá ---- */
+/* ---- Discovery ---- */
 #suggestions-section { margin-top: 34px; }
 .sug-head { display: flex; align-items: center; margin-bottom: 18px; }
 .sec-title { font: 700 20px/1 var(--sans); color: var(--text-hi); }
@@ -151,7 +151,7 @@ header .desktop-intro { display: none; }
 }
 .shuffle:active { background: var(--fill-hover); }
 
-/* Hàng ca sĩ — vòng đại diện chuyển màu, viền vàng khi được chọn */
+/* Singer row — genre-colored avatars with a yellow selected outline. */
 .singers {
   display: flex;
   gap: 18px;
@@ -187,7 +187,7 @@ header .desktop-intro { display: none; }
 .singer-name { font: 500 12.5px/1 var(--sans); color: var(--warm); max-width: 64px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .singer-chip.active .singer-name { color: var(--text); font-weight: 600; }
 
-/* Nhãn thể loại — viên nhãn có biểu tượng và tên, màu vàng khi được chọn */
+/* Genre tabs — icon and label chips with a yellow selected state. */
 .genre-tabs {
   display: flex;
   gap: 8px;
@@ -217,7 +217,7 @@ header .desktop-intro { display: none; }
   font-weight: 700;
 }
 
-/* ---- Kết quả ---- */
+/* ---- Results ---- */
 .status { text-align: center; color: var(--muted); padding: 1rem; font: 400 13.5px/1.5 var(--sans); }
 .loading-status { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
 
@@ -294,7 +294,7 @@ header .desktop-intro { display: none; }
   font-size: 15px;
 }
 
-/* ---- Thêm bằng link YouTube ------------------------------------------- */
+/* ---- Add by YouTube link -------------------------------------------------- */
 .youtube-link-tool {
   margin-top: 18px;
   border: 1px solid var(--line);
@@ -394,7 +394,7 @@ header .desktop-intro { display: none; }
 .more:disabled { opacity: 0.5; }
 .more.hidden { display: none; }
 
-/* ---- Góp ý ------------------------------------------------------------ */
+/* ---- Feedback ------------------------------------------------------------- */
 .feedback-section {
   margin-top: 34px;
   padding: 18px;
@@ -426,7 +426,7 @@ header .desktop-intro { display: none; }
 }
 #feedback-submit:disabled { opacity: .55; }
 
-/* ---- Tiếp theo ---- */
+/* ---- Up next -------------------------------------------------------------- */
 .queue-section { margin-top: 38px; }
 .queue-section h2 {
   display: flex;
@@ -594,7 +594,7 @@ header .desktop-intro { display: none; }
   gap: 8px;
 }
 
-/* ---- Thông báo ---- */
+/* ---- Toasts ---------------------------------------------------------------- */
 .toasts {
   position: fixed;
   left: 50%;
@@ -605,11 +605,11 @@ header .desktop-intro { display: none; }
   flex-direction: column;
   gap: 8px;
   z-index: 20;
-  pointer-events: none; /* chỉ phản hồi — không chặn thao tác chạm vào nội dung bên dưới */
+  pointer-events: none; /* feedback only; do not block touches on content below */
 }
 .toast {
   position: relative;
-  overflow: hidden; /* cắt thanh quét kiểm tra theo các góc bo tròn */
+  overflow: hidden; /* clip the checking bar to the rounded corners */
   display: flex;
   align-items: center;
   gap: 12px;
@@ -634,13 +634,13 @@ header .desktop-intro { display: none; }
   flex-shrink: 0;
   font-size: 15px;
 }
-.toast > div { min-width: 0; } /* cho phép dòng phụ hiển thị dấu ba chấm trong hàng flex */
+.toast > div { min-width: 0; } /* allow the secondary line to ellipsize in flex */
 .toast-main { font: 700 14.5px/1.3 var(--sans); color: var(--text-hi); }
 .toast-sub {
   font: 400 12px/1.3 var(--sans);
   color: var(--muted);
   margin-top: 1px;
-  /* tiêu đề YouTube dài vẫn nằm trên một dòng */
+  /* keep long YouTube titles on one line */
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -654,9 +654,9 @@ header .desktop-intro { display: none; }
 .toast.info { border-color: oklch(80% 0.14 85 / 0.4); }
 .toast.info .toast-ico { background: oklch(80% 0.14 85 / 0.15); }
 
-/* Khi bộ lọc kiểm tra bài hát (có thể mất 5–20 giây khi tìm trên web): quét một
-   vệt sáng dọc cạnh dưới và làm biểu tượng nhấp nháy để thời gian chờ thể hiện
-   hoạt động, thay vì trông như một thẻ bị treo. */
+/* While the filter checks a song (web search can take 5–20 seconds), scan a
+   light bar along the bottom and pulse the icon so the wait looks active rather
+   than like a stuck card. */
 .toast.checking::after {
   content: "";
   position: absolute;
@@ -669,8 +669,8 @@ header .desktop-intro { display: none; }
   animation: toast-scan 1.4s ease-in-out infinite;
 }
 @keyframes toast-scan {
-  from { transform: translateX(-100%); } /* chiều rộng của chính nó nằm ngoài màn hình bên trái */
-  to { transform: translateX(250%); }    /* 250% của 40% đủ để vượt qua mép phải */
+  from { transform: translateX(-100%); } /* its width starts beyond the left edge */
+  to { transform: translateX(250%); }    /* 250% of 40% carries it past the right edge */
 }
 .toast.checking .toast-ico { animation: toast-pulse 1.4s ease-in-out infinite; }
 @keyframes toast-pulse {
@@ -678,9 +678,9 @@ header .desktop-intro { display: none; }
   50% { transform: scale(1.18); }
 }
 
-/* ---- Chat trực tiếp ---------------------------------------------------
-   Progressive disclosure: chỉ một nút nổi khi khách cần, panel giới hạn
-   chiều cao để không che luồng chọn bài và có thể đóng bằng Escape. */
+/* ---- Live chat ------------------------------------------------------------
+   Progressive disclosure: show one floating button until needed, cap the
+   panel height so it does not cover song selection, and close it with Escape. */
 .sr-only {
   position: absolute;
   width: 1px;

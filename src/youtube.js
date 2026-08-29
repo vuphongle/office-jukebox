@@ -1,11 +1,11 @@
-// Truy cập YouTube không cần API key:
-//  - searchYouTube(): gọi API tìm kiếm nội bộ của YouTube Music (InnerTube,
-//    cùng endpoint JSON mà web app music.youtube.com sử dụng). Tìm kiếm trực tiếp
-//    ưu tiên context giống web, sau đó dùng bộ lọc "Songs" để bổ sung kết quả.
-//    Các tab khám phá vẫn dùng riêng bộ lọc "Songs".
-//  - checkPlayable(): dùng endpoint oEmbed để từ chối video đã xóa/riêng tư
-//    trước khi đưa vào hàng đợi. (Video tắt nhúng vẫn trả về 200 ở đây, nên
-//    trình phát host CŨNG tự bỏ qua các mã lỗi iframe 101/150.)
+// Keyless YouTube access:
+//  - searchYouTube(): call YouTube Music's internal search API (InnerTube, the
+//    same JSON endpoint used by music.youtube.com). Direct search prioritizes
+//    web-like context, then supplements results with the "Songs" filter.
+//    Discovery tabs use only the "Songs" filter.
+//  - checkPlayable(): use the oEmbed endpoint to reject deleted/private videos
+//    before queueing. Embed-disabled videos still return 200 here, so the host
+//    player also skips iframe error codes 101/150.
 
 const UA =
   "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) " +
@@ -14,8 +14,8 @@ const SEARCH_UA =
   "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) " +
   "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/151.0.0.0 Safari/537.36";
 
-// Cookie SOCS/CONSENT tránh màn hình chấp thuận "trước khi tiếp tục" của EU,
-// vốn sẽ thay ytInitialData bằng trang xen kẽ.
+// SOCS/CONSENT cookies avoid the EU "before continuing" consent screen, which
+// would replace ytInitialData with an interstitial page.
 const COMMON_HEADERS = {
   "User-Agent": UA,
   "Accept-Language": "en-US,en;q=0.9",
@@ -40,12 +40,12 @@ const SEARCH_CLIENT = {
 
 function pickThumbnail(thumbs) {
   if (!Array.isArray(thumbs) || thumbs.length === 0) return null;
-  // YT Music trả ảnh album nhỏ (60/120px), nhưng kích thước nằm ở hậu tố URL
-  // — yêu cầu ảnh hình vuông lớn hơn.
+  // YT Music returns small album art (60/120px), but the size is encoded in the
+  // URL suffix; request a larger square image.
   return thumbs[thumbs.length - 1].url.replace(/=w\d+-h\d+/, "=w320-h320");
 }
 
-// Bộ lọc tìm kiếm InnerTube cho danh mục "Songs" (cùng giá trị ytmusicapi dùng).
+// InnerTube search filter for the "Songs" category (the value used by ytmusicapi).
 export const SONGS_FILTER = "EgWKAQIIAWoMEA4QChADEAQQCRAF";
 
 export function buildSearchBody(query, { mode = "web" } = {}) {
@@ -150,8 +150,8 @@ export function mergeSearchResults(primary, fallback, limit = 12) {
   return merged;
 }
 
-// Chỉ nhận các dạng link video YouTube phổ biến. Không dùng URL của trang tìm
-// kiếm/kênh/playlist làm link bài hát vì hàng đợi cần một video cụ thể.
+// Accept only common YouTube video-link formats. Search, channel, and playlist
+// URLs are not song links because the queue requires one specific video.
 const YOUTUBE_VIDEO_ID = /^[A-Za-z0-9_-]{11}$/;
 const YOUTUBE_HOSTS = new Set(["youtube.com", "www.youtube.com", "m.youtube.com", "music.youtube.com", "youtu.be"]);
 
@@ -178,7 +178,7 @@ export function parseYouTubeVideoId(value) {
   return YOUTUBE_VIDEO_ID.test(id) ? id : null;
 }
 
-// oEmbed cung cấp metadata hiển thị mà không cần YouTube API key.
+// oEmbed provides display metadata without a YouTube API key.
 export async function fetchYouTubeMetadata(videoId, { timeoutMs = 5000, fetchImpl = globalThis.fetch } = {}) {
   if (!YOUTUBE_VIDEO_ID.test(videoId)) return null;
   const url =
@@ -367,8 +367,8 @@ export async function fetchVietnamChartHits({ limit = 40, timeoutMs = 8000 } = {
   return results;
 }
 
-// Trả về { ok: true } nếu video tồn tại và công khai, hoặc
-// { ok: false, reason } với ID đã xóa/riêng tư/không tồn tại.
+// Return { ok: true } when the video exists and is public, or
+// { ok: false, reason } for a deleted, private, or missing video ID.
 export async function checkPlayable(videoId, { timeoutMs = 5000 } = {}) {
   const url =
     "https://www.youtube.com/oembed?url=" +
@@ -385,16 +385,17 @@ export async function checkPlayable(videoId, { timeoutMs = 5000 } = {}) {
       return { ok: false, reason: "Video này ở chế độ riêng tư, đã bị xóa hoặc không tồn tại." };
     return { ok: false, reason: `Không thể phát video này (trạng thái ${res.status}).` };
   } catch (err) {
-    // Lỗi mạng tạm thời — không chặn request; để trình phát host làm lớp dự phòng.
+    // Temporary network failure — allow the request and let the host player be
+    // the fallback.
     return { ok: true, soft: true, note: String(err?.message || err) };
   } finally {
     clearTimeout(timer);
   }
 }
 
-// Lấy metadata phong phú hơn từ trang watch để cung cấp bối cảnh cho kiểm duyệt:
-// category (Music hay không), cờ isFamilySafe của YouTube và mô tả.
-// Trả về null khi có lỗi — bên gọi phải coi đây là dữ liệu cố gắng tối đa.
+// Extract richer metadata from the watch page for moderation context: category
+// (whether it is Music), YouTube's isFamilySafe flag, and the description.
+// Return null on failure; callers must treat this as best-effort data.
 export async function fetchVideoDetails(videoId, { timeoutMs = 5000 } = {}) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);

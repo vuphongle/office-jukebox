@@ -1,7 +1,7 @@
 {
   "name": "event-music-system",
   "version": "1.0.0",
-  "description": "Hệ thống phát nhạc QR trên máy chiếu: khách quét mã QR để xếp bài hát YouTube vào hàng đợi, bộ lọc AI tùy chọn đánh giá mức phù hợp với sự kiện và nhạc được phát trên màn hình chiếu.",
+  "description": "A QR music system for projectors: guests queue YouTube songs with a phone, an optional AI filter evaluates event suitability, and music plays on the projected screen.",
   "repository": "github:Hangton-Code/event-music-system",
   "license": "MIT",
   "keywords": ["jukebox", "party", "youtube", "qr-code", "karaoke", "ktv", "event", "music-queue", "self-hosted"],

@@ -14,7 +14,7 @@
 <body>
   <header>
     <div class="user-auth-bar" id="user-auth-bar">
-      <!-- Sẽ được điền động bằng JS: Trạng thái Đăng nhập / Người dùng -->
+      <!-- Filled dynamically by JS: signed-in / user state. -->
       <button id="open-auth-btn" class="auth-pill-btn" type="button">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path><circle cx="12" cy="7" r="4"></circle></svg>
         Đăng nhập / Đăng ký
@@ -143,7 +143,7 @@
     <ul id="queue"></ul>
   </section>
 
-  <!-- Danh sách thông báo phản hồi yêu cầu (mỗi yêu cầu đang xử lý một thẻ) -->
+  <!-- Request feedback toasts; each in-flight request owns one toast. -->
   <div id="toasts" class="toasts"></div>
 
   <section id="chat-widget" class="chat-widget hidden" aria-label="Chat trực tiếp">
