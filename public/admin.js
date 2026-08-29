@@ -1,6 +1,8 @@
 // Admin Dashboard Logic: Member management, Airdrops, Audit Ledger, Feedback & Chat
 
 let ws = null;
+let wsReconnectTimer = null;
+let wsShouldReconnect = false;
 let currentTab = "tab-users";
 let adminUser = null;
 let selectedUserId = null;
@@ -24,11 +26,13 @@ function startDashboard() {
   document.getElementById("admin-login-gate").classList.add("hidden");
   document.getElementById("admin-app").classList.remove("hidden");
   if (dashboardStarted) {
+    wsShouldReconnect = true;
     if (!ws) initWebSocket();
     selectTab(currentTab);
     return;
   }
   dashboardStarted = true;
+  wsShouldReconnect = true;
   initUsersTab();
   initDropsTab();
   initLedgerTab();
@@ -82,6 +86,11 @@ async function handleAdminLogin(event) {
 }
 
 async function handleAdminLogout() {
+  wsShouldReconnect = false;
+  if (wsReconnectTimer) {
+    clearTimeout(wsReconnectTimer);
+    wsReconnectTimer = null;
+  }
   if (ws) {
     ws.onclose = null;
     ws.close();
@@ -197,7 +206,7 @@ async function loadUsers() {
     const res = await fetch(`/api/admin/users?search=${encodeURIComponent(search)}&status=${encodeURIComponent(status)}&page=${usersPage}&limit=20`);
     const data = await res.json();
     if (!data.ok) {
-      tbody.innerHTML = `<tr><td colspan="9" class="text-center">${data.reason || "Lỗi tải người dùng"}</td></tr>`;
+      tbody.innerHTML = `<tr><td colspan="9" class="text-center">${escapeHtml(data.reason || "Lỗi tải người dùng")}</td></tr>`;
       renderPagination("users-pagination", 1, 0, 20, () => {});
       return;
     }
@@ -230,7 +239,7 @@ async function loadUsers() {
             <td><strong class="delta-pos">${u.points_balance}</strong> điểm</td>
             <td>${u.current_streak} ngày</td>
             <td class="rank-cell">${rankCell}</td>
-            <td>${u.last_checkin_date || "—"}</td>
+            <td>${escapeHtml(u.last_checkin_date || "—")}</td>
             <td>
               <button class="action-btn btn-sm" onclick="openPointsModal('${u.id}', '${escapeHtml(u.username)}', ${u.points_balance})">Điểm ±</button>
               <button class="action-btn btn-sm" onclick="openUserLedger('${u.id}', '${escapeHtml(u.username)}')">Ledger</button>
@@ -241,7 +250,7 @@ async function loadUsers() {
       })
       .join("");
   } catch (err) {
-    tbody.innerHTML = `<tr><td colspan="9" class="text-center">Lỗi mạng: ${err.message}</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="9" class="text-center">Lỗi mạng: ${escapeHtml(err.message)}</td></tr>`;
   }
 }
 
@@ -333,16 +342,16 @@ window.openUserLedger = async function (userId, username) {
         const deltaSign = l.delta >= 0 ? `+${l.delta}` : `${l.delta}`;
         return `
           <tr>
-            <td>${formatTime(l.created_at)}</td>
+            <td>${escapeHtml(formatTime(l.created_at))}</td>
             <td><strong class="${deltaClass}">${deltaSign}</strong> điểm</td>
-            <td><code>${l.type}</code></td>
+            <td><code>${escapeHtml(l.type)}</code></td>
             <td>${escapeHtml(l.reason || "—")}</td>
           </tr>
         `;
       })
       .join("");
   } catch (err) {
-    tbody.innerHTML = `<tr><td colspan="4" class="text-center">Lỗi: ${err.message}</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="4" class="text-center">Lỗi: ${escapeHtml(err.message)}</td></tr>`;
   }
 };
 
@@ -456,13 +465,13 @@ async function loadDrops() {
             <td>${statusBadge}</td>
             <td>${d.type === "claimable" ? `${d.claim_count || 0} người` : "Tất cả"}</td>
             <td>${escapeHtml(d.created_by_username || "Admin")}</td>
-            <td>${formatTime(d.created_at)}</td>
+            <td>${escapeHtml(formatTime(d.created_at))}</td>
           </tr>
         `;
       })
       .join("");
   } catch (err) {
-    tbody.innerHTML = `<tr><td colspan="7" class="text-center">Lỗi: ${err.message}</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="7" class="text-center">Lỗi: ${escapeHtml(err.message)}</td></tr>`;
   }
 }
 
@@ -509,10 +518,10 @@ async function loadLedger() {
         const deltaSign = l.delta >= 0 ? `+${l.delta}` : `${l.delta}`;
         return `
           <tr>
-            <td>${formatTime(l.created_at)}</td>
+            <td>${escapeHtml(formatTime(l.created_at))}</td>
             <td><strong>${escapeHtml(l.display_name || l.username)}</strong> <small class="text-muted">(@${escapeHtml(l.username)})</small></td>
             <td><strong class="${deltaClass}">${deltaSign}</strong> điểm</td>
-            <td><code>${l.type}</code></td>
+            <td><code>${escapeHtml(l.type)}</code></td>
             <td>${escapeHtml(l.reason || "—")}</td>
             <td><small class="text-muted">${l.reference_id ? escapeHtml(l.reference_id).slice(0, 8) : "—"}</small></td>
           </tr>
@@ -520,7 +529,7 @@ async function loadLedger() {
       })
       .join("");
   } catch (err) {
-    tbody.innerHTML = `<tr><td colspan="6" class="text-center">Lỗi: ${err.message}</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="6" class="text-center">Lỗi: ${escapeHtml(err.message)}</td></tr>`;
   }
 }
 
@@ -590,30 +599,48 @@ async function loadFeedback() {
 
 async function toggleFeedbackSetting() {
   const current = document.getElementById("feedback-toggle").classList.contains("on");
-  await fetch("/api/feedback/settings", {
-    method: "PATCH",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ on: !current }),
-  });
-  loadFeedback();
+  try {
+    const res = await fetch("/api/feedback/settings", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ on: !current }),
+    });
+    const data = await res.json();
+    if (!res.ok || !data.ok) throw new Error(data.reason || "Không thể cập nhật góp ý.");
+    await loadFeedback();
+  } catch (error) {
+    showStatus(error.message || "Không thể cập nhật góp ý.", true);
+  }
 }
 
 async function toggleChatSetting() {
   const current = document.getElementById("chat-toggle").classList.contains("on");
-  await fetch("/api/feedback/settings", {
-    method: "PATCH",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ chatOn: !current }),
-  });
-  loadFeedback();
+  try {
+    const res = await fetch("/api/feedback/settings", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ chatOn: !current }),
+    });
+    const data = await res.json();
+    if (!res.ok || !data.ok) throw new Error(data.reason || "Không thể cập nhật chat.");
+    await loadFeedback();
+  } catch (error) {
+    showStatus(error.message || "Không thể cập nhật chat.", true);
+  }
 }
 
 async function clearChat() {
   if (!confirm("Xóa toàn bộ tin nhắn, tóm tắt và memory AI chưa ghim trong phòng?")) return;
-  await fetch("/api/chat", { method: "DELETE" });
-  document.getElementById("admin-chat-messages").innerHTML = "";
-  await loadChatAiSettings();
-  showStatus("Đã xóa chat và bộ nhớ hội thoại chưa ghim.");
+  try {
+    const res = await fetch("/api/chat", { method: "DELETE" });
+    const data = await res.json();
+    if (!res.ok || !data.ok) throw new Error(data.reason || "Không thể xóa chat.");
+    document.getElementById("admin-chat-messages").innerHTML = "";
+    await loadChatAiSettings();
+    showStatus("Đã xóa chat và bộ nhớ hội thoại chưa ghim.");
+  } catch (error) {
+    showStatus(error.message || "Không thể xóa chat.", true);
+  }
 }
 
 async function loadChatAiSettings() {
@@ -792,29 +819,45 @@ async function handleChatAiMemoryAction(event) {
   const action = button.dataset.memoryAction;
   if (action === "delete" && !confirm("Xóa memory này?")) return;
   button.disabled = true;
-  const res = await fetch(`/api/admin/chat-ai/memories/${encodeURIComponent(id)}`, {
-    method: action === "pin" ? "PATCH" : "DELETE",
-    headers: action === "pin" ? { "Content-Type": "application/json" } : undefined,
-    body: action === "pin" ? JSON.stringify({ pinned: button.dataset.pinned !== "true" }) : undefined,
-  });
-  const data = await res.json();
-  if (!res.ok || !data.ok) showStatus(data.reason || "Không thể cập nhật memory.", true);
-  await loadChatAiSettings();
+  try {
+    const res = await fetch(`/api/admin/chat-ai/memories/${encodeURIComponent(id)}`, {
+      method: action === "pin" ? "PATCH" : "DELETE",
+      headers: action === "pin" ? { "Content-Type": "application/json" } : undefined,
+      body: action === "pin" ? JSON.stringify({ pinned: button.dataset.pinned !== "true" }) : undefined,
+    });
+    const data = await res.json();
+    if (!res.ok || !data.ok) throw new Error(data.reason || "Không thể cập nhật memory.");
+    await loadChatAiSettings();
+  } catch (error) {
+    showStatus(error.message || "Không thể cập nhật memory.", true);
+  } finally {
+    button.disabled = false;
+  }
 }
 
 async function resetChatAiMemory() {
   if (!confirm("Xóa tóm tắt và toàn bộ memory AI chưa ghim? Tin nhắn chat vẫn được giữ.")) return;
-  const res = await fetch("/api/admin/chat-ai/memory", { method: "DELETE" });
-  const data = await res.json();
-  if (!res.ok || !data.ok) return showStatus(data.reason || "Không thể reset bộ nhớ AI.", true);
-  await loadChatAiSettings();
-  showStatus("Đã reset bộ nhớ AI chưa ghim.");
+  try {
+    const res = await fetch("/api/admin/chat-ai/memory", { method: "DELETE" });
+    const data = await res.json();
+    if (!res.ok || !data.ok) throw new Error(data.reason || "Không thể reset bộ nhớ AI.");
+    await loadChatAiSettings();
+    showStatus("Đã reset bộ nhớ AI chưa ghim.");
+  } catch (error) {
+    showStatus(error.message || "Không thể reset bộ nhớ AI.", true);
+  }
 }
 
 window.deleteFeedback = async function (id) {
   if (!confirm("Xóa góp ý này?")) return;
-  await fetch(`/api/feedback/${id}`, { method: "DELETE" });
-  loadFeedback();
+  try {
+    const res = await fetch(`/api/feedback/${encodeURIComponent(id)}`, { method: "DELETE" });
+    const data = await res.json();
+    if (!res.ok || !data.ok) throw new Error(data.reason || "Không thể xóa góp ý.");
+    await loadFeedback();
+  } catch (error) {
+    showStatus(error.message || "Không thể xóa góp ý.", true);
+  }
 };
 
 function handleAdminChatSubmit(e) {
@@ -838,38 +881,46 @@ function handleAdminChatSubmit(e) {
 // --- WebSocket Live Stream -----------------------------------------------
 
 function initWebSocket() {
+  if (!wsShouldReconnect || ws) return;
+  if (wsReconnectTimer) {
+    clearTimeout(wsReconnectTimer);
+    wsReconnectTimer = null;
+  }
   const proto = location.protocol === "https:" ? "wss" : "ws";
-  ws = new WebSocket(`${proto}://${location.host}`);
+  const socket = new WebSocket(`${proto}://${location.host}`);
+  ws = socket;
 
-  ws.onopen = () => {
+  socket.onopen = () => {
     document.getElementById("admin-chat-status").textContent = "Đã kết nối phòng chat";
   };
 
-  ws.onmessage = (e) => {
+  socket.onmessage = (e) => {
     let msg;
     try {
       msg = JSON.parse(e.data);
     } catch {
       return;
     }
+    if (!msg || typeof msg !== "object" || Array.isArray(msg)) return;
 
     if (msg.type === "sessionRevoked") {
-      if (ws) {
-        ws.onclose = null;
-        ws.close();
+      if (ws === socket) {
+        socket.onclose = null;
+        socket.close();
         ws = null;
       }
+      wsShouldReconnect = false;
       adminUser = null;
       showLoginGate(msg.reason || "Phiên quản trị không còn hiệu lực.");
     } else if (msg.type === "chatHistory") {
       const box = document.getElementById("admin-chat-messages");
       if (box) {
-        box.innerHTML = msg.messages.map(renderChatMessage).join("");
+        box.innerHTML = (Array.isArray(msg.messages) ? msg.messages : []).map(renderChatMessage).join("");
         box.scrollTop = box.scrollHeight;
       }
     } else if (msg.type === "chatMessage") {
       const box = document.getElementById("admin-chat-messages");
-      if (box) {
+      if (box && msg.message && typeof msg.message === "object") {
         box.innerHTML += renderChatMessage(msg.message);
         box.scrollTop = box.scrollHeight;
       }
@@ -882,13 +933,19 @@ function initWebSocket() {
     }
   };
 
-  ws.onclose = () => {
+  socket.onclose = () => {
+    if (ws === socket) ws = null;
+    if (!wsShouldReconnect || !adminUser) return;
     document.getElementById("admin-chat-status").textContent = "Mất kết nối — đang thử lại…";
-    setTimeout(initWebSocket, 2000);
+    wsReconnectTimer = setTimeout(() => {
+      wsReconnectTimer = null;
+      initWebSocket();
+    }, 2000);
   };
 }
 
 function renderChatMessage(m) {
+  if (!m || typeof m !== "object") return "";
   const isAdmin = m.isAdmin;
   const isAI = m.isAI;
   const badge = isAI

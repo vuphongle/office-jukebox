@@ -18,6 +18,18 @@ let voteSortOn = true;
 let hostToken = null; // WebSocket control token (only issued to authenticated hosts)
 let ws = null;
 let draggedQueueId = null;
+let playerLoadStartedAt = 0;
+const NO_THUMB = 'data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22/%3E';
+
+function safeImageUrl(value) {
+  if (typeof value !== "string" || !value.trim()) return NO_THUMB;
+  try {
+    const url = new URL(value, location.origin);
+    return url.protocol === "https:" || url.protocol === "http:" ? url.href : NO_THUMB;
+  } catch {
+    return NO_THUMB;
+  }
+}
 
 // ---- WebSocket connection --------------------------------------------------
 function sendAuth() {
@@ -40,8 +52,14 @@ function connectWs() {
     reportIfEnded();
   };
   ws.onmessage = (e) => {
-    const msg = JSON.parse(e.data);
-    if (msg.type === "state") {
+    let msg;
+    try {
+      msg = JSON.parse(e.data);
+    } catch {
+      return;
+    }
+    if (!msg || typeof msg !== "object" || Array.isArray(msg)) return;
+    if (msg.type === "state" && msg.state && typeof msg.state === "object") {
       latestState = msg.state;
       if (typeof msg.filterOn === "boolean") filterOn = msg.filterOn;
       if (typeof msg.moderationMode === "string") moderationMode = msg.moderationMode;
@@ -151,7 +169,13 @@ window.onYouTubeIframeAPIReady = function () {
       },
       onStateChange: (e) => {
         if (e.data === YT.PlayerState.ENDED) {
-          send({ type: "ended", videoId: currentVideoId });
+          // A load transition can deliver a late ENDED event from the previous
+          // video. Ignore that transient callback instead of advancing the
+          // newly selected queue item.
+          const eventVideoId = e.target?.getVideoData?.().video_id;
+          if (Date.now() - playerLoadStartedAt >= 1000 && (!eventVideoId || eventVideoId === currentVideoId)) {
+            send({ type: "ended", videoId: currentVideoId });
+          }
         }
         if (e.data === YT.PlayerState.PLAYING) {
           clearTimeout(playbackWatchdog);
@@ -165,6 +189,8 @@ window.onYouTubeIframeAPIReady = function () {
       onAutoplayBlocked: () => showPlaybackRecovery(),
       onError: (e) => {
         // 101/150 = owner disallows embedding; 100 = removed; 2 = invalid code.
+        const eventVideoId = e.target?.getVideoData?.().video_id;
+        if (eventVideoId && eventVideoId !== currentVideoId) return;
         console.warn("Player error", e.data, "for", currentVideoId);
         send({ type: "error", videoId: currentVideoId, code: e.data });
       },
@@ -181,6 +207,7 @@ function syncPlayer() {
   if (!np) {
     clearTimeout(playbackWatchdog);
     currentVideoId = null;
+    playerLoadStartedAt = 0;
     if (player.stopVideo) player.stopVideo();
     hidePlaybackRecovery();
     idle.classList.remove("hidden");
@@ -189,6 +216,7 @@ function syncPlayer() {
   idle.classList.add("hidden");
   if (np.videoId !== currentVideoId) {
     currentVideoId = np.videoId;
+    playerLoadStartedAt = Date.now();
     player.loadVideoById(np.videoId);
     player.playVideo();
     armPlaybackWatchdog(np.videoId);
@@ -296,9 +324,7 @@ function render() {
     li.className = "q-item";
     li.dataset.id = item.id;
     li.draggable = true;
-    const thumb = item.thumbnail
-      ? `<img src="${item.thumbnail}" alt="" />`
-      : '<img src="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22/%3E" alt="" />';
+    const thumb = `<img src="${safeImageUrl(item.thumbnail)}" alt="" />`;
 
     const isPinned = item.pinned === true;
     const voteScore = item.voteScore || 0;

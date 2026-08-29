@@ -461,6 +461,11 @@ function setChatStatus(message, kind = "") {
   chatStatus.className = `chat-status${kind ? ` ${kind}` : ""}`;
 }
 
+function resetChatPending() {
+  chatPending = false;
+  chatSend.disabled = false;
+}
+
 function renderChatUnread() {
   chatUnread.textContent = chatUnreadCount > 99 ? "99+" : String(chatUnreadCount);
   chatUnread.classList.toggle("hidden", chatUnreadCount === 0 || chatOpen);
@@ -572,6 +577,7 @@ function renderChatSettings() {
       : "Tin nhắn mới nhất trong phòng";
   }
   if (!chatOn) {
+    resetChatPending();
     chatOpen = false;
     chatPanel.classList.add("hidden");
     chatWidget.classList.add("hidden");
@@ -609,7 +615,12 @@ function sendChatMessage(event) {
   chatPending = true;
   chatSend.disabled = true;
   setChatStatus("");
-  queueWs.send(JSON.stringify({ type: "chatSend", name, text, clientId }));
+  try {
+    queueWs.send(JSON.stringify({ type: "chatSend", name, text, clientId }));
+  } catch {
+    resetChatPending();
+    setChatStatus("Mất kết nối chat, vui lòng thử lại.", "bad");
+  }
 }
 
 chatToggle.addEventListener("click", () => setChatOpen(!chatOpen));
@@ -968,10 +979,20 @@ function setLoading(isLoading, label = "Đang tải…") {
 // current page URL. Use the same pattern as host.js queue rendering.
 const NO_THUMB = 'data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22/%3E';
 
+function safeImageUrl(value) {
+  if (typeof value !== "string" || !value.trim()) return NO_THUMB;
+  try {
+    const url = new URL(value, location.origin);
+    return url.protocol === "https:" || url.protocol === "http:" ? url.href : NO_THUMB;
+  } catch {
+    return NO_THUMB;
+  }
+}
+
 function resultCard(r) {
   const li = document.createElement("li");
   li.innerHTML = `
-    <img src="${r.thumbnail || NO_THUMB}" alt="" loading="lazy" />
+    <img src="${safeImageUrl(r.thumbnail)}" alt="" loading="lazy" />
     <div class="r-meta">
       <div class="r-title"></div>
       <div class="r-sub"></div>
@@ -1010,7 +1031,7 @@ function setYouTubeLinkStatus(text, kind = "") {
 
 function showYouTubePreview(song) {
   resolvedYouTubeSong = song;
-  youtubeLinkThumb.src = song.thumbnail || NO_THUMB;
+  youtubeLinkThumb.src = safeImageUrl(song.thumbnail);
   youtubeLinkTitle.textContent = song.title;
   updateMarqueeTitle(youtubeLinkTitle);
   youtubeLinkSub.textContent = song.channel;
@@ -1233,8 +1254,14 @@ function connectWs() {
   const ws = new WebSocket(`${proto}://${location.host}`);
   queueWs = ws;
   ws.onmessage = (e) => {
-    const msg = JSON.parse(e.data);
-    if (msg.type === "state") {
+    let msg;
+    try {
+      msg = JSON.parse(e.data);
+    } catch {
+      return;
+    }
+    if (!msg || typeof msg !== "object" || Array.isArray(msg)) return;
+    if (msg.type === "state" && msg.state && typeof msg.state === "object") {
       lastQueueState = msg.state;
       if (typeof msg.queueLimitOn === "boolean") queueLimitOn = msg.queueLimitOn;
       if (typeof msg.queueLimit === "number") queueLimit = msg.queueLimit;
@@ -1258,14 +1285,14 @@ function connectWs() {
     } else if (msg.type === "chatMessage") {
       appendChatMessage(msg.message);
     } else if (msg.type === "chatCleared") {
+      resetChatPending();
       chatMessages = [];
       chatUnreadCount = 0;
       renderChatMessages();
       renderChatUnread();
       setChatStatus("Tin nhắn đã được làm mới.", "ok");
     } else if (msg.type === "chatSendResult") {
-      chatPending = false;
-      chatSend.disabled = false;
+      resetChatPending();
       if (msg.ok) {
         chatMessageEl.value = "";
         setChatStatus("Đã gửi", "ok");
@@ -1275,6 +1302,9 @@ function connectWs() {
       } else {
         setChatStatus(msg.reason || "Không thể gửi tin nhắn.", "bad");
       }
+    } else if (msg.type === "error" && chatPending) {
+      resetChatPending();
+      setChatStatus(msg.reason || "Không thể gửi tin nhắn.", "bad");
     } else if (msg.type === "pointDropAvailable") {
       showPointDropBanner(msg.drop);
       toast("info", "🎁", "Có đợt quà tặng điểm mới từ BTC!");
@@ -1302,8 +1332,6 @@ function connectWs() {
       renderUserAuthBar();
       if (lastQueueState) renderQueue(lastQueueState);
       toast("bad", "!", msg.reason || "Phiên đăng nhập không còn hiệu lực.");
-    } else if (msg.type === "voteResult") {
-      if (!msg.ok) toast("bad", "!", msg.reason || "Lỗi vote bài hát");
     } else if (msg.type === "removeOwnResult") {
       pendingRemovals.delete(msg.id);
       if (msg.ok) toast("ok", "✓", "Đã xóa khỏi hàng đợi.");
@@ -1311,7 +1339,12 @@ function connectWs() {
       if (lastQueueState) renderQueue(lastQueueState);
     }
   };
-  ws.onclose = () => setTimeout(connectWs, 2000);
+  ws.onclose = () => {
+    if (queueWs === ws) queueWs = null;
+    resetChatPending();
+    setChatStatus("Mất kết nối chat, đang thử kết nối lại…", "bad");
+    setTimeout(connectWs, 2000);
+  };
 }
 
 function renderQueue(state) {
@@ -1320,7 +1353,7 @@ function renderQueue(state) {
   if (np) {
     npEl.classList.remove("hidden");
     npEl.innerHTML = `
-      <img src="${np.thumbnail || NO_THUMB}" alt="" />
+      <img src="${safeImageUrl(np.thumbnail)}" alt="" />
       <div class="np-body">
         <div class="np-label">
           <span class="eq"><span></span><span></span><span></span></span>
@@ -1385,7 +1418,7 @@ function renderQueue(state) {
     li.dataset.id = item.id;
     li.innerHTML = `
       <span class="q-num">${i + 1}</span>
-      <img src="${item.thumbnail || NO_THUMB}" alt="" loading="lazy" />
+      <img src="${safeImageUrl(item.thumbnail)}" alt="" loading="lazy" />
       <div class="q-text">
         <div class="t-row">
           <span class="t"></span>
