@@ -26,5 +26,8 @@ jobs:
       - name: Run tests
         run: bun test
 
+      - name: Run Node WebSocket integration test
+        run: node --test tests/websocket-rate-limit.test.mjs
+
       - name: Check JavaScript syntax
         run: find server.js src public scripts tests -type f \( -name '*.js' -o -name '*.mjs' \) -print0 | xargs -0 -n1 node --check
