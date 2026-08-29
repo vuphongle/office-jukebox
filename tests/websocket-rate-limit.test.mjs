@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import http from "node:http";
+import net from "node:net";
 import { WebSocketServer, WebSocket } from "ws";
 import { WebSocketRateLimiter } from "../src/websocketRateLimit.js";
 import { getClientIp } from "../src/clientIp.js";
@@ -88,4 +89,57 @@ test("WebSocket limits cap concurrent sockets, aggregate messages, and release o
     await new Promise((resolve) => wss.close(resolve));
     await new Promise((resolve) => server.close(resolve));
   }
+});
+
+test("an aborted upgrade releases its reserved connection slot", async (t) => {
+  if (process.versions.bun) return;
+  const server = http.createServer();
+  const limiter = new WebSocketRateLimiter({ maxConnections: 1, maxMessages: 3, maxTrackedIps: 100 });
+  const wss = new WebSocketServer({
+    server,
+    verifyClient: (info, done) => {
+      const ip = getClientIp(info.req, false);
+      if (!limiter.allowConnection(ip)) return done(false, 429, "Too many connections");
+      let committed = false;
+      const release = () => {
+        if (committed) return;
+        committed = true;
+        limiter.releaseConnection(ip);
+      };
+      info.req.socket.once("close", release);
+      info.req.__clientIp = ip;
+      info.req.__commit = () => {
+        committed = true;
+        info.req.socket.off("close", release);
+      };
+      setTimeout(() => done(true), 50);
+    },
+  });
+  wss.on("connection", (_socket, request) => request.__commit());
+  const port = await listen(server);
+  t.after(async () => {
+    for (const socket of wss.clients) socket.close();
+    await new Promise((resolve) => wss.close(resolve));
+    await new Promise((resolve) => server.close(resolve));
+  });
+
+  await new Promise((resolve, reject) => {
+    const raw = net.createConnection({ host: "127.0.0.1", port }, () => {
+      raw.write(
+        "GET / HTTP/1.1\\r\\n" +
+          "Host: 127.0.0.1\\r\\n" +
+          "Connection: Upgrade\\r\\n" +
+          "Upgrade: websocket\\r\\n" +
+          "Sec-WebSocket-Version: 13\\r\\n" +
+          "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\\r\\n\\r\\n"
+      );
+      raw.destroy();
+      resolve();
+    });
+    raw.once("error", reject);
+  });
+  await new Promise((resolve) => setTimeout(resolve, 100));
+  const replacement = await openSocket(port);
+  replacement.close();
+  await waitForClose(replacement);
 });

@@ -1262,7 +1262,26 @@ const wss = new WebSocketServer({
       done(false, 429, "Too many WebSocket connections", { "Retry-After": "60" });
       return;
     }
+    // verifyClient runs before ws emits `connection`. If a client aborts the
+    // HTTP upgrade in that window, there is no WebSocket close event to release
+    // the reservation, so tie it to the request/socket lifecycle as well.
+    const reservation = { committed: false, released: false };
+    const releasePending = () => {
+      if (reservation.committed || reservation.released) return;
+      reservation.released = true;
+      wsRateLimiter.releaseConnection(clientIp);
+    };
+    reservation.commit = () => {
+      reservation.committed = true;
+      info.req.off?.("aborted", releasePending);
+      info.req.off?.("error", releasePending);
+      info.req.socket?.off?.("close", releasePending);
+    };
+    info.req.once("aborted", releasePending);
+    info.req.once("error", releasePending);
+    info.req.socket?.once("close", releasePending);
     info.req.__jukeboxClientIp = clientIp;
+    info.req.__jukeboxWsReservation = reservation;
     done(true);
   },
 });
@@ -1495,6 +1514,7 @@ state.onBalanceChange = ({ userId, newBalance, pointsRefunded, reason }) => {
 
 wss.on("connection", (ws, request) => {
   const clientIp = request.__jukeboxClientIp || getClientIp(request, TRUST_PROXY);
+  request.__jukeboxWsReservation?.commit();
   ws.__jukeboxClientIp = clientIp;
   ws.isAlive = true;
   ws.on("pong", () => { ws.isAlive = true; });
