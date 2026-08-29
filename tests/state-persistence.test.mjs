@@ -85,3 +85,29 @@ test("Host drag order remains identical after SQLite reload", () => {
   closeDb();
   if (existsSync(dragDbPath)) unlinkSync(dragDbPath);
 });
+
+test("Move and reorder leave memory unchanged when SQLite persistence fails", () => {
+  const failureDbPath = path.join(__dirname, "test-order-failure.db");
+  if (existsSync(failureDbPath)) unlinkSync(failureDbPath);
+
+  const db = initDb({ dbPath: failureDbPath });
+  const state = new JukeboxState(db);
+  state.add({ videoId: "playing-failure", title: "Playing" });
+  const first = state.add({ videoId: "first-failure", title: "First" }).item;
+  const second = state.add({ videoId: "second-failure", title: "Second" }).item;
+  const third = state.add({ videoId: "third-failure", title: "Third" }).item;
+  const before = state.queue.map((item) => ({ id: item.id, pinned: item.pinned, pinnedOrder: item.pinnedOrder }));
+  db.run(`CREATE TRIGGER fail_queue_order BEFORE UPDATE OF pinned ON queue_items
+          BEGIN SELECT RAISE(ABORT, 'injected queue persistence failure'); END`);
+
+  assert.throws(() => state.move(first.id, "down"), /injected queue persistence failure/);
+  assert.deepEqual(state.queue.map((item) => ({ id: item.id, pinned: item.pinned, pinnedOrder: item.pinnedOrder })), before);
+  assert.throws(() => state.reorder(third.id, second.id), /injected queue persistence failure/);
+  assert.deepEqual(state.queue.map((item) => ({ id: item.id, pinned: item.pinned, pinnedOrder: item.pinnedOrder })), before);
+
+  const persisted = db.query("SELECT id, pinned, pinned_order FROM queue_items WHERE status = 'queued' ORDER BY queue_sequence").all();
+  assert.deepEqual(persisted.map((row) => ({ id: row.id, pinned: row.pinned === 1, pinnedOrder: row.pinned_order })), before);
+  db.run("DROP TRIGGER fail_queue_order");
+  closeDb();
+  if (existsSync(failureDbPath)) unlinkSync(failureDbPath);
+});

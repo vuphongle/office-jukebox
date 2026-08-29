@@ -43,6 +43,15 @@ function createHostContext() {
     stopVideo() {},
     getCurrentTime() { return 0; },
     getPlayerState() { return this.state; },
+    listeners: new Map(),
+    addEventListener(name, handler) {
+      const list = this.listeners.get(name) || [];
+      list.push(handler);
+      this.listeners.set(name, list);
+    },
+    removeEventListener(name, handler) {
+      this.listeners.set(name, (this.listeners.get(name) || []).filter((entry) => entry !== handler));
+    },
   };
   const window = { addEventListener() {} };
   const context = vm.createContext({
@@ -101,26 +110,35 @@ test("host offers a user-gesture recovery when YouTube blocks the first autoplay
   expect(elements.get("playback-recovery").classList.contains("hidden")).toBe(true);
 });
 
-test("host ignores ended events that identify a different video", () => {
-  const { context, elements, sent, getPlayerEvents } = createHostContext();
+test("host binds playback callbacks to the server-issued generation token", () => {
+  const { context, elements, sent, player, getPlayerEvents } = createHostContext();
   const source = readFileSync(new URL("../public/host.js", import.meta.url), "utf8");
   vm.runInContext(source, context);
   context.connectWs();
   context.window.onYouTubeIframeAPIReady();
   getPlayerEvents().onReady();
   elements.get("start-btn").onclick();
-  vm.runInContext('latestState = { nowPlaying: { videoId: "current-song" }, queue: [] }; syncPlayer();', context);
+  vm.runInContext('latestState = { nowPlaying: { videoId: "first-song", playbackToken: "token-a", duration: "3:30" }, queue: [] }; syncPlayer();', context);
+  const firstEnded = player.listeners.get("onStateChange")[0];
+  const firstError = player.listeners.get("onError")[0];
 
-  getPlayerEvents().onStateChange({
-    data: context.YT.PlayerState.ENDED,
-    target: { getVideoData: () => ({ video_id: "previous-song" }) },
-  });
-  getPlayerEvents().onStateChange({
-    data: context.YT.PlayerState.ENDED,
-    target: { getVideoData: () => ({ video_id: "current-song" }) },
-  });
+  vm.runInContext('latestState = { nowPlaying: { videoId: "current-song", playbackToken: "token-b", duration: "3:30" }, queue: [] }; syncPlayer();', context);
+  const currentEnded = player.listeners.get("onStateChange")[0];
+  const currentError = player.listeners.get("onError")[0];
+  // Delayed callbacks from the previous load run on the same player object,
+  // but retain token-a in their generation-scoped closure.
+  firstEnded({ data: context.YT.PlayerState.ENDED, target: player });
+  // A current error is accepted even when YouTube omits a useful video ID.
+  currentError({ data: 150, target: { getVideoData: () => ({}) } });
+  vm.runInContext('latestState = { nowPlaying: { videoId: "reconnected-song", playbackToken: "token-c", duration: "3:30" }, queue: [] }; syncPlayer();', context);
+  player.state = context.YT.PlayerState.ENDED;
+  context.reportIfEnded();
 
-  assert.deepEqual(sent, [{ type: "ended", videoId: "current-song" }]);
+  assert.deepEqual(sent, [
+    { type: "ended", videoId: "first-song", playbackToken: "token-a", playedSeconds: 0 },
+    { type: "error", videoId: "current-song", playbackToken: "token-b", code: 150 },
+    { type: "ended", videoId: "reconnected-song", playbackToken: "token-c", playedSeconds: 0 },
+  ]);
 });
 
 test("host registers the YouTube callback before loading the iframe API", () => {

@@ -133,3 +133,17 @@ test("snapshot exposes the requester name without exposing the requester token",
   assert.equal("requesterId" in snapshot.nowPlaying, false);
   assert.equal("requesterId" in snapshot.queue[0], false);
 });
+
+test("playback tokens reject delayed same-player events after a queue transition", () => {
+  const state = createState();
+  const first = state.add({ videoId: "first-playback", title: "First" }).item;
+  const second = state.add({ videoId: "second-playback", title: "Second" }).item;
+  assert.ok(first.playbackToken);
+  assert.ok(second.playbackToken);
+
+  const transition = state.advance(first.videoId, { playbackToken: first.playbackToken });
+  assert.equal(transition.nextItem, second);
+  assert.equal(state.advance(second.videoId, { playbackToken: first.playbackToken }), null);
+  assert.equal(state.nowPlaying, second);
+  assert.equal(state.advance(null, { playbackToken: second.playbackToken }).finishedItem, second);
+});

@@ -123,13 +123,12 @@ export class QueueRepository {
     return this.findById(id);
   }
 
-  reorderPinned(items) {
+  syncPinnedOrder(items) {
     const tx = this.db.transaction(() => {
-      for (let i = 0; i < items.length; i++) {
-        const item = items[i];
+      for (const item of items) {
         this.db.run(
-          "UPDATE queue_items SET pinned = 1, pinned_order = ? WHERE id = ?",
-          [i + 1, item.id]
+          "UPDATE queue_items SET pinned = ?, pinned_order = ? WHERE id = ? AND status = 'queued'",
+          [item.pinned ? 1 : 0, item.pinned ? item.pinnedOrder : 0, item.id]
         );
       }
     });

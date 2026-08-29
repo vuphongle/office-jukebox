@@ -5,6 +5,9 @@ let player = null;
 let playerReady = false;
 let started = false;
 let currentVideoId = null;
+let currentPlaybackToken = null;
+let terminalReportedForToken = null;
+let playbackEventHandlers = null;
 let latestState = { nowPlaying: null, queue: [] };
 let filterOn = false;
 let moderationMode = "default"; // "default" | "strict" (protocol values)
@@ -38,8 +41,19 @@ function sendAuth() {
 // If a song ends while the WebSocket is disconnected, the "ended" message may
 // be lost and the server may keep it as the current song; resync on reconnect.
 function reportIfEnded() {
-  if (playerReady && currentVideoId && player.getPlayerState && player.getPlayerState() === YT.PlayerState.ENDED) {
-    send({ type: "ended", videoId: currentVideoId });
+  if (
+    playerReady && currentVideoId && currentPlaybackToken &&
+    terminalReportedForToken !== currentPlaybackToken && player.getPlayerState &&
+    player.getPlayerState() === YT.PlayerState.ENDED
+  ) {
+    if (send({
+      type: "ended",
+      videoId: currentVideoId,
+      playbackToken: currentPlaybackToken,
+      playedSeconds: player.getCurrentTime(),
+    })) {
+      terminalReportedForToken = currentPlaybackToken;
+    }
   }
 }
 
@@ -180,14 +194,6 @@ window.onYouTubeIframeAPIReady = function () {
         syncPlayer();
       },
       onStateChange: (e) => {
-        if (e.data === YT.PlayerState.ENDED) {
-          // A late callback from a previous video must not advance the newly
-          // selected queue item.
-          const eventVideoId = e.target?.getVideoData?.()?.video_id;
-          if (eventVideoId === currentVideoId) {
-            send({ type: "ended", videoId: currentVideoId });
-          }
-        }
         if (e.data === YT.PlayerState.PLAYING) {
           clearTimeout(playbackWatchdog);
           hidePlaybackRecovery();
@@ -198,13 +204,7 @@ window.onYouTubeIframeAPIReady = function () {
       // after the Start button click. YouTube reports this separately; request a new
       // user gesture instead of leaving the server stuck on the current song.
       onAutoplayBlocked: () => showPlaybackRecovery(),
-      onError: (e) => {
-        // 101/150 = owner disallows embedding; 100 = removed; 2 = invalid code.
-        const eventVideoId = e.target?.getVideoData?.()?.video_id;
-        if (eventVideoId !== currentVideoId) return;
-        console.warn("Player error", e.data, "for", currentVideoId);
-        send({ type: "error", videoId: currentVideoId, code: e.data });
-      },
+      onError: () => {}, // generation-scoped handler is installed per load below
     },
   });
 };
@@ -217,18 +217,64 @@ function syncPlayer() {
 
   if (!np) {
     clearTimeout(playbackWatchdog);
+    if (playbackEventHandlers && player.removeEventListener) {
+      player.removeEventListener("onStateChange", playbackEventHandlers.onStateChange);
+      player.removeEventListener("onError", playbackEventHandlers.onError);
+    }
     currentVideoId = null;
+    currentPlaybackToken = null;
+    terminalReportedForToken = null;
     if (player.stopVideo) player.stopVideo();
     hidePlaybackRecovery();
     idle.classList.remove("hidden");
     return;
   }
   idle.classList.add("hidden");
-  if (np.videoId !== currentVideoId) {
+  if (np.videoId !== currentVideoId || np.playbackToken !== currentPlaybackToken) {
+    if (playbackEventHandlers && player.removeEventListener) {
+      player.removeEventListener("onStateChange", playbackEventHandlers.onStateChange);
+      player.removeEventListener("onError", playbackEventHandlers.onError);
+    }
     currentVideoId = np.videoId;
+    currentPlaybackToken = np.playbackToken || null;
+    terminalReportedForToken = null;
+    const eventVideoId = np.videoId;
+    const eventPlaybackToken = np.playbackToken || null;
+    let terminalReported = false;
+    const sendTerminal = (type, code = null) => {
+      if (terminalReported || !eventPlaybackToken) return;
+      const payload = {
+        type,
+        videoId: eventVideoId,
+        playbackToken: eventPlaybackToken,
+      };
+      if (type === "ended") payload.playedSeconds = player.getCurrentTime ? player.getCurrentTime() : null;
+      if (type === "error") payload.code = code;
+      if (send(payload)) {
+        terminalReported = true;
+        if (eventPlaybackToken === currentPlaybackToken) terminalReportedForToken = eventPlaybackToken;
+      }
+    };
+    playbackEventHandlers = {
+      onStateChange: (e) => {
+        if (e.data === YT.PlayerState.ENDED) sendTerminal("ended");
+      },
+      onError: (e) => {
+        // 101/150 = owner disallows embedding; 100 = removed; 2 = invalid code.
+        console.warn("Player error", e.data, "for", eventVideoId);
+        sendTerminal("error", e.data);
+      },
+    };
+    // These listeners close over the server-issued token for this load. If a
+    // delayed callback from an earlier load runs on the same YouTube player,
+    // it sends the earlier token and the server rejects it as stale.
+    if (player.addEventListener) {
+      player.addEventListener("onStateChange", playbackEventHandlers.onStateChange);
+      player.addEventListener("onError", playbackEventHandlers.onError);
+    }
     player.loadVideoById(np.videoId);
     player.playVideo();
-    armPlaybackWatchdog(np.videoId);
+    armPlaybackWatchdog(np.videoId, currentPlaybackToken);
   }
 }
 
@@ -246,10 +292,10 @@ function hidePlaybackRecovery() {
   document.getElementById("playback-recovery").classList.add("hidden");
 }
 
-function armPlaybackWatchdog(videoId) {
+function armPlaybackWatchdog(videoId, playbackToken) {
   clearTimeout(playbackWatchdog);
   playbackWatchdog = setTimeout(() => {
-    if (currentVideoId !== videoId || !playerReady) return;
+    if (currentVideoId !== videoId || currentPlaybackToken !== playbackToken || !playerReady) return;
     const t = player.getCurrentTime ? player.getCurrentTime() : 0;
     const s = player.getPlayerState ? player.getPlayerState() : -1;
     if (t >= 1 || s === YT.PlayerState.PLAYING || s === YT.PlayerState.PAUSED) return;
@@ -258,11 +304,16 @@ function armPlaybackWatchdog(videoId) {
     // for everyone. BUFFERING likewise means only that the network is slow. In
     // both cases, wait through another watchdog cycle instead of skipping.
     if (document.hidden || s === YT.PlayerState.BUFFERING) {
-      armPlaybackWatchdog(videoId);
+      armPlaybackWatchdog(videoId, playbackToken);
       return;
     }
     console.warn(`[watchdog] ${videoId} has not started (state ${s}) — skipping`);
-    send({ type: "error", videoId, code: "watchdog" });
+    if (
+      currentPlaybackToken && terminalReportedForToken !== currentPlaybackToken &&
+      send({ type: "error", videoId, playbackToken: currentPlaybackToken, code: "watchdog" })
+    ) {
+      terminalReportedForToken = currentPlaybackToken;
+    }
   }, 20000);
 }
 
@@ -272,8 +323,15 @@ function armPlaybackWatchdog(videoId) {
 window.addEventListener("pageshow", (e) => {
   if (!e.persisted) return;
   clearTimeout(playbackWatchdog);
+  if (playbackEventHandlers && player?.removeEventListener) {
+    player.removeEventListener("onStateChange", playbackEventHandlers.onStateChange);
+    player.removeEventListener("onError", playbackEventHandlers.onError);
+  }
   started = false;
   currentVideoId = null;
+  currentPlaybackToken = null;
+  terminalReportedForToken = null;
+  playbackEventHandlers = null;
   hidePlaybackRecovery();
   document.getElementById("start-overlay").classList.remove("hidden");
   document.getElementById("stage").classList.add("hidden");
@@ -441,7 +499,7 @@ function wireControls() {
     // have been fully blocked by the browser.
     player.loadVideoById(np.videoId);
     player.playVideo();
-    armPlaybackWatchdog(np.videoId);
+    armPlaybackWatchdog(np.videoId, currentPlaybackToken);
   };
   document.getElementById("playpause").onclick = () => {
     if (!playerReady) return;
