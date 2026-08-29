@@ -1162,6 +1162,18 @@ const wss = new WebSocketServer({
   // buffers them in memory.
   maxPayload: 8 * 1024,
 });
+const wsHeartbeatTimer = setInterval(() => {
+  for (const client of wss.clients) {
+    if (client.readyState !== 1) continue;
+    if (client.isAlive === false) {
+      client.terminate();
+      continue;
+    }
+    client.isAlive = false;
+    client.ping();
+  }
+}, 30_000);
+wsHeartbeatTimer.unref?.();
 
 function broadcastChatMessage(message) {
   const payload = JSON.stringify({ type: "chatMessage", message });
@@ -1373,6 +1385,8 @@ state.onBalanceChange = ({ userId, newBalance, pointsRefunded, reason }) => {
 };
 
 wss.on("connection", (ws, request) => {
+  ws.isAlive = true;
+  ws.on("pong", () => { ws.isAlive = true; });
   ws.sessionToken = getSessionTokenFromCookieHeader(request.headers.cookie);
   ws.hostAuthenticated = !HOST_PASSWORD;
   refreshSocketIdentity(ws, sessionRepo);
@@ -1539,6 +1553,7 @@ function shutdown(signal) {
   shuttingDown = true;
   console.log(`[server] ${signal} received; closing connections.`);
   clearInterval(sessionPruneTimer);
+  clearInterval(wsHeartbeatTimer);
   chatAiCoordinator.stop();
   for (const client of wss.clients) client.close(1001, "Server shutting down");
 
