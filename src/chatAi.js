@@ -316,11 +316,14 @@ function providerConfig(opts = {}) {
     : chatApiKey
       ? process.env.CHAT_AI_MODEL
       : process.env.LLM_MODEL;
+  const envTimeoutMs = Number(process.env.CHAT_AI_TIMEOUT_MS);
   return {
     apiKey,
     baseUrl: (baseUrl || "https://api.moonshot.ai/v1").replace(/\/+$/, ""),
     model: model || "kimi-k2.6",
-    timeoutMs: opts.timeoutMs ?? 15000,
+    timeoutMs:
+      opts.timeoutMs ??
+      (Number.isFinite(envTimeoutMs) && envTimeoutMs > 0 ? envTimeoutMs : 120000),
     fetchImpl: opts.fetchImpl ?? fetch,
     logger: opts.logger ?? console,
   };
