@@ -34,6 +34,16 @@ function escapeHtml(value) {
     .replace(/'/g, "&#039;");
 }
 
+function safeImageUrl(value) {
+  if (typeof value !== "string" || !value.trim()) return "/assets/favicon.png";
+  try {
+    const url = new URL(value, location.origin);
+    return url.protocol === "https:" || url.protocol === "http:" ? url.href : "/assets/favicon.png";
+  } catch {
+    return "/assets/favicon.png";
+  }
+}
+
 async function requestJson(url, options = {}) {
   const response = await fetch(url, options);
   let data;
@@ -277,7 +287,7 @@ function renderActiveVotes(votes) {
   }
   list.innerHTML = votes.map((vote) => `
     <article class="vote-row">
-      <img src="${escapeHtml(vote.thumbnail || "/assets/favicon.png")}" alt="" width="52" height="52" loading="lazy" />
+      <img src="${safeImageUrl(vote.thumbnail)}" alt="" width="52" height="52" loading="lazy" />
       <div class="vote-copy">
         <strong>${escapeHtml(vote.title)}</strong>
         <span>${escapeHtml(vote.channel || "Không rõ kênh")} · Vị trí ${vote.queuePosition}</span>
@@ -543,6 +553,7 @@ function connectSocket() {
   accountSocket.onmessage = (event) => {
     let message;
     try { message = JSON.parse(event.data); } catch { return; }
+    if (!message || typeof message !== "object" || Array.isArray(message)) return;
     if (message.type === "state" && currentUser) {
       window.clearTimeout(queueRefreshTimer);
       queueRefreshTimer = window.setTimeout(loadActiveVotes, 160);

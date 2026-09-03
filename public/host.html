@@ -90,7 +90,8 @@
     </aside>
   </main>
 
-  <script src="https://www.youtube.com/iframe_api"></script>
   <script src="/host.js"></script>
+  <!-- host.js registers onYouTubeIframeAPIReady before the API can finish loading. -->
+  <script src="https://www.youtube.com/iframe_api"></script>
 </body>
 </html>

@@ -1,5 +1,5 @@
 # Event music system — runs on Bun.
-FROM oven/bun:1-alpine
+FROM oven/bun:1.3.4-alpine
 
 WORKDIR /app
 

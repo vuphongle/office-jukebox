@@ -47,6 +47,7 @@ export class JukeboxState {
           pinnedOrder: active.pinned_order || 0,
           addedAt: active.added_at,
           startedAt: active.started_at || Date.now(),
+          playbackToken: randomUUID(),
         };
       }
 
@@ -67,12 +68,17 @@ export class JukeboxState {
         pinned: row.pinned === 1,
         pinnedOrder: row.pinned_order || 0,
         addedAt: row.added_at,
+        playbackToken: randomUUID(),
       }));
 
       this._sortQueue();
       this._promoteIfIdle();
     } catch (err) {
-      console.warn(`[state] initFromDb failed: ${err.message}`);
+      // Starting with an empty in-memory queue after a hydration failure would
+      // make a healthy-looking server disagree with SQLite and could overwrite
+      // the persisted queue on the next mutation. Fail startup instead so the
+      // operator sees the actual storage problem.
+      throw new Error(`Unable to hydrate queue state from SQLite: ${err.message}`, { cause: err });
     }
   }
 
@@ -129,7 +135,11 @@ export class JukeboxState {
   }
 
   _sortQueue() {
-    this.queue.sort((a, b) => {
+    this._sortItems(this.queue);
+  }
+
+  _sortItems(items) {
+    items.sort((a, b) => {
       // 1. pinned DESC (1 before 0)
       const aPinned = a.pinned ? 1 : 0;
       const bPinned = b.pinned ? 1 : 0;
@@ -165,6 +175,7 @@ export class JukeboxState {
     if (!this.nowPlaying && this.queue.length > 0) {
       this.nowPlaying = this.queue.shift();
       this.nowPlaying.startedAt = Date.now();
+      this.nowPlaying.playbackToken ||= randomUUID();
       if (this.queueRepo) {
         this.queueRepo.updateStatus(this.nowPlaying.id, "playing", { startedAt: this.nowPlaying.startedAt });
       }
@@ -203,6 +214,7 @@ export class JukeboxState {
       pinned: false,
       pinnedOrder: 0,
       addedAt: Date.now(),
+      playbackToken: randomUUID(),
     };
 
     this.queue.push(item);
@@ -234,7 +246,10 @@ export class JukeboxState {
 
   // Move to the next song. finishedVideoId prevents duplicate "ended"/"error"
   // events for the same song from advancing twice.
-  advance(finishedVideoId, { isError = false, finishReason = null, playedSeconds = null } = {}) {
+  advance(finishedVideoId, { isError = false, finishReason = null, playedSeconds = null, playbackToken = null } = {}) {
+    if (playbackToken && this.nowPlaying?.playbackToken !== playbackToken) {
+      return null; // stale event for an earlier playback generation
+    }
     if (finishedVideoId && this.nowPlaying && this.nowPlaying.videoId !== finishedVideoId) {
       return null; // stale event for a song that has already advanced
     }
@@ -327,13 +342,17 @@ export class JukeboxState {
   // Move an upcoming item up or down (host control).
   move(id, dir) {
     const i = this.queue.findIndex((s) => s.id === id);
-    if (i === -1) return;
+    if (i === -1) return false;
     const j = dir === "up" ? i - 1 : i + 1;
-    if (j < 0 || j >= this.queue.length) return;
-    [this.queue[i], this.queue[j]] = [this.queue[j], this.queue[i]];
-    this._pinThroughIndex(j);
-    this._syncPinnedOrder();
+    if (j < 0 || j >= this.queue.length) return false;
+    const nextQueue = this.queue.map((item) => ({ ...item }));
+    [nextQueue[i], nextQueue[j]] = [nextQueue[j], nextQueue[i]];
+    this._pinThroughIndex(j, nextQueue);
+    this._preparePinnedOrder(nextQueue);
+    if (this.queueRepo) this.queueRepo.syncPinnedOrder(nextQueue);
+    this._commitQueue(nextQueue);
     this._emit();
+    return true;
   }
 
   // Move an item immediately before beforeId; null/undefined appends it to the end.
@@ -361,31 +380,35 @@ export class JukeboxState {
       }
     }
 
-    const [item] = this.queue.splice(i, 1);
+    const nextQueue = this.queue.map((item) => ({ ...item }));
+    const [item] = nextQueue.splice(i, 1);
     const j = beforeId === null || beforeId === undefined
-      ? this.queue.length
-      : this.queue.findIndex((s) => s.id === beforeId);
+      ? nextQueue.length
+      : nextQueue.findIndex((s) => s.id === beforeId);
 
     if (j < 0) {
-      this.queue.splice(i, 0, item);
       return false;
     }
 
-    this.queue.splice(j, 0, item);
-    this._pinThroughIndex(j);
-    this._syncPinnedOrder();
+    nextQueue.splice(j, 0, item);
+    this._pinThroughIndex(j, nextQueue);
+    this._preparePinnedOrder(nextQueue);
+    if (this.queueRepo) this.queueRepo.syncPinnedOrder(nextQueue);
+    this._commitQueue(nextQueue);
     this._emit();
     return true;
   }
 
   unpin(id) {
-    const item = this.queue.find((s) => s.id === id);
+    const nextQueue = this.queue.map((entry) => ({ ...entry }));
+    const item = nextQueue.find((s) => s.id === id);
     if (!item) return false;
-    if (this.queueRepo) this.queueRepo.unpin(id);
     item.pinned = false;
     item.pinnedOrder = 0;
-    this._sortQueue();
-    this._syncPinnedOrder();
+    this._sortItems(nextQueue);
+    this._preparePinnedOrder(nextQueue);
+    if (this.queueRepo) this.queueRepo.syncPinnedOrder(nextQueue);
+    this._commitQueue(nextQueue);
     this._emit();
     return true;
   }
@@ -396,23 +419,32 @@ export class JukeboxState {
     this._emit();
   }
 
-  _syncPinnedOrder() {
+  _preparePinnedOrder(items = this.queue) {
     let order = 1;
-    const pinnedItems = [];
-    for (const item of this.queue) {
+    for (const item of items) {
       if (item.pinned) {
         item.pinnedOrder = order++;
-        pinnedItems.push(item);
+      } else {
+        item.pinnedOrder = 0;
       }
     }
-    if (this.queueRepo && pinnedItems.length) this.queueRepo.reorderPinned(pinnedItems);
+  }
+
+  _commitQueue(nextQueue) {
+    const originals = new Map(this.queue.map((item) => [item.id, item]));
+    this.queue = nextQueue.map((item) => {
+      const original = originals.get(item.id);
+      if (!original) return item;
+      Object.assign(original, item);
+      return original;
+    });
   }
 
   // Pinned items form one contiguous prefix. Pinning the whole prefix preserves
   // the host's explicit order both in memory and after SQLite reload/sorting.
-  _pinThroughIndex(index) {
+  _pinThroughIndex(index, items = this.queue) {
     for (let i = 0; i <= index; i++) {
-      this.queue[i].pinned = true;
+      items[i].pinned = true;
     }
   }
 

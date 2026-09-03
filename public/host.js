@@ -5,6 +5,9 @@ let player = null;
 let playerReady = false;
 let started = false;
 let currentVideoId = null;
+let currentPlaybackToken = null;
+let terminalReportedForToken = null;
+let playbackEventHandlers = null;
 let latestState = { nowPlaying: null, queue: [] };
 let filterOn = false;
 let moderationMode = "default"; // "default" | "strict" (protocol values)
@@ -18,6 +21,17 @@ let voteSortOn = true;
 let hostToken = null; // WebSocket control token (only issued to authenticated hosts)
 let ws = null;
 let draggedQueueId = null;
+const NO_THUMB = 'data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22/%3E';
+
+function safeImageUrl(value) {
+  if (typeof value !== "string" || !value.trim()) return NO_THUMB;
+  try {
+    const url = new URL(value, location.origin);
+    return url.protocol === "https:" || url.protocol === "http:" ? url.href : NO_THUMB;
+  } catch {
+    return NO_THUMB;
+  }
+}
 
 // ---- WebSocket connection --------------------------------------------------
 function sendAuth() {
@@ -27,21 +41,46 @@ function sendAuth() {
 // If a song ends while the WebSocket is disconnected, the "ended" message may
 // be lost and the server may keep it as the current song; resync on reconnect.
 function reportIfEnded() {
-  if (playerReady && currentVideoId && player.getPlayerState && player.getPlayerState() === YT.PlayerState.ENDED) {
-    send({ type: "ended", videoId: currentVideoId });
+  if (
+    playerReady && currentVideoId && currentPlaybackToken &&
+    terminalReportedForToken !== currentPlaybackToken && player.getPlayerState &&
+    player.getPlayerState() === YT.PlayerState.ENDED
+  ) {
+    if (send({
+      type: "ended",
+      videoId: currentVideoId,
+      playbackToken: currentPlaybackToken,
+      playedSeconds: player.getCurrentTime(),
+    })) {
+      terminalReportedForToken = currentPlaybackToken;
+    }
   }
 }
 
 function connectWs() {
   const proto = location.protocol === "https:" ? "wss" : "ws";
-  ws = new WebSocket(`${proto}://${location.host}`);
-  ws.onopen = () => {
+  const socket = new WebSocket(`${proto}://${location.host}`);
+  ws = socket;
+  socket.onopen = () => {
+    // A terminal send can be acknowledged locally by WebSocket.send() and
+    // still be lost while the connection is closing. Re-arm reporting on each
+    // reconnect; the server-side playback token makes duplicate reports safe.
+    terminalReportedForToken = null;
     sendAuth(); // re-authenticate after every connection/reconnection
     reportIfEnded();
+    if (currentVideoId && currentPlaybackToken) {
+      armPlaybackWatchdog(currentVideoId, currentPlaybackToken);
+    }
   };
-  ws.onmessage = (e) => {
-    const msg = JSON.parse(e.data);
-    if (msg.type === "state") {
+  socket.onmessage = (e) => {
+    let msg;
+    try {
+      msg = JSON.parse(e.data);
+    } catch {
+      return;
+    }
+    if (!msg || typeof msg !== "object" || Array.isArray(msg)) return;
+    if (msg.type === "state" && msg.state && typeof msg.state === "object") {
       latestState = msg.state;
       if (typeof msg.filterOn === "boolean") filterOn = msg.filterOn;
       if (typeof msg.moderationMode === "string") moderationMode = msg.moderationMode;
@@ -61,10 +100,24 @@ function connectWs() {
       syncPlayer();
     }
   };
-  ws.onclose = () => setTimeout(connectWs, 1500); // reconnect automatically
+  socket.onclose = () => {
+    if (ws !== socket) return;
+    ws = null;
+    terminalReportedForToken = null;
+    clearTimeout(playbackWatchdog);
+    setTimeout(() => {
+      if (!ws) connectWs();
+    }, 1500);
+  }; // reconnect automatically
 }
 function send(obj) {
-  if (ws && ws.readyState === 1) ws.send(JSON.stringify(obj));
+  if (!ws || ws.readyState !== 1) return false;
+  try {
+    ws.send(JSON.stringify(obj));
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 // ---- Queue drag and drop ---------------------------------------------------
@@ -150,9 +203,6 @@ window.onYouTubeIframeAPIReady = function () {
         syncPlayer();
       },
       onStateChange: (e) => {
-        if (e.data === YT.PlayerState.ENDED) {
-          send({ type: "ended", videoId: currentVideoId });
-        }
         if (e.data === YT.PlayerState.PLAYING) {
           clearTimeout(playbackWatchdog);
           hidePlaybackRecovery();
@@ -163,11 +213,7 @@ window.onYouTubeIframeAPIReady = function () {
       // after the Start button click. YouTube reports this separately; request a new
       // user gesture instead of leaving the server stuck on the current song.
       onAutoplayBlocked: () => showPlaybackRecovery(),
-      onError: (e) => {
-        // 101/150 = owner disallows embedding; 100 = removed; 2 = invalid code.
-        console.warn("Player error", e.data, "for", currentVideoId);
-        send({ type: "error", videoId: currentVideoId, code: e.data });
-      },
+      onError: () => {}, // generation-scoped handler is installed per load below
     },
   });
 };
@@ -180,18 +226,64 @@ function syncPlayer() {
 
   if (!np) {
     clearTimeout(playbackWatchdog);
+    if (playbackEventHandlers && player.removeEventListener) {
+      player.removeEventListener("onStateChange", playbackEventHandlers.onStateChange);
+      player.removeEventListener("onError", playbackEventHandlers.onError);
+    }
     currentVideoId = null;
+    currentPlaybackToken = null;
+    terminalReportedForToken = null;
     if (player.stopVideo) player.stopVideo();
     hidePlaybackRecovery();
     idle.classList.remove("hidden");
     return;
   }
   idle.classList.add("hidden");
-  if (np.videoId !== currentVideoId) {
+  if (np.videoId !== currentVideoId || np.playbackToken !== currentPlaybackToken) {
+    if (playbackEventHandlers && player.removeEventListener) {
+      player.removeEventListener("onStateChange", playbackEventHandlers.onStateChange);
+      player.removeEventListener("onError", playbackEventHandlers.onError);
+    }
     currentVideoId = np.videoId;
+    currentPlaybackToken = np.playbackToken || null;
+    terminalReportedForToken = null;
+    const eventVideoId = np.videoId;
+    const eventPlaybackToken = np.playbackToken || null;
+    let terminalReported = false;
+    const sendTerminal = (type, code = null) => {
+      if (terminalReported || !eventPlaybackToken) return;
+      const payload = {
+        type,
+        videoId: eventVideoId,
+        playbackToken: eventPlaybackToken,
+      };
+      if (type === "ended") payload.playedSeconds = player.getCurrentTime ? player.getCurrentTime() : null;
+      if (type === "error") payload.code = code;
+      if (send(payload)) {
+        terminalReported = true;
+        if (eventPlaybackToken === currentPlaybackToken) terminalReportedForToken = eventPlaybackToken;
+      }
+    };
+    playbackEventHandlers = {
+      onStateChange: (e) => {
+        if (e.data === YT.PlayerState.ENDED) sendTerminal("ended");
+      },
+      onError: (e) => {
+        // 101/150 = owner disallows embedding; 100 = removed; 2 = invalid code.
+        console.warn("Player error", e.data, "for", eventVideoId);
+        sendTerminal("error", e.data);
+      },
+    };
+    // These listeners close over the server-issued token for this load. If a
+    // delayed callback from an earlier load runs on the same YouTube player,
+    // it sends the earlier token and the server rejects it as stale.
+    if (player.addEventListener) {
+      player.addEventListener("onStateChange", playbackEventHandlers.onStateChange);
+      player.addEventListener("onError", playbackEventHandlers.onError);
+    }
     player.loadVideoById(np.videoId);
     player.playVideo();
-    armPlaybackWatchdog(np.videoId);
+    armPlaybackWatchdog(np.videoId, currentPlaybackToken);
   }
 }
 
@@ -209,10 +301,10 @@ function hidePlaybackRecovery() {
   document.getElementById("playback-recovery").classList.add("hidden");
 }
 
-function armPlaybackWatchdog(videoId) {
+function armPlaybackWatchdog(videoId, playbackToken) {
   clearTimeout(playbackWatchdog);
   playbackWatchdog = setTimeout(() => {
-    if (currentVideoId !== videoId || !playerReady) return;
+    if (currentVideoId !== videoId || currentPlaybackToken !== playbackToken || !playerReady) return;
     const t = player.getCurrentTime ? player.getCurrentTime() : 0;
     const s = player.getPlayerState ? player.getPlayerState() : -1;
     if (t >= 1 || s === YT.PlayerState.PLAYING || s === YT.PlayerState.PAUSED) return;
@@ -221,11 +313,16 @@ function armPlaybackWatchdog(videoId) {
     // for everyone. BUFFERING likewise means only that the network is slow. In
     // both cases, wait through another watchdog cycle instead of skipping.
     if (document.hidden || s === YT.PlayerState.BUFFERING) {
-      armPlaybackWatchdog(videoId);
+      armPlaybackWatchdog(videoId, playbackToken);
       return;
     }
     console.warn(`[watchdog] ${videoId} has not started (state ${s}) — skipping`);
-    send({ type: "error", videoId, code: "watchdog" });
+    if (
+      currentPlaybackToken && terminalReportedForToken !== currentPlaybackToken &&
+      send({ type: "error", videoId, playbackToken: currentPlaybackToken, code: "watchdog" })
+    ) {
+      terminalReportedForToken = currentPlaybackToken;
+    }
   }, 20000);
 }
 
@@ -235,8 +332,15 @@ function armPlaybackWatchdog(videoId) {
 window.addEventListener("pageshow", (e) => {
   if (!e.persisted) return;
   clearTimeout(playbackWatchdog);
+  if (playbackEventHandlers && player?.removeEventListener) {
+    player.removeEventListener("onStateChange", playbackEventHandlers.onStateChange);
+    player.removeEventListener("onError", playbackEventHandlers.onError);
+  }
   started = false;
   currentVideoId = null;
+  currentPlaybackToken = null;
+  terminalReportedForToken = null;
+  playbackEventHandlers = null;
   hidePlaybackRecovery();
   document.getElementById("start-overlay").classList.remove("hidden");
   document.getElementById("stage").classList.add("hidden");
@@ -296,9 +400,7 @@ function render() {
     li.className = "q-item";
     li.dataset.id = item.id;
     li.draggable = true;
-    const thumb = item.thumbnail
-      ? `<img src="${item.thumbnail}" alt="" />`
-      : '<img src="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22/%3E" alt="" />';
+    const thumb = `<img src="${safeImageUrl(item.thumbnail)}" alt="" />`;
 
     const isPinned = item.pinned === true;
     const voteScore = item.voteScore || 0;
@@ -406,7 +508,7 @@ function wireControls() {
     // have been fully blocked by the browser.
     player.loadVideoById(np.videoId);
     player.playVideo();
-    armPlaybackWatchdog(np.videoId);
+    armPlaybackWatchdog(np.videoId, currentPlaybackToken);
   };
   document.getElementById("playpause").onclick = () => {
     if (!playerReady) return;

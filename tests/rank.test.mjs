@@ -1,11 +1,13 @@
-import test from "node:test";
+import test, { afterEach } from "node:test";
 import assert from "node:assert/strict";
 
-import { initDb } from "../src/db.js";
+import { initDb, closeDb } from "../src/db.js";
 import { rankForXp, qualifiedPlayThreshold, isQualifiedPlay } from "../src/rank.js";
 import { RankRepository } from "../src/repositories/rankRepository.js";
 import { UserRepository } from "../src/repositories/userRepository.js";
 import { JukeboxState } from "../src/state.js";
+
+afterEach(() => closeDb());
 
 test("rank helpers map cumulative XP and bounded skip threshold", () => {
   assert.equal(rankForXp(0).level, 1);

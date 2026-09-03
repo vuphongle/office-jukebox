@@ -154,6 +154,26 @@ export function mergeSearchResults(primary, fallback, limit = 12) {
 // URLs are not song links because the queue requires one specific video.
 const YOUTUBE_VIDEO_ID = /^[A-Za-z0-9_-]{11}$/;
 const YOUTUBE_HOSTS = new Set(["youtube.com", "www.youtube.com", "m.youtube.com", "music.youtube.com", "youtu.be"]);
+const YOUTUBE_THUMBNAIL_HOSTS = new Set(["i.ytimg.com", "img.youtube.com"]);
+
+export function isValidYouTubeVideoId(value) {
+  return typeof value === "string" && YOUTUBE_VIDEO_ID.test(value);
+}
+
+export function sanitizeThumbnail(value) {
+  if (typeof value !== "string" || !value.trim()) return null;
+  try {
+    const url = new URL(value.trim());
+    const host = url.hostname.toLowerCase();
+    const isYouTubeImageHost =
+      YOUTUBE_THUMBNAIL_HOSTS.has(host) || host.endsWith(".ytimg.com") || host.endsWith(".ggpht.com") || host.endsWith(".googleusercontent.com");
+    if (url.protocol !== "https:" || !isYouTubeImageHost) return null;
+    const normalized = url.toString();
+    return normalized.length <= 500 ? normalized : null;
+  } catch {
+    return null;
+  }
+}
 
 export function parseYouTubeVideoId(value) {
   if (typeof value !== "string" || !value.trim()) return null;
@@ -180,7 +200,7 @@ export function parseYouTubeVideoId(value) {
 
 // oEmbed provides display metadata without a YouTube API key.
 export async function fetchYouTubeMetadata(videoId, { timeoutMs = 5000, fetchImpl = globalThis.fetch } = {}) {
-  if (!YOUTUBE_VIDEO_ID.test(videoId)) return null;
+  if (!isValidYouTubeVideoId(videoId)) return null;
   const url =
     "https://www.youtube.com/oembed?url=" +
     encodeURIComponent("https://youtu.be/" + videoId) +
@@ -191,12 +211,15 @@ export async function fetchYouTubeMetadata(videoId, { timeoutMs = 5000, fetchImp
     const res = await fetchImpl(url, { headers: { "User-Agent": UA }, signal: controller.signal });
     if (!res.ok) return null;
     const data = await res.json();
+    const title = typeof data.title === "string" ? data.title.trim() : "";
+    const channel = typeof data.author_name === "string" ? data.author_name.trim() : "";
+    if (!title || !channel) return null;
     return {
       videoId,
-      title: data.title || "(không có tiêu đề)",
-      channel: data.author_name || "Không rõ",
+      title,
+      channel,
       duration: "",
-      thumbnail: data.thumbnail_url || `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`,
+      thumbnail: sanitizeThumbnail(data.thumbnail_url) || `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`,
     };
   } catch {
     return null;
@@ -246,7 +269,7 @@ export async function searchYouTube(
     const fallbackData = await fetchSearchData(query, { mode: "songs", timeoutMs, fetchImpl });
     const fallbackResults = parseSearchResults(fallbackData, { limit });
     return mergeSearchResults(primaryResults, fallbackResults, limit);
-  } catch (fallbackError) {
+  } catch {
     if (primaryError && primaryResults.length === 0) throw primaryError;
     return primaryResults;
   }

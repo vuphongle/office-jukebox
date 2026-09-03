@@ -42,7 +42,7 @@ event.
 - 🤖 Optional AI content filter — any OpenAI-compatible LLM can evaluate requests
   using event context, YouTube category, family-safety flags, and descriptions.
   The projector controls off, on, and strict modes.
-- 🎛 Live host controls — play/pause/skip, volume, removal, per-guest cooldown,
+- 🎛 Live host controls — play/pause/skip, removal, per-guest cooldown,
   filter mode, and event context, persisted across restarts.
 - 💬 Guest feedback at /guest, with review, deletion, toggle, and statistics
   controls at /feedback.
@@ -186,8 +186,11 @@ docker compose up -d --build
 
 The container joins the external reverseproxy Docker network and exposes port
 45416. Point the reverse proxy at event-music:45416, set PUBLIC_URL to your
-domain, and ensure the proxy forwards WebSocket upgrades. Projector settings are
-stored in ./data.
+domain, set `TRUST_PROXY=1` when exactly one trusted proxy sits in front of the
+app, and ensure the proxy forwards WebSocket upgrades. Projector settings are
+stored in ./data. The default `TRUST_PROXY=false` is safer for direct/LAN access;
+existing deployments should add the setting explicitly so IP-based limits are
+applied to the original client address instead of the proxy.
 
 The reverseproxy network must already exist. If it does not:
 docker network create reverseproxy.
@@ -197,7 +200,7 @@ docker network create reverseproxy.
 Push to deploy (recommended): a self-hosted GitHub Actions runner rebuilds after
 every push to main. Register a Linux runner, grant its account Docker access, and
 set the DEPLOY_DIR repository variable if the clone is not at
-~/event-music-system.
+/root/scripts/event-music-system (the workflow default).
 
 Manual: run git pull && docker compose up -d --build whenever needed.
 
@@ -232,6 +235,10 @@ comments.
 | LLM_API_KEY / LLM_BASE_URL / LLM_MODEL | OpenAI-compatible content-filter provider |
 | CHAT_AI_API_KEY / CHAT_AI_BASE_URL / CHAT_AI_MODEL | Chat provider, falling back to LLM_* when its key is empty |
 | EVENT_CONTEXT | Initial event description sent to the AI |
+| TRUST_PROXY | Trusted reverse-proxy hop count for client-IP rate limits (default `false`) |
+| WS_MAX_CONNECTIONS_PER_IP | Concurrent WebSocket connections allowed per effective client IP (default `200`) |
+| WS_MAX_MESSAGES_PER_IP | Aggregate WebSocket messages per effective client IP per minute (default `600`) |
+| WS_MAX_TRACKED_IPS | Maximum inactive IP limiter records retained in memory (default `5000`) |
 | PORT | Listening port, default 45416 |
 
 Filter status, moderation mode, cooldown, event context, and chat AI behavior are

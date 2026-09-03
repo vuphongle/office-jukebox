@@ -1,9 +1,11 @@
-import test from "node:test";
+import test, { afterEach } from "node:test";
 import assert from "node:assert/strict";
 import { hashPassword, verifyPassword, parseCookies } from "../src/auth.js";
-import { initDb } from "../src/db.js";
+import { initDb, closeDb } from "../src/db.js";
 import { performCheckin, calculateMilestoneBonus, getLocalDate } from "../src/checkin.js";
 import { UserRepository } from "../src/repositories/userRepository.js";
+
+afterEach(() => closeDb());
 
 test("Password hashing and constant-time verification", () => {
   const hash = hashPassword("secret123");

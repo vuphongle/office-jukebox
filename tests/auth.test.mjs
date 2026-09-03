@@ -11,6 +11,7 @@ import {
   parseCookies,
   getSessionTokenFromCookieHeader,
   requireAdmin,
+  setSessionCookie,
 } from "../src/auth.js";
 import { canUseHostControls, refreshSocketIdentity } from "../src/socketAuth.js";
 import { unlinkSync, existsSync } from "node:fs";
@@ -47,6 +48,19 @@ test("Cookie parsing helper", () => {
 
   assert.deepEqual(parseCookies(""), {});
   assert.deepEqual(parseCookies(null), {});
+});
+
+test("Session cookies do not trust spoofed forwarded protocol headers", () => {
+  let cookie;
+  setSessionCookie(
+    { setHeader: (_name, value) => { cookie = value; } },
+    "token",
+    { secure: false, headers: { "x-forwarded-proto": "https" } }
+  );
+  assert.equal(cookie.includes("Secure"), false);
+
+  setSessionCookie({ setHeader: (_name, value) => { cookie = value; } }, "token", { secure: true });
+  assert.equal(cookie.includes("Secure"), true);
 });
 
 test("Admin middleware requires an active admin session", () => {

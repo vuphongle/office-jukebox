@@ -1,21 +1,18 @@
 import { scrypt, scryptSync, randomBytes, timingSafeEqual } from "node:crypto";
-import { UserRepository } from "./repositories/userRepository.js";
 import { SessionRepository } from "./repositories/sessionRepository.js";
+import { hashPassword } from "./password.js";
 
 const SESSION_COOKIE_NAME = "jukebox_session";
 const SESSION_MAX_AGE_SEC = 30 * 24 * 60 * 60; // 30 days
 
-export function hashPassword(password) {
-  const salt = randomBytes(16).toString("hex");
-  const hash = scryptSync(password, salt, 64).toString("hex");
-  return `${salt}:${hash}`;
-}
+export { hashPassword };
 
 export function verifyPassword(password, storedHash) {
   if (!storedHash || !storedHash.includes(":")) return false;
   const [salt, originalHash] = storedHash.split(":");
-  const testHash = scryptSync(password, salt, 64).toString("hex");
-  return timingSafeEqual(Buffer.from(testHash, "utf8"), Buffer.from(originalHash, "utf8"));
+  const expected = Buffer.from(originalHash, "utf8");
+  const actual = Buffer.from(scryptSync(password, salt, 64).toString("hex"), "utf8");
+  return expected.length === actual.length && timingSafeEqual(actual, expected);
 }
 
 function scryptAsync(password, salt) {
@@ -70,7 +67,9 @@ export function getSessionTokenFromCookieHeader(cookieHeader) {
 }
 
 export function setSessionCookie(res, token, req) {
-  const isSecure = req?.secure || req?.headers?.["x-forwarded-proto"] === "https";
+  // Express derives `req.secure` from the configured trust-proxy policy. Do
+  // not trust a caller-supplied X-Forwarded-Proto header directly.
+  const isSecure = req?.secure === true;
   const cookieParts = [
     `${SESSION_COOKIE_NAME}=${encodeURIComponent(token)}`,
     "HttpOnly",
@@ -85,7 +84,7 @@ export function setSessionCookie(res, token, req) {
 }
 
 export function clearSessionCookie(res, req) {
-  const isSecure = req?.secure || req?.headers?.["x-forwarded-proto"] === "https";
+  const isSecure = req?.secure === true;
   const cookieParts = [
     `${SESSION_COOKIE_NAME}=`,
     "HttpOnly",
