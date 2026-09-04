@@ -1,5 +1,111 @@
 let currentUser = null;
 let currentActiveDrop = null;
+let rankBenefits = [];
+let rankBenefitsPromise = null;
+let leaderboardItems = [];
+let leaderboardRequest = null;
+
+const rankBadgeIcons = Object.freeze({
+  "headphones-blue": "🎧",
+  pulse: "⚡",
+  flame: "🔥",
+  turntable: "🎛️",
+  "stage-star": "🌟",
+  "neon-crown": "👑",
+});
+
+async function loadRankBenefits() {
+  if (rankBenefitsPromise) return rankBenefitsPromise;
+  rankBenefitsPromise = fetch("/api/rank/benefits")
+    .then((response) => response.json())
+    .then((data) => {
+      rankBenefits = data.ok && Array.isArray(data.benefits) ? data.benefits.slice(0, 6) : [];
+      return rankBenefits;
+    })
+    .catch(() => {
+      rankBenefitsPromise = null;
+      return [];
+    });
+  return rankBenefitsPromise;
+}
+
+function renderRankBenefits(containerId, currentRank = {}) {
+  const container = document.getElementById(containerId);
+  if (!container) return;
+  if (!rankBenefits.length) {
+    container.innerHTML = '<span class="rank-benefits-state">Chưa tải được quyền lợi. Hãy thử mở lại sau.</span>';
+    return;
+  }
+  const currentLevel = Number(currentRank.level || 1);
+  container.innerHTML = rankBenefits.map((benefit) => {
+    const active = Number(benefit.level) === currentLevel;
+    const xpLabel = Number(benefit.minXp) > 0 ? `${Number(benefit.minXp).toLocaleString("vi-VN")} XP` : "Bắt đầu";
+    return `<div class="rank-benefit-row${active ? " current" : ""}"><span class="rank-benefit-icon">${escapeHtml(benefit.badge || "🎧")}</span><span class="rank-benefit-copy"><strong>Hạng ${Number(benefit.level)} · ${escapeHtml(benefit.name || "")}</strong><small>${xpLabel}</small></span><span class="rank-benefit-reward">+${Number(benefit.checkinPoints) || 1} điểm</span></div>`;
+  }).join("");
+}
+
+function updateRankBenefitModal() {
+  const rank = currentUser?.rank || {};
+  const reward = Number(rank.checkinPoints) || 1;
+  const progress = rank.nextMinXp
+    ? `${Number(rank.xp || 0).toLocaleString("vi-VN")} / ${Number(rank.nextMinXp).toLocaleString("vi-VN")} XP`
+    : `${Number(rank.xp || 0).toLocaleString("vi-VN")} XP · Tối đa`;
+  document.getElementById("checkin-rank-badge")?.replaceChildren(document.createTextNode(rank.badge || "🎧"));
+  document.getElementById("checkin-rank-name")?.replaceChildren(document.createTextNode(rank.name || "Người mới bắt nhịp"));
+  document.getElementById("checkin-rank-reward")?.replaceChildren(document.createTextNode(`Hạng hiện tại · nhận ${reward} điểm cơ bản mỗi lần điểm danh`));
+  document.getElementById("checkin-rank-progress")?.replaceChildren(document.createTextNode(progress));
+  renderRankBenefits("checkin-rank-list", rank);
+}
+
+function renderLeaderboard() {
+  const status = document.getElementById("leaderboard-status");
+  const podium = document.getElementById("leaderboard-podium");
+  const list = document.getElementById("leaderboard-list");
+  if (!status || !podium || !list) return;
+  if (!leaderboardItems.length) {
+    podium.innerHTML = "";
+    list.innerHTML = "";
+    status.textContent = "Chưa có thành viên trên bảng xếp hạng.";
+    return;
+  }
+  status.textContent = "Top 10 thành viên có XP nổi bật nhất";
+  podium.innerHTML = leaderboardItems.slice(0, 3).map((entry) => {
+    const level = Number(entry.rank?.level || 1);
+    const icon = rankBadgeIcons[entry.rank?.badge] || "🎧";
+    return `<article class="leaderboard-podium-card place-${Number(entry.position)}"><span class="leaderboard-place">#${Number(entry.position)}</span><span class="leaderboard-avatar">${icon}</span><strong>${escapeHtml(entry.displayName || "Thành viên")}</strong><small>Hạng ${level} · ${Number(entry.xpTotal || 0).toLocaleString("vi-VN")} XP</small></article>`;
+  }).join("");
+  list.innerHTML = leaderboardItems.slice(3).map((entry) => {
+    const icon = rankBadgeIcons[entry.rank?.badge] || "🎧";
+    return `<div class="leaderboard-row"><span class="leaderboard-number">#${Number(entry.position)}</span><span class="leaderboard-row-icon">${icon}</span><span class="leaderboard-row-copy"><strong>${escapeHtml(entry.displayName || "Thành viên")}</strong><small>${escapeHtml(entry.rank?.name || "Người mới bắt nhịp")}</small></span><span class="leaderboard-xp">${Number(entry.xpTotal || 0).toLocaleString("vi-VN")} XP</span></div>`;
+  }).join("");
+}
+
+async function loadLeaderboard() {
+  if (leaderboardRequest) return leaderboardRequest;
+  const status = document.getElementById("leaderboard-status");
+  const refresh = document.getElementById("leaderboard-refresh");
+  status?.classList.add("is-loading");
+  if (refresh) refresh.disabled = true;
+  leaderboardRequest = fetch("/api/rank/leaderboard")
+    .then((response) => response.json())
+    .then((data) => {
+      if (!data.ok || !Array.isArray(data.leaderboard)) throw new Error(data.reason || "Không thể tải bảng xếp hạng.");
+      leaderboardItems = data.leaderboard.slice(0, 10);
+      renderLeaderboard();
+    })
+    .catch((error) => {
+      leaderboardItems = [];
+      if (status) status.textContent = `${error.message} Hãy thử làm mới.`;
+      document.getElementById("leaderboard-podium")?.replaceChildren();
+      document.getElementById("leaderboard-list")?.replaceChildren();
+    })
+    .finally(() => {
+      leaderboardRequest = null;
+      status?.classList.remove("is-loading");
+      if (refresh) refresh.disabled = false;
+    });
+  return leaderboardRequest;
+}
 
 // --- Authentication & User State -------------------------------------------
 async function fetchMe() {
@@ -41,12 +147,17 @@ function renderUserAuthBar() {
         </a>
         <span id="user-points-pill" class="user-points-pill" title="Xem lịch sử / Điểm danh">${currentUser.pointsBalance} 🪙</span>
         <span id="user-streak-pill" class="user-streak-pill" title="Điểm danh streak">🔥 ${currentUser.currentStreak}d</span>
+        <button data-notification-bell class="notification-bell" type="button" aria-label="Mở thông báo">
+          <svg aria-hidden="true" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M18 9a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4" /></svg>
+          <span data-notification-count class="notification-count hidden">0</span>
+        </button>
         <button id="user-logout-btn" class="user-logout-btn" type="button">Thoát</button>
       </div>
     `;
     document.getElementById("user-points-pill")?.addEventListener("click", openCheckinModal);
     document.getElementById("user-streak-pill")?.addEventListener("click", openCheckinModal);
     document.getElementById("user-logout-btn")?.addEventListener("click", handleLogout);
+    window.JukeboxNotifications?.syncUser(currentUser);
   } else {
     bar.innerHTML = `
       <button id="open-auth-btn" class="auth-pill-btn" type="button">
@@ -55,6 +166,7 @@ function renderUserAuthBar() {
       </button>
     `;
     document.getElementById("open-auth-btn")?.addEventListener("click", () => openAuthModal("login"));
+    window.JukeboxNotifications?.reset();
   }
 }
 
@@ -183,6 +295,7 @@ document.getElementById("auth-form")?.addEventListener("submit", async (e) => {
       closeAuthModal();
       await fetchMe();
       if (!currentUser) throw new Error("Không thể tải phiên đăng nhập vừa tạo.");
+      restartWs();
       toast("ok", "👋", `Xin chào, ${currentUser.displayName || currentUser.username}!`);
       if (currentUser.displayName) {
         nameEl.value = currentUser.displayName;
@@ -212,6 +325,7 @@ async function handleLogout() {
   hidePointDropBanner();
   renderUserAuthBar();
   if (lastQueueState) renderQueue(lastQueueState);
+  restartWs();
   toast("info", "👋", "Đã đăng xuất tài khoản.");
 }
 
@@ -224,6 +338,8 @@ function openCheckinModal() {
   const modal = document.getElementById("checkin-modal");
   document.getElementById("modal-streak-count").textContent = currentUser.currentStreak || 0;
   document.getElementById("checkin-greeting").textContent = `Xin chào ${currentUser.displayName || currentUser.username}!`;
+  updateRankBenefitModal();
+  if (!rankBenefits.length) loadRankBenefits().then(updateRankBenefitModal);
 
   const streak = currentUser.currentStreak || 0;
   const cycle = streak % 30;
@@ -239,7 +355,7 @@ function openCheckinModal() {
     document.getElementById("checkin-status-text").textContent = "Hãy quay lại vào ngày mai để duy trì streak nhé!";
   } else {
     checkinBtn.disabled = false;
-    checkinBtn.textContent = "✨ Điểm Danh Nhận Điểm (+1 🪙)";
+    checkinBtn.textContent = `✨ Điểm Danh Nhận Điểm (+${Number(currentUser.rank?.checkinPoints) || 1} 🪙)`;
     document.getElementById("checkin-status-text").textContent = "Điểm danh mỗi ngày để nhận điểm vote bài hát và mở khóa mốc thưởng!";
   }
 
@@ -454,6 +570,7 @@ let queueWs = null;
 const CHAT_DISPLAY_LIMIT = 40;
 const CHAT_BOTTOM_LOCK_PX = 64;
 const pendingRemovals = new Set();
+const pendingOwnSkips = new Set();
 const pendingVotes = new Set();
 
 function setChatStatus(message, kind = "") {
@@ -1249,6 +1366,17 @@ function cooldownToast(seconds) {
 // ---- Live queue (WebSocket) ------------------------------------------------
 let lastQueueState = null; // retain state so the owned-request badge can be redrawn
 
+function restartWs() {
+  const previous = queueWs;
+  queueWs = null;
+  pendingOwnSkips.clear();
+  if (previous) {
+    previous.onclose = null;
+    previous.close();
+  }
+  connectWs();
+}
+
 function connectWs() {
   const proto = location.protocol === "https:" ? "wss" : "ws";
   const ws = new WebSocket(`${proto}://${location.host}`);
@@ -1261,6 +1389,7 @@ function connectWs() {
       return;
     }
     if (!msg || typeof msg !== "object" || Array.isArray(msg)) return;
+    window.JukeboxNotifications?.handleSocketMessage(msg);
     if (msg.type === "state" && msg.state && typeof msg.state === "object") {
       lastQueueState = msg.state;
       if (typeof msg.queueLimitOn === "boolean") queueLimitOn = msg.queueLimitOn;
@@ -1326,22 +1455,40 @@ function connectWs() {
         currentUser.displayName = msg.displayName;
         renderUserAuthBar();
       }
+    } else if (msg.type === "rankUpdated") {
+      if (currentUser && msg.rank) {
+        const previousLevel = Number(currentUser.rank?.level || 1);
+        currentUser.rank = msg.rank;
+        renderUserAuthBar();
+        const checkinModal = document.getElementById("checkin-modal");
+        if (checkinModal && !checkinModal.classList.contains("hidden")) updateRankBenefitModal();
+        if (Number(msg.rank.level || 1) > previousLevel) {
+          toast("ok", "🏆", `Bạn đã lên hạng ${msg.rank.name || "mới"}!`);
+        }
+      }
     } else if (msg.type === "sessionRevoked") {
       currentUser = null;
       hidePointDropBanner();
       renderUserAuthBar();
       if (lastQueueState) renderQueue(lastQueueState);
+      restartWs();
       toast("bad", "!", msg.reason || "Phiên đăng nhập không còn hiệu lực.");
     } else if (msg.type === "removeOwnResult") {
       pendingRemovals.delete(msg.id);
       if (msg.ok) toast("ok", "✓", "Đã xóa khỏi hàng đợi.");
       else toast("bad", "!", msg.reason || "Không thể xóa bài hát này.");
       if (lastQueueState) renderQueue(lastQueueState);
+    } else if (msg.type === "skipOwnResult") {
+      pendingOwnSkips.delete(msg.id);
+      if (msg.ok) toast("ok", "⏭️", "Đã bỏ qua bài hát của bạn.", { sub: "Điểm vote đã dùng không được hoàn lại." });
+      else toast("bad", "!", msg.reason || "Không thể bỏ qua bài hát đang phát.");
+      if (lastQueueState) renderQueue(lastQueueState);
     }
   };
   ws.onclose = () => {
     if (queueWs !== ws) return;
     queueWs = null;
+    pendingOwnSkips.clear();
     resetChatPending();
     setChatStatus("Mất kết nối chat, đang thử kết nối lại…", "bad");
     setTimeout(() => {
@@ -1350,9 +1497,19 @@ function connectWs() {
   };
 }
 
+function requestOwnSkip(id, button) {
+  if (!id || !button || !queueWs || queueWs.readyState !== WebSocket.OPEN || pendingOwnSkips.has(id)) return;
+  const confirmed = window.confirm("Bỏ qua bài hát đang phát? Điểm vote đã dùng sẽ không được hoàn lại.");
+  if (!confirmed) return;
+  pendingOwnSkips.add(id);
+  button.disabled = true;
+  queueWs.send(JSON.stringify({ type: "skipOwn", id, clientId }));
+}
+
 function renderQueue(state) {
   const np = state.nowPlaying;
   const npEl = document.getElementById("now-playing");
+  const myIds = loadMyRequestIds();
   if (np) {
     npEl.classList.remove("hidden");
     npEl.innerHTML = `
@@ -1364,11 +1521,16 @@ function renderQueue(state) {
         </div>
         <div class="np-title"></div>
         <div class="np-sub"></div>
+      </div>
+      <div class="np-actions">
+        <button class="np-skip-own${myIds.has(np.id) ? "" : " hidden"}" type="button" title="Bỏ qua bài hát của bạn" aria-label="Bỏ qua bài hát của bạn"${pendingOwnSkips.has(np.id) ? " disabled" : ""}>Bỏ qua</button>
       </div>`;
     npEl.querySelector(".np-title").textContent = np.title;
     updateMarqueeTitle(npEl.querySelector(".np-title"));
     npEl.querySelector(".np-sub").textContent =
       (np.channel || "") + (np.addedBy ? ` · Người chọn: ${np.addedBy}` : "");
+    const skipButton = npEl.querySelector(".np-skip-own");
+    skipButton.onclick = () => requestOwnSkip(np.id, skipButton);
   } else {
     npEl.classList.add("hidden");
   }
@@ -1405,7 +1567,6 @@ function renderQueue(state) {
       </li>`;
     return;
   }
-  const myIds = loadMyRequestIds();
   queue.forEach((item, i) => {
     const li = document.createElement("li");
     const voteCount = item.voteScore || 0;
@@ -1501,6 +1662,11 @@ renderSingers();
 selectGenre("All"); // render the tab and load real songs on page open
 renderRequestSettings();
 renderFeedback();
+document.getElementById("leaderboard-refresh")?.addEventListener("click", loadLeaderboard);
+loadLeaderboard();
+window.addEventListener("jukebox:notification", (event) => {
+  if (currentUser) toast("info", "🔔", "Bạn có thông báo mới", { sub: event.detail?.title || "Mở chuông để xem cập nhật." });
+});
 fetchMe();
 connectWs();
 setInterval(() => {

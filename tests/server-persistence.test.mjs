@@ -6,6 +6,10 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { WebSocket } from "ws";
+import { closeDb, initDb } from "../src/db.js";
+import { hashPassword } from "../src/password.js";
+import { QueueRepository } from "../src/repositories/queueRepository.js";
+import { UserRepository } from "../src/repositories/userRepository.js";
 
 const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 
@@ -49,14 +53,30 @@ async function stopServer(child) {
   await new Promise((resolve) => child.once("exit", resolve));
 }
 
-async function login(baseUrl) {
+async function loginAs(baseUrl, username, password) {
   const response = await fetch(`${baseUrl}/api/auth/login`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ username: "review-admin", password: "review-password-123" }),
+    body: JSON.stringify({ username, password }),
   });
   assert.equal(response.status, 200);
   const cookie = response.headers.get("set-cookie").split(";", 1)[0];
+  return cookie;
+}
+
+async function login(baseUrl) {
+  return loginAs(baseUrl, "review-admin", "review-password-123");
+}
+
+async function register(baseUrl, username) {
+  const response = await fetch(`${baseUrl}/api/auth/register`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ username, password: "member-password-123", displayName: username }),
+  });
+  assert.equal(response.status, 200);
+  const cookie = response.headers.get("set-cookie")?.split(";", 1)[0];
+  assert.ok(cookie);
   return cookie;
 }
 
@@ -214,6 +234,224 @@ test("successfully acknowledged feedback survives a server restart", async () =>
     assert.ok(listed.items.some((entry) => entry.content === "Survive restart"));
   } finally {
     await stopServer(running.child);
+    rmSync(dataDir, { recursive: true, force: true });
+  }
+});
+
+test("public rank benefits expose every check-in reward", async () => {
+  const dataDir = mkdtempSync(path.join(os.tmpdir(), "office-jukebox-rank-benefits-"));
+  const { child, baseUrl } = await startServer(dataDir);
+  try {
+    const response = await fetch(`${baseUrl}/api/rank/benefits`);
+    assert.equal(response.status, 200);
+    const payload = await response.json();
+    assert.deepEqual(payload.benefits.map((benefit) => benefit.checkinPoints), [1, 2, 3, 4, 5, 6]);
+    assert.equal(Object.hasOwn(payload.benefits[0], "minXp"), true);
+    assert.equal(Object.hasOwn(payload.benefits[0], "passwordHash"), false);
+  } finally {
+    await stopServer(child);
+    rmSync(dataDir, { recursive: true, force: true });
+  }
+});
+
+test("public leaderboard is available without authentication and stays bounded", async () => {
+  const dataDir = mkdtempSync(path.join(os.tmpdir(), "office-jukebox-leaderboard-"));
+  const { child, baseUrl } = await startServer(dataDir);
+  try {
+    const response = await fetch(`${baseUrl}/api/rank/leaderboard?limit=200`);
+    assert.equal(response.status, 200);
+    const payload = await response.json();
+    assert.ok(Array.isArray(payload.leaderboard));
+    assert.ok(payload.leaderboard.length <= 10);
+    assert.equal(Object.hasOwn(payload.leaderboard[0] || {}, "userId"), false);
+  } finally {
+    await stopServer(child);
+    rmSync(dataDir, { recursive: true, force: true });
+  }
+});
+
+test("WebSocket owner skip responds without granting host control", async () => {
+  const dataDir = mkdtempSync(path.join(os.tmpdir(), "office-jukebox-owner-skip-"));
+  const { child, baseUrl } = await startServer(dataDir);
+  let socket;
+  try {
+    socket = await openSocket(baseUrl);
+    await waitForMessage(socket, (message) => message.type === "state");
+    socket.send(JSON.stringify({ type: "skipOwn", id: "missing-item", clientId: "owner-client" }));
+    const result = await waitForMessage(socket, (message) => message.type === "skipOwnResult");
+    assert.equal(result.ok, false);
+    assert.equal(result.id, "missing-item");
+  } finally {
+    socket?.close();
+    await stopServer(child);
+    rmSync(dataDir, { recursive: true, force: true });
+  }
+});
+
+test("authenticated owner can skip the exact current song without refund or XP", async () => {
+  const dataDir = mkdtempSync(path.join(os.tmpdir(), "office-jukebox-owner-skip-auth-"));
+  const dbPath = path.join(dataDir, "jukebox.db");
+  let socket;
+  let child;
+  let baseUrl;
+  try {
+    const seedDb = initDb({ dbPath, adminUser: "review-admin", adminPass: "review-password-123" });
+    const userRepo = new UserRepository(seedDb);
+    const owner = userRepo.create({
+      username: "skip_owner",
+      passwordHash: hashPassword("owner-password-123"),
+      displayName: "Skip Owner",
+    });
+    const voter = userRepo.create({ username: "skip_voter", passwordHash: hashPassword("voter-password-123") });
+    userRepo.updatePoints(voter.id, 1, { type: "admin_adjustment", reason: "owner skip test" });
+    const queueRepo = new QueueRepository(seedDb);
+    const ownerSong = queueRepo.createItem({
+      videoId: "owner-song-auth",
+      title: "Owner song",
+      duration: "3:30",
+      addedBy: owner.display_name,
+      requesterId: "owner-client",
+      addedByUserId: owner.id,
+    });
+    const nextSong = queueRepo.createItem({
+      videoId: "next-song-auth",
+      title: "Next song",
+      duration: "3:30",
+      addedBy: "Another member",
+      requesterId: "other-client",
+    });
+    queueRepo.addVote(ownerSong.id, voter.id);
+    queueRepo.updateStatus(ownerSong.id, "playing", { startedAt: Date.now() - 1000 });
+    closeDb();
+
+    ({ child, baseUrl } = await startServer(dataDir));
+    const ownerCookie = await loginAs(baseUrl, "skip_owner", "owner-password-123");
+    socket = await openSocket(baseUrl, ownerCookie);
+    const initial = await waitForMessage(socket, (message) => message.type === "state");
+    assert.equal(initial.state.nowPlaying.id, ownerSong.id);
+
+    socket.send(JSON.stringify({ type: "skipOwn", id: nextSong.id, clientId: "owner-client" }));
+    const wrongItem = await waitForMessage(socket, (message) => message.type === "skipOwnResult");
+    assert.equal(wrongItem.ok, false);
+
+    const nextStatePromise = waitForMessage(
+      socket,
+      (message) => message.type === "state" && message.state?.nowPlaying?.id === nextSong.id
+    );
+    socket.send(JSON.stringify({ type: "skipOwn", id: ownerSong.id, clientId: "spoofed-client" }));
+    const result = await waitForMessage(socket, (message) => message.type === "skipOwnResult");
+    assert.equal(result.ok, true);
+    assert.equal(result.id, ownerSong.id);
+    const nextState = await nextStatePromise;
+    assert.equal(nextState.state.nowPlaying.id, nextSong.id);
+
+    socket.close();
+    socket = null;
+    await stopServer(child);
+    child = null;
+
+    const verifyDb = initDb({ dbPath });
+    const finished = verifyDb.query("SELECT status, finish_reason FROM queue_items WHERE id = ?").get(ownerSong.id);
+    assert.equal(finished.status, "played");
+    assert.equal(finished.finish_reason, "owner_skipped");
+    assert.equal(verifyDb.query("SELECT points_balance FROM users WHERE id = ?").get(voter.id).points_balance, 0);
+    assert.equal(verifyDb.query("SELECT COUNT(*) AS count FROM point_ledger WHERE type = 'vote_refund'").get().count, 0);
+    assert.equal(verifyDb.query("SELECT COALESCE(SUM(delta_xp), 0) AS total FROM rank_activity_ledger WHERE user_id = ?").get(owner.id).total, 0);
+    closeDb();
+  } finally {
+    socket?.close();
+    if (child) await stopServer(child);
+    try { closeDb(); } catch {}
+    rmSync(dataDir, { recursive: true, force: true });
+  }
+});
+
+test("admin notifications fan out to active users with unread/read controls", async () => {
+  const dataDir = mkdtempSync(path.join(os.tmpdir(), "office-jukebox-notifications-"));
+  const { child, baseUrl } = await startServer(dataDir);
+  let memberSocket;
+  try {
+    const memberCookie = await register(baseUrl, "notification_member");
+    const adminCookie = await login(baseUrl);
+    memberSocket = await openSocket(baseUrl, memberCookie);
+    await waitForMessage(memberSocket, (message) => message.type === "state");
+
+    const unauthenticated = await fetch(`${baseUrl}/api/me/notifications`);
+    assert.equal(unauthenticated.status, 401);
+
+    const forbidden = await fetch(`${baseUrl}/api/admin/notifications`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Cookie: memberCookie },
+      body: JSON.stringify({ title: "Không được gửi", body: "Không được gửi" }),
+    });
+    assert.equal(forbidden.status, 403);
+
+    const invalid = await fetch(`${baseUrl}/api/admin/notifications`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Cookie: adminCookie },
+      body: JSON.stringify({ title: "", body: "Nội dung" }),
+    });
+    assert.equal(invalid.status, 400);
+
+    const pushPromise = waitForMessage(memberSocket, (message) => message.type === "notificationCreated");
+    const send = await fetch(`${baseUrl}/api/admin/notifications`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Cookie: adminCookie },
+      body: JSON.stringify({
+        title: "Bảo trì hệ thống",
+        body: "Jukebox sẽ được cập nhật lúc 22:00.",
+        kind: "maintenance",
+      }),
+    });
+    assert.equal(send.status, 200);
+    const sent = await send.json();
+    assert.equal(sent.ok, true);
+    assert.equal(sent.recipientCount, 2);
+    const pushed = await pushPromise;
+    assert.equal(pushed.notification.id, sent.notification.id);
+    assert.equal(pushed.unreadCount, 1);
+
+    const memberMe = await (await fetch(`${baseUrl}/api/me`, { headers: { Cookie: memberCookie } })).json();
+    assert.equal(memberMe.user.unreadNotificationCount, 1);
+    const list = await (await fetch(`${baseUrl}/api/me/notifications?limit=200`, { headers: { Cookie: memberCookie } })).json();
+    assert.equal(list.total, 1);
+    assert.equal(list.limit, 20);
+    assert.equal(list.unreadCount, 1);
+    assert.equal(list.items[0].read, false);
+
+    const read = await fetch(`${baseUrl}/api/me/notifications/${encodeURIComponent(sent.notification.id)}/read`, {
+      method: "POST",
+      headers: { Cookie: memberCookie },
+    });
+    assert.equal(read.status, 200);
+    assert.equal((await read.json()).unreadCount, 0);
+
+    const second = await fetch(`${baseUrl}/api/admin/notifications`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Cookie: adminCookie },
+      body: JSON.stringify({ title: "Tính năng mới", body: "Đã cập nhật bảng xếp hạng.", kind: "feature" }),
+    });
+    assert.equal(second.status, 200);
+
+    const readAll = await fetch(`${baseUrl}/api/me/notifications/read-all`, {
+      method: "POST",
+      headers: { Cookie: memberCookie },
+    });
+    assert.equal(readAll.status, 200);
+    assert.equal((await readAll.json()).markedCount, 1);
+
+    const adminHistory = await (await fetch(`${baseUrl}/api/admin/notifications?limit=100`, {
+      headers: { Cookie: adminCookie },
+    })).json();
+    assert.equal(adminHistory.ok, true);
+    assert.equal(adminHistory.limit, 20);
+    assert.equal(adminHistory.total, 2);
+    assert.equal(adminHistory.items.length, 2);
+    assert.equal(adminHistory.items[1].recipientCount, 2);
+    assert.equal(adminHistory.items[1].readCount, 1);
+  } finally {
+    memberSocket?.close();
+    await stopServer(child);
     rmSync(dataDir, { recursive: true, force: true });
   }
 });

@@ -13,6 +13,8 @@ const LEDGER_LABELS = {
 
 let currentUser = null;
 let currentDrop = null;
+let rankBenefits = [];
+let rankBenefitsPromise = null;
 let ledgerDirection = "all";
 let ledgerPage = 0;
 let ledgerTotal = 0;
@@ -32,6 +34,37 @@ function escapeHtml(value) {
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;")
     .replace(/'/g, "&#039;");
+}
+
+async function loadRankBenefits() {
+  if (rankBenefitsPromise) return rankBenefitsPromise;
+  rankBenefitsPromise = fetch("/api/rank/benefits")
+    .then((response) => response.json())
+    .then((data) => {
+      rankBenefits = data.ok && Array.isArray(data.benefits) ? data.benefits.slice(0, 6) : [];
+      if (currentUser) renderAccountRankBenefits(currentUser.rank);
+      return rankBenefits;
+    })
+    .catch(() => {
+      rankBenefitsPromise = null;
+      return [];
+    });
+  return rankBenefitsPromise;
+}
+
+function renderAccountRankBenefits(rank = {}) {
+  const container = $("#account-rank-benefits-list");
+  if (!container) return;
+  if (!rankBenefits.length) {
+    container.innerHTML = '<span class="rank-benefits-state">Chưa tải được quyền lợi. Hãy thử mở lại sau.</span>';
+    return;
+  }
+  const currentLevel = Number(rank.level || 1);
+  container.innerHTML = rankBenefits.map((benefit) => {
+    const active = Number(benefit.level) === currentLevel;
+    const xpLabel = Number(benefit.minXp) > 0 ? `${Number(benefit.minXp).toLocaleString("vi-VN")} XP` : "Bắt đầu";
+    return `<div class="rank-benefit-row${active ? " current" : ""}"><span class="rank-benefit-icon">${escapeHtml(benefit.badge || "🎧")}</span><span class="rank-benefit-copy"><strong>Hạng ${Number(benefit.level)} · ${escapeHtml(benefit.name || "")}</strong><small>${xpLabel}</small></span><span class="rank-benefit-reward">+${Number(benefit.checkinPoints) || 1} điểm</span></div>`;
+  }).join("");
 }
 
 function safeImageUrl(value) {
@@ -78,6 +111,7 @@ function showStatus(message, kind = "success") {
 
 function showAuthGate(message = "") {
   currentUser = null;
+  window.JukeboxNotifications?.reset();
   $("#account-loading").classList.add("hidden");
   $("#account-dashboard").classList.add("hidden");
   $("#auth-gate").classList.remove("hidden");
@@ -199,7 +233,7 @@ async function loadAccount() {
     currentDrop = data.user.activeClaimableDrop || null;
     renderAccount();
     showDashboard();
-    await Promise.all([loadLedger({ reset: true }), loadActiveVotes()]);
+    await Promise.all([loadLedger({ reset: true }), loadActiveVotes(), loadRankBenefits()]);
   } catch (error) {
     showAuthGate(`Không thể tải tài khoản: ${error.message}`);
   }
@@ -220,6 +254,14 @@ function renderAccount() {
   $("#account-rank-progress").textContent = rank.nextMinXp
     ? `${Number(rank.xp || 0).toLocaleString("vi-VN")} / ${Number(rank.nextMinXp).toLocaleString("vi-VN")} XP`
     : `${Number(rank.xp || 0).toLocaleString("vi-VN")} XP · Tối đa`;
+  const checkinReward = Number(rank.checkinPoints) || 1;
+  $("#account-checkin-rank-badge").textContent = rank.badge || "🎧";
+  $("#account-checkin-rank-name").textContent = rank.name || "Người mới bắt nhịp";
+  $("#account-checkin-reward-copy").textContent = `Nhận ${checkinReward} điểm cơ bản mỗi lần điểm danh`;
+  $("#account-checkin-rank-progress").textContent = rank.nextMinXp
+    ? `${Number(rank.xp || 0).toLocaleString("vi-VN")} / ${Number(rank.nextMinXp).toLocaleString("vi-VN")} XP`
+    : `${Number(rank.xp || 0).toLocaleString("vi-VN")} XP · Tối đa`;
+  renderAccountRankBenefits(rank);
   $("#points-value").textContent = Number(currentUser.pointsBalance || 0).toLocaleString("vi-VN");
   $("#streak-value").textContent = `${currentUser.currentStreak || 0} ngày`;
   $("#reward-streak").textContent = currentUser.currentStreak || 0;
@@ -231,7 +273,7 @@ function renderAccount() {
   checkinButton.disabled = !!currentUser.hasCheckedInToday;
   checkinButton.querySelector(".button-label").textContent = currentUser.hasCheckedInToday
     ? "Đã điểm danh hôm nay"
-    : "Điểm danh nhận +1 điểm";
+    : `Điểm danh nhận +${checkinReward} điểm`;
   $("#checkin-description").textContent = currentUser.hasCheckedInToday
     ? "Hãy quay lại vào ngày mai để duy trì chuỗi điểm danh."
     : "Điểm danh mỗi ngày để nhận điểm vote và mở khóa mốc thưởng.";
@@ -249,6 +291,7 @@ function renderAccount() {
   if (!hasUnsavedProfileDraft) profileInput.value = displayName;
   updateDisplayNameForm();
   renderPointDrop();
+  window.JukeboxNotifications?.syncUser(currentUser);
 }
 
 function renderPointDrop() {
@@ -363,9 +406,10 @@ async function performCheckin() {
     currentUser.pointsBalance = data.newBalance;
     currentUser.currentStreak = data.streak;
     currentUser.hasCheckedInToday = true;
+    if (currentUser.rank && data.rank?.checkinPoints) currentUser.rank.checkinPoints = data.rank.checkinPoints;
     renderAccount();
     await loadLedger({ reset: true });
-    const totalAwarded = Number(data.pointsAwarded || 0) + Number(data.bonusPoints || 0);
+    const totalAwarded = Number(data.pointsAwarded || 0);
     showStatus(`Điểm danh thành công, bạn nhận +${totalAwarded} điểm.`);
   } catch (error) {
     showStatus(error.message, "error");
@@ -554,6 +598,7 @@ function connectSocket() {
     let message;
     try { message = JSON.parse(event.data); } catch { return; }
     if (!message || typeof message !== "object" || Array.isArray(message)) return;
+    window.JukeboxNotifications?.handleSocketMessage(message);
     if (message.type === "state" && currentUser) {
       window.clearTimeout(queueRefreshTimer);
       queueRefreshTimer = window.setTimeout(loadActiveVotes, 160);
@@ -589,6 +634,11 @@ function connectSocket() {
     if (currentUser) socketReconnectTimer = window.setTimeout(connectSocket, 2000);
   };
 }
+
+window.addEventListener("jukebox:notification", (event) => {
+  if (!currentUser) return;
+  showStatus(`Thông báo mới: ${event.detail?.title || "Ban Tổ Chức vừa cập nhật."}`);
+});
 
 $("#account-auth-login-tab").addEventListener("click", () => setAccountAuthMode("login"));
 $("#account-auth-register-tab").addEventListener("click", () => setAccountAuthMode("register"));

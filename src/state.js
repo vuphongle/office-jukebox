@@ -311,6 +311,17 @@ export class JukeboxState {
     return this.advance(this.nowPlaying?.videoId, { finishReason: "skipped", playedSeconds });
   }
 
+  // Song owners may skip only their exact current item. The server passes both
+  // identities when available; either matching identity is sufficient for
+  // compatibility with anonymous requests created on the same device.
+  skipOwned(id, requesterId, userId = null) {
+    if (typeof id !== "string" || !this.nowPlaying || this.nowPlaying.id !== id) return null;
+    const ownsByUser = !!userId && this.nowPlaying.addedByUserId === userId;
+    const ownsByClient = !!requesterId && this.nowPlaying.requesterId === requesterId;
+    if (!ownsByUser && !ownsByClient) return null;
+    return this.advance(this.nowPlaying.videoId, { finishReason: "owner_skipped" });
+  }
+
   // Remove an upcoming item by id (host control).
   remove(id) {
     const index = this.queue.findIndex((item) => item.id === id);

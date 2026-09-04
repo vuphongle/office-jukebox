@@ -2,12 +2,12 @@
 // Rank XP is intentionally separate from wallet points used for voting.
 
 export const RANK_LEVELS = Object.freeze([
-  Object.freeze({ level: 1, minXp: 0, name: "Người mới bắt nhịp", badge: "headphones-blue" }),
-  Object.freeze({ level: 2, minXp: 100, name: "Bắt nhịp", badge: "pulse" }),
-  Object.freeze({ level: 3, minXp: 300, name: "Tạo vibe", badge: "flame" }),
-  Object.freeze({ level: 4, minXp: 700, name: "DJ cộng đồng", badge: "turntable" }),
-  Object.freeze({ level: 5, minXp: 1_500, name: "Headliner", badge: "stage-star" }),
-  Object.freeze({ level: 6, minXp: 3_000, name: "Huyền thoại", badge: "neon-crown" }),
+  Object.freeze({ level: 1, minXp: 0, name: "Người mới bắt nhịp", badge: "headphones-blue", checkinPoints: 1 }),
+  Object.freeze({ level: 2, minXp: 100, name: "Bắt nhịp", badge: "pulse", checkinPoints: 2 }),
+  Object.freeze({ level: 3, minXp: 300, name: "Tạo vibe", badge: "flame", checkinPoints: 3 }),
+  Object.freeze({ level: 4, minXp: 700, name: "DJ cộng đồng", badge: "turntable", checkinPoints: 4 }),
+  Object.freeze({ level: 5, minXp: 1_500, name: "Headliner", badge: "stage-star", checkinPoints: 5 }),
+  Object.freeze({ level: 6, minXp: 3_000, name: "Huyền thoại", badge: "neon-crown", checkinPoints: 6 }),
 ]);
 
 export const RANK_XP_DEFAULTS = Object.freeze({

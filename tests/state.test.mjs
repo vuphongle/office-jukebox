@@ -1,7 +1,11 @@
-import test from "node:test";
+import test, { afterEach } from "node:test";
 import assert from "node:assert/strict";
 
+import { closeDb, initDb } from "../src/db.js";
+import { UserRepository } from "../src/repositories/userRepository.js";
 import { JukeboxState } from "../src/state.js";
+
+afterEach(() => closeDb());
 
 function createState() {
   const state = new JukeboxState();
@@ -146,4 +150,42 @@ test("playback tokens reject delayed same-player events after a queue transition
   assert.equal(state.advance(second.videoId, { playbackToken: first.playbackToken }), null);
   assert.equal(state.nowPlaying, second);
   assert.equal(state.advance(null, { playbackToken: second.playbackToken }).finishedItem, second);
+});
+
+test("song owner can skip only their current song without receiving a vote refund", () => {
+  const db = initDb({ dbPath: ":memory:" });
+  const userRepo = new UserRepository(db);
+  const state = new JukeboxState(db);
+  const owner = userRepo.create({ username: "owner", passwordHash: "p" });
+  const other = userRepo.create({ username: "other", passwordHash: "p" });
+  const voter = userRepo.create({ username: "skip-voter", passwordHash: "p" });
+  userRepo.updatePoints(voter.id, 1, { type: "admin_adjustment", reason: "test" });
+
+  const intro = state.add({ videoId: "intro", title: "Intro" }).item;
+  const ownerSong = state.add({
+    videoId: "owner-song",
+    title: "Owner song",
+    requesterId: "owner-client",
+    userId: owner.id,
+  }).item;
+  const laterSong = state.add({ videoId: "later-song", title: "Later song" }).item;
+  state.vote(ownerSong.id, voter.id);
+  state.advance(intro.videoId);
+
+  const balanceBeforeSkip = userRepo.findById(voter.id).points_balance;
+  assert.equal(state.skipOwned(ownerSong.id, "other-client", other.id), null);
+  assert.equal(state.nowPlaying.id, ownerSong.id);
+  assert.equal(state.skipOwned(laterSong.id, "owner-client", owner.id), null);
+  assert.equal(state.nowPlaying.id, ownerSong.id);
+
+  const transition = state.skipOwned(ownerSong.id, "owner-client", owner.id);
+  assert.equal(transition.finishReason, "owner_skipped");
+  assert.equal(transition.finishedItem.id, ownerSong.id);
+  assert.equal(transition.nextItem.id, laterSong.id);
+  assert.equal(userRepo.findById(voter.id).points_balance, balanceBeforeSkip);
+  assert.equal(db.query("SELECT COUNT(*) AS count FROM point_ledger WHERE type = 'vote_refund'").get().count, 0);
+
+  const row = db.query("SELECT status, finish_reason FROM queue_items WHERE id = ?").get(ownerSong.id);
+  assert.equal(row.status, "played");
+  assert.equal(row.finish_reason, "owner_skipped");
 });

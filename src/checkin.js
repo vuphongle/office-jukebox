@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { rankForXp } from "./rank.js";
 
 export const DEFAULT_TIMEZONE = "Asia/Ho_Chi_Minh";
 
@@ -46,6 +47,9 @@ export function performCheckin(db, userId, { timezone = null, now = new Date() }
       throw new Error("Tài khoản không hợp lệ hoặc bị khóa");
     }
 
+    const rankProfile = db.query("SELECT xp_total FROM user_rank_profiles WHERE user_id = ?").get(userId);
+    const rank = rankForXp(rankProfile?.xp_total || 0);
+
     // Check if already checked in today (Idempotent check)
     const existingCheckin = db
       .query("SELECT * FROM checkins WHERE user_id = ? AND local_date = ?")
@@ -57,9 +61,15 @@ export function performCheckin(db, userId, { timezone = null, now = new Date() }
         alreadyCheckedIn: true,
         streak: user.current_streak,
         pointsAwarded: 0,
+        basePoints: rank.checkinPoints,
         newBalance: user.points_balance,
         isMilestone: false,
         localDate: today,
+        rank: {
+          level: rank.level,
+          name: rank.name,
+          checkinPoints: rank.checkinPoints,
+        },
       };
     }
 
@@ -70,7 +80,7 @@ export function performCheckin(db, userId, { timezone = null, now = new Date() }
     }
 
     const { bonus: bonusPoints, isMilestone } = calculateMilestoneBonus(streakAfter);
-    const basePoints = 1;
+    const basePoints = rank.checkinPoints;
     const totalAwarded = basePoints + bonusPoints;
     const newBalance = user.points_balance + totalAwarded;
     const nowIso = now.toISOString();
@@ -118,6 +128,11 @@ export function performCheckin(db, userId, { timezone = null, now = new Date() }
       newBalance,
       isMilestone,
       localDate: today,
+      rank: {
+        level: rank.level,
+        name: rank.name,
+        checkinPoints: rank.checkinPoints,
+      },
     };
   });
 

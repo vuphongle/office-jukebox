@@ -12,6 +12,7 @@ let dashboardStarted = false;
 let usersPage = 1;
 let dropsPage = 1;
 let ledgerPage = 1;
+let notificationsPage = 1;
 
 // --- Initialization and tab navigation ------------------------------------
 document.addEventListener("DOMContentLoaded", async () => {
@@ -36,9 +37,14 @@ function startDashboard() {
   initUsersTab();
   initDropsTab();
   initLedgerTab();
+  initNotificationsTab();
   initFeedbackTab();
   initWebSocket();
-  const requestedTab = location.hash === "#feedback" ? "tab-feedback" : "tab-users";
+  const requestedTab = location.hash === "#feedback"
+    ? "tab-feedback"
+    : location.hash === "#notifications"
+      ? "tab-notifications"
+      : "tab-users";
   selectTab(requestedTab);
 }
 
@@ -131,6 +137,7 @@ function selectTab(tabId) {
   if (currentTab === "tab-users") loadUsers();
   else if (currentTab === "tab-drops") loadDrops();
   else if (currentTab === "tab-ledger") loadLedger();
+  else if (currentTab === "tab-notifications") loadNotifications();
   else if (currentTab === "tab-feedback") {
     loadFeedback();
     loadChatAiSettings();
@@ -533,7 +540,75 @@ async function loadLedger() {
   }
 }
 
-// --- TAB 4: FEEDBACK & CHAT -----------------------------------------------
+// --- TAB 4: NOTIFICATIONS --------------------------------------------------
+
+function initNotificationsTab() {
+  document.getElementById("notification-form")?.addEventListener("submit", handleNotificationSubmit);
+  document.getElementById("notification-refresh-btn")?.addEventListener("click", loadNotifications);
+}
+
+async function loadNotifications() {
+  const tbody = document.getElementById("notifications-tbody");
+  if (!tbody) return;
+
+  try {
+    const res = await fetch(`/api/admin/notifications?page=${notificationsPage}&limit=20`);
+    const data = await res.json();
+    if (!res.ok || !data.ok) throw new Error(data.reason || "Không thể tải lịch sử thông báo.");
+    renderPagination("notifications-pagination", notificationsPage, data.total || 0, 20, (page) => {
+      notificationsPage = page;
+      loadNotifications();
+    });
+    if (!Array.isArray(data.items) || !data.items.length) {
+      tbody.innerHTML = '<tr><td colspan="4" class="text-center">Chưa có thông báo nào được gửi</td></tr>';
+      return;
+    }
+    tbody.innerHTML = data.items.map((item) => `
+      <tr>
+        <td class="notification-history-copy"><strong>${escapeHtml(item.title)}</strong><small>${escapeHtml(item.body)}</small></td>
+        <td>${Number(item.recipientCount || 0).toLocaleString("vi-VN")}</td>
+        <td>${Number(item.readCount || 0).toLocaleString("vi-VN")}</td>
+        <td><time datetime="${escapeHtml(item.createdAt || "")}">${escapeHtml(formatTime(item.createdAt))}</time></td>
+      </tr>
+    `).join("");
+  } catch (err) {
+    tbody.innerHTML = `<tr><td colspan="4" class="text-center">Lỗi: ${escapeHtml(err.message)}</td></tr>`;
+  }
+}
+
+async function handleNotificationSubmit(event) {
+  event.preventDefault();
+  const form = event.currentTarget;
+  if (!form.reportValidity()) return;
+  const button = document.getElementById("notification-submit");
+  const originalLabel = button.textContent;
+  button.disabled = true;
+  button.textContent = "Đang gửi…";
+  try {
+    const res = await fetch("/api/admin/notifications", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        title: document.getElementById("notification-title").value.trim(),
+        kind: document.getElementById("notification-kind").value,
+        body: document.getElementById("notification-body").value.trim(),
+      }),
+    });
+    const data = await res.json();
+    if (!res.ok || !data.ok) throw new Error(data.reason || "Không thể gửi thông báo.");
+    form.reset();
+    notificationsPage = 1;
+    await loadNotifications();
+    showStatus(`Đã gửi thông báo đến ${Number(data.recipientCount || 0).toLocaleString("vi-VN")} user active.`);
+  } catch (error) {
+    showStatus(error.message || "Không thể gửi thông báo.", true);
+  } finally {
+    button.disabled = false;
+    button.textContent = originalLabel;
+  }
+}
+
+// --- TAB 5: FEEDBACK & CHAT -----------------------------------------------
 
 function initFeedbackTab() {
   document.getElementById("feedback-toggle")?.addEventListener("click", toggleFeedbackSetting);

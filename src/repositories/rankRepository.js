@@ -28,6 +28,7 @@ function mapProfile(row) {
     rankLevel: rank.level,
     rankName: rank.name,
     badge: rank.badge,
+    checkinPoints: rank.checkinPoints,
     minXp: rank.minXp,
     nextLevel: rank.nextLevel,
     nextMinXp: rank.nextMinXp,
@@ -257,6 +258,35 @@ export class RankRepository {
       )
       .all(userId, boundedLimit, boundedOffset)
       .map(mapActivity);
+  }
+
+  listPublicLeaderboard({ limit = 10, offset = 0 } = {}) {
+    const boundedLimit = Math.min(10, Math.max(1, Number(limit) || 10));
+    const boundedOffset = Math.max(0, Number(offset) || 0);
+    const rows = this.db
+      .query(
+        `SELECT u.display_name, COALESCE(urp.xp_total, 0) AS xp_total
+         FROM users u
+         LEFT JOIN user_rank_profiles urp ON urp.user_id = u.id
+         WHERE u.status = 'active' AND u.role = 'user'
+         ORDER BY COALESCE(urp.xp_total, 0) DESC, u.display_name COLLATE NOCASE ASC, u.id ASC
+         LIMIT ? OFFSET ?`
+      )
+      .all(boundedLimit, boundedOffset);
+
+    return rows.map((row, index) => {
+      const rank = rankForXp(row.xp_total);
+      return {
+        position: boundedOffset + index + 1,
+        displayName: row.display_name,
+        xpTotal: rank.xp,
+        rank: {
+          level: rank.level,
+          name: rank.name,
+          badge: rank.badge,
+        },
+      };
+    });
   }
 
   listLeaderboard({ eventId = null, limit = 50, offset = 0 } = {}) {

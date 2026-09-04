@@ -65,6 +65,9 @@
       <button id="tab-btn-ledger" class="tab-btn" role="tab" aria-selected="false" aria-controls="tab-ledger" data-tab="tab-ledger">
         Lịch sử Ledger
       </button>
+      <button id="tab-btn-notifications" class="tab-btn" role="tab" aria-selected="false" aria-controls="tab-notifications" data-tab="tab-notifications">
+        Thông báo
+      </button>
       <button id="tab-btn-feedback" class="tab-btn" role="tab" aria-selected="false" aria-controls="tab-feedback" data-tab="tab-feedback">
         Góp ý & Chat
       </button>
@@ -215,7 +218,69 @@
       </div>
     </section>
 
-    <!-- TAB 4: FEEDBACK & CHAT -->
+    <!-- TAB 4: NOTIFICATIONS -->
+    <section id="tab-notifications" class="tab-pane" role="tabpanel" aria-labelledby="tab-btn-notifications">
+      <div class="grid-2col">
+        <div class="panel-card">
+          <div class="panel-header">
+            <div>
+              <p class="eyebrow">Gửi cập nhật</p>
+              <h2>Thông báo đến thành viên</h2>
+            </div>
+            <span class="badge badge-active">User active</span>
+          </div>
+          <p class="card-desc">Thông báo được gửi vào hòm thư của tất cả tài khoản đang hoạt động tại thời điểm gửi.</p>
+          <form id="notification-form" class="admin-form notification-form">
+            <div class="form-group">
+              <label for="notification-title">Tiêu đề *</label>
+              <input id="notification-title" type="text" maxlength="120" required placeholder="Ví dụ: Jukebox đã có tính năng mới" />
+            </div>
+            <div class="form-group">
+              <label for="notification-kind">Loại thông báo</label>
+              <select id="notification-kind">
+                <option value="info">Thông tin chung</option>
+                <option value="maintenance">Bảo trì / Sửa lỗi</option>
+                <option value="feature">Tính năng mới</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label for="notification-body">Nội dung *</label>
+              <textarea id="notification-body" maxlength="2000" rows="7" required placeholder="Viết nội dung cập nhật cho thành viên…"></textarea>
+              <span class="form-hint">Tối đa 2.000 ký tự · nội dung sẽ hiển thị trong hòm thư.</span>
+            </div>
+            <button id="notification-submit" type="submit" class="submit-btn gold">Gửi đến user active</button>
+          </form>
+        </div>
+
+        <div class="panel-card">
+          <div class="panel-header">
+            <div>
+              <p class="eyebrow">Đã gửi</p>
+              <h2>Lịch sử thông báo</h2>
+            </div>
+            <button id="notification-refresh-btn" class="action-btn" type="button">Làm mới</button>
+          </div>
+          <div class="table-responsive notification-history-scroll">
+            <table class="data-table notification-history-table">
+              <thead>
+                <tr>
+                  <th>Thông báo</th>
+                  <th>Đã nhận</th>
+                  <th>Đã đọc</th>
+                  <th>Thời gian</th>
+                </tr>
+              </thead>
+              <tbody id="notifications-tbody">
+                <tr><td colspan="4" class="text-center">Đang tải lịch sử…</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="pagination" id="notifications-pagination"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- TAB 5: FEEDBACK & CHAT -->
     <section id="tab-feedback" class="tab-pane" role="tabpanel" aria-labelledby="tab-btn-feedback">
       <div class="feedback-controls-bar">
         <div class="stats-grid">

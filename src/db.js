@@ -47,6 +47,26 @@ export function initDb({ dbPath = DEFAULT_DB_PATH, adminUser = process.env.ADMIN
     );
     CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON sessions(user_id);
 
+    CREATE TABLE IF NOT EXISTS notifications (
+      id TEXT PRIMARY KEY,
+      title TEXT NOT NULL,
+      body TEXT NOT NULL,
+      kind TEXT NOT NULL DEFAULT 'info' CHECK(kind IN ('info', 'maintenance', 'feature')),
+      created_by_user_id TEXT NOT NULL REFERENCES users(id),
+      created_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_notifications_created_at
+      ON notifications(created_at DESC, id DESC);
+
+    CREATE TABLE IF NOT EXISTS notification_recipients (
+      notification_id TEXT NOT NULL REFERENCES notifications(id) ON DELETE CASCADE,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      read_at TEXT,
+      PRIMARY KEY(notification_id, user_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_notification_recipients_user_read
+      ON notification_recipients(user_id, read_at, notification_id);
+
     CREATE TABLE IF NOT EXISTS point_ledger (
       id TEXT PRIMARY KEY,
       user_id TEXT NOT NULL REFERENCES users(id),

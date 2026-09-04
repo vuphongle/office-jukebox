@@ -86,6 +86,38 @@ button:focus-visible, a:focus-visible, input:focus-visible {
 .back-link:hover { color: var(--text-high); }
 .brand-mark { color: var(--text-high); font: 700 15px/1 var(--serif); }
 .brand-mark img { width: 38px; height: 38px; object-fit: contain; }
+.account-topbar-actions { display: flex; align-items: center; gap: 8px; }
+.notification-bell {
+  position: relative;
+  width: 44px;
+  height: 44px;
+  display: inline-grid;
+  place-items: center;
+  flex: 0 0 auto;
+  border: 1px solid var(--border);
+  border-radius: 13px;
+  background: var(--surface-soft);
+  color: var(--gold);
+  cursor: pointer;
+}
+.notification-bell:hover { background: var(--surface-hover); border-color: oklch(80% .14 85 / .5); }
+.notification-bell:disabled { cursor: default; opacity: .55; }
+.notification-count {
+  position: absolute;
+  top: -4px;
+  right: -5px;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 4px;
+  border: 2px solid var(--bg-b);
+  border-radius: 999px;
+  background: var(--coral);
+  color: var(--text-high);
+  font-size: 10px;
+  font-weight: 800;
+  line-height: 14px;
+  text-align: center;
+}
 
 .account-shell {
   width: min(1120px, calc(100% - 32px));
@@ -335,6 +367,26 @@ button:focus-visible, a:focus-visible, input:focus-visible {
 .milestone span { margin-top: 2px; color: var(--text-muted); font-size: 12px; }
 .milestone.achieved { border-color: oklch(76% 0.13 150 / .38); background: oklch(76% 0.13 150 / .09); }
 .milestone.achieved strong { color: var(--success); }
+.account-checkin-reward { display: flex; align-items: center; gap: 10px; margin: 0 0 12px; padding: 11px 12px; border: 1px solid oklch(80% 0.14 85 / .3); border-radius: 14px; background: oklch(80% 0.14 85 / .08); }
+.account-checkin-reward > span { font-size: 24px; line-height: 1; }
+.account-checkin-reward > div { min-width: 0; }
+.account-checkin-reward strong, .account-checkin-reward span { display: block; overflow-wrap: anywhere; }
+.account-checkin-reward strong { color: var(--text-high); font-size: 13px; }
+.account-checkin-reward span { margin-top: 2px; color: var(--text-muted); font-size: 12px; }
+.account-rank-benefits { margin-bottom: 16px; }
+.rank-benefits-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 8px; }
+.rank-benefits-head strong { color: var(--text-high); font-size: 12px; }
+.rank-benefits-head span { color: var(--text-muted); font-size: 11px; font-variant-numeric: tabular-nums; }
+.rank-benefits-list { max-height: 218px; display: grid; gap: 5px; overflow-y: auto; padding-right: 3px; overscroll-behavior: contain; }
+.rank-benefit-row { min-width: 0; display: grid; grid-template-columns: 28px minmax(0, 1fr) auto; align-items: center; gap: 8px; padding: 7px 8px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface-soft); }
+.rank-benefit-row.current { border-color: var(--gold); background: oklch(80% 0.14 85 / .12); }
+.rank-benefit-icon { font-size: 17px; line-height: 1; text-align: center; }
+.rank-benefit-copy { min-width: 0; }
+.rank-benefit-copy strong, .rank-benefit-copy small { display: block; overflow-wrap: anywhere; }
+.rank-benefit-copy strong { color: var(--text-high); font-size: 11px; }
+.rank-benefit-copy small { margin-top: 1px; color: var(--text-muted); font-size: 10px; }
+.rank-benefit-reward { color: var(--success); font-size: 11px; font-weight: 800; white-space: nowrap; }
+.rank-benefits-state { display: block; padding: 12px; border-radius: 10px; background: var(--surface-soft); color: var(--text-muted); font-size: 12px; text-align: center; }
 .point-drop-card { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; gap: 11px; margin-top: 14px; padding: 13px; border: 1px solid oklch(80% 0.14 85 / .36); border-radius: 15px; background: oklch(80% 0.14 85 / .08); }
 .drop-icon { width: 40px; height: 40px; display: grid; place-items: center; border-radius: 12px; background: oklch(80% 0.14 85 / .12); color: var(--gold); }
 .point-drop-card div { min-width: 0; }
@@ -410,6 +462,58 @@ button:focus-visible, a:focus-visible, input:focus-visible {
 @keyframes claim-button-spin { to { transform: translateX(-50%) rotate(360deg); } }
 .logout-icon { flex: 0 0 auto; }
 .logout-button.is-loading .logout-icon { display: none; }
+
+.notification-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  background: oklch(5% .02 325 / .76);
+  backdrop-filter: blur(5px);
+}
+.notification-dialog {
+  width: min(480px, 100%);
+  max-height: min(78dvh, 640px);
+  display: flex;
+  flex-direction: column;
+  padding: 22px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface-raised);
+  box-shadow: var(--shadow-card);
+}
+.notification-dialog-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 14px; }
+.notification-dialog-head h2 { margin: 0; color: var(--text-high); font: 700 23px/1.2 var(--serif); }
+.notification-close { width: 44px; height: 44px; border: 0; border-radius: 11px; background: transparent; color: var(--text-muted); font-size: 25px; cursor: pointer; }
+.notification-close:hover { background: var(--surface-soft); color: var(--text-high); }
+.notification-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 15px 0 10px; padding-bottom: 10px; border-bottom: 1px solid var(--border); }
+.notification-toolbar > span { color: var(--text-muted); font-size: 12px; font-weight: 700; }
+.notification-toolbar button, .notification-retry { min-height: 34px; padding: 0 10px; border: 1px solid oklch(80% .14 85 / .35); border-radius: 9px; background: oklch(80% .14 85 / .08); color: var(--gold); font-size: 11px; font-weight: 800; cursor: pointer; }
+.notification-toolbar button:hover, .notification-retry:hover { background: oklch(80% .14 85 / .16); }
+.notification-toolbar button:disabled { cursor: default; opacity: .45; }
+.notification-list { min-height: 100px; max-height: min(58dvh, 470px); display: grid; gap: 8px; overflow-y: auto; padding: 2px 3px 2px 0; overscroll-behavior: contain; }
+.notification-item { width: 100%; display: block; padding: 12px 13px; border: 1px solid var(--border); border-radius: 13px; background: var(--surface-soft); color: var(--text); text-align: left; cursor: pointer; }
+.notification-item:hover { background: var(--surface-hover); border-color: oklch(80% .14 85 / .4); }
+.notification-item.is-unread { border-color: oklch(80% .14 85 / .42); background: oklch(80% .14 85 / .08); }
+.notification-item.is-pending { cursor: wait; opacity: .65; }
+.notification-item-meta { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 6px; }
+.notification-item-meta time { color: var(--text-faint); font-size: 10px; }
+.notification-kind { display: inline-flex; padding: 3px 7px; border-radius: 999px; background: var(--surface-soft); color: var(--text-muted); font-size: 10px; font-weight: 800; }
+.notification-kind.kind-maintenance { background: oklch(72% .16 35 / .13); color: var(--coral); }
+.notification-kind.kind-feature { background: oklch(76% .13 150 / .13); color: var(--success); }
+.notification-item strong, .notification-item > span:last-child { display: block; overflow-wrap: anywhere; }
+.notification-item strong { color: var(--text-high); font-size: 13px; line-height: 1.35; }
+.notification-item > span:last-child { margin-top: 4px; color: var(--text-muted); font-size: 12px; line-height: 1.45; white-space: pre-wrap; }
+.notification-state { display: grid; place-items: center; gap: 5px; min-height: 120px; padding: 20px 12px; color: var(--text-muted); text-align: center; font-size: 13px; }
+.notification-state strong { color: var(--text-high); font-size: 14px; }
+.notification-state p { max-width: 34ch; margin: 0; }
+.notification-state .notification-retry { margin-top: 5px; }
+.notification-error { display: grid; gap: 5px; padding: 10px 11px; border: 1px solid oklch(72% .16 35 / .35); border-radius: 11px; background: oklch(72% .16 35 / .1); color: var(--text-muted); font-size: 11px; line-height: 1.4; overflow-wrap: anywhere; }
+.notification-error strong { color: var(--coral); font-size: 12px; }
+.notification-error .notification-retry { justify-self: start; }
 
 @media (min-width: 720px) {
   .account-shell, .account-topbar { width: min(1120px, calc(100% - 48px)); }

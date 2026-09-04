@@ -45,6 +45,19 @@
 
   <div id="now-playing" class="now-playing hidden"></div>
 
+  <section id="leaderboard-section" class="leaderboard-section" aria-labelledby="leaderboard-title">
+    <div class="leaderboard-head">
+      <div>
+        <h2 id="leaderboard-title">Bảng xếp hạng <small>Vinh danh thành viên</small></h2>
+        <p>Tích lũy XP từ những đóng góp tích cực cho sự kiện.</p>
+      </div>
+      <button id="leaderboard-refresh" class="leaderboard-refresh" type="button" aria-label="Làm mới bảng xếp hạng">↻</button>
+    </div>
+    <div id="leaderboard-status" class="leaderboard-status" role="status" aria-live="polite">Đang tải bảng xếp hạng…</div>
+    <div id="leaderboard-podium" class="leaderboard-podium" aria-label="Ba vị trí dẫn đầu"></div>
+    <div id="leaderboard-list" class="leaderboard-list" aria-label="Các vị trí từ 4 đến 10"></div>
+  </section>
+
   <div class="name-wrap">
     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8.2" r="3.4"></circle><path d="M4.8 20c1.3-4.2 4.2-6.3 7.2-6.3s5.9 2.1 7.2 6.3"></path></svg>
     <input id="name" type="text" placeholder="Tên order (không bắt buộc)" autocomplete="off" maxlength="40" />
@@ -252,6 +265,24 @@
           </div>
         </div>
 
+        <div class="checkin-rank-summary">
+          <span id="checkin-rank-badge" class="checkin-rank-badge" aria-hidden="true">🎧</span>
+          <div>
+            <strong id="checkin-rank-name">Người mới bắt nhịp</strong>
+            <span id="checkin-rank-reward">Hạng hiện tại · nhận 1 điểm cơ bản mỗi lần điểm danh</span>
+          </div>
+        </div>
+
+        <div class="rank-benefits" aria-labelledby="checkin-rank-benefits-title">
+          <div class="rank-benefits-head">
+            <strong id="checkin-rank-benefits-title">Quyền lợi theo hạng</strong>
+            <span id="checkin-rank-progress">0 XP</span>
+          </div>
+          <div id="checkin-rank-list" class="rank-benefits-list" aria-live="polite">
+            <span class="rank-benefits-state">Đang tải quyền lợi…</span>
+          </div>
+        </div>
+
         <!-- Milestones list -->
         <div class="checkin-milestones">
           <div class="milestone-step" id="ms-3">
@@ -279,7 +310,26 @@
     </div>
   </div>
 
+  <!-- MODAL: In-app notifications -->
+  <div id="notification-modal" class="guest-modal-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="notification-modal-title">
+    <div class="guest-modal-card notification-modal-card">
+      <div class="guest-modal-head">
+        <div>
+          <p class="notification-eyebrow">Hộp thư cập nhật</p>
+          <h3 id="notification-modal-title">Thông báo</h3>
+        </div>
+        <button class="modal-x-btn" type="button" data-notification-close aria-label="Đóng thông báo">&times;</button>
+      </div>
+      <div class="notification-toolbar">
+        <span id="notification-summary">Tất cả đã đọc</span>
+        <button type="button" data-notification-read-all>Đánh dấu tất cả đã đọc</button>
+      </div>
+      <div id="notification-list" class="notification-list" role="log" aria-live="polite" aria-relevant="additions"></div>
+    </div>
+  </div>
+
   <script src="/auth-utils.js"></script>
+  <script src="/notifications.js"></script>
   <script src="/guest.js"></script>
 </body>
 </html>

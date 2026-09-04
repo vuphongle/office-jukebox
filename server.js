@@ -50,7 +50,14 @@ import { DropRepository } from "./src/repositories/dropRepository.js";
 import { ChatRepository } from "./src/repositories/chatRepository.js";
 import { ChatAiMemoryRepository } from "./src/repositories/chatAiMemoryRepository.js";
 import { RankRepository } from "./src/repositories/rankRepository.js";
-import { isQualifiedPlay } from "./src/rank.js";
+import {
+  NotificationRepository,
+  NOTIFICATION_BODY_MAX_LENGTH,
+  NOTIFICATION_KINDS,
+  NOTIFICATION_TITLE_MAX_LENGTH,
+  NOTIFICATION_USER_LIMIT,
+} from "./src/repositories/notificationRepository.js";
+import { RANK_LEVELS, isQualifiedPlay } from "./src/rank.js";
 import {
   createAuthMiddleware,
   hashPasswordAsync,
@@ -101,6 +108,7 @@ const dropRepo = new DropRepository(db);
 const chatRepo = new ChatRepository(db);
 const chatAiMemoryRepo = new ChatAiMemoryRepository(db);
 const rankRepo = new RankRepository(db);
+const notificationRepo = new NotificationRepository(db);
 chatRepo.prune();
 sessionRepo.pruneExpired();
 const sessionPruneTimer = setInterval(() => sessionRepo.pruneExpired(), 6 * 60 * 60 * 1000);
@@ -133,7 +141,19 @@ function publicRank(userId) {
     nextLevel: rank.nextLevel,
     nextMinXp: rank.nextMinXp,
     xpToNext: rank.xpToNext,
+    checkinPoints: rank.checkinPoints,
   };
+}
+
+function publicRankBenefits() {
+  return RANK_LEVELS.map((rank) => ({
+    level: rank.level,
+    minXp: rank.minXp,
+    name: rank.name,
+    badge: RANK_BADGE_ICONS[rank.badge] || "🎧",
+    badgeId: rank.badge,
+    checkinPoints: rank.checkinPoints,
+  }));
 }
 
 function publicUser(user) {
@@ -388,6 +408,12 @@ const feedbackSubmitLimit = createFixedWindowRateLimiter({
   key: (req) => getClientIp(req, TRUST_PROXY),
   reason: "Bạn vừa gửi góp ý. Vui lòng thử lại sau ít phút.",
 });
+const notificationSendLimit = createFixedWindowRateLimiter({
+  windowMs: 60 * 1000,
+  max: 10,
+  key: (req) => req.user?.id,
+  reason: "Bạn đã gửi quá nhiều thông báo. Vui lòng thử lại sau.",
+});
 
 app.post("/api/auth/register", registerIpLimit, registerGlobalLimit, async (req, res) => {
   const { username, password, displayName } = req.body || {};
@@ -436,6 +462,7 @@ app.post("/api/auth/register", registerIpLimit, registerGlobalLimit, async (req,
         role: user.role,
         pointsBalance: user.points_balance,
         currentStreak: user.current_streak,
+        unreadNotificationCount: notificationRepo.getUnreadCount(user.id),
         rank: publicRank(user.id),
       },
     });
@@ -477,6 +504,7 @@ app.post("/api/auth/login", loginIpLimit, loginUsernameLimit, async (req, res) =
         role: user.role,
         pointsBalance: user.points_balance,
         currentStreak: user.current_streak,
+        unreadNotificationCount: notificationRepo.getUnreadCount(user.id),
         rank: publicRank(user.id),
       },
     });
@@ -492,6 +520,14 @@ app.post("/api/auth/logout", (req, res) => {
   }
   clearSessionCookie(res, req);
   res.json({ ok: true });
+});
+
+app.get("/api/rank/benefits", publicReadLimit, (_req, res) => {
+  res.json({ ok: true, benefits: publicRankBenefits() });
+});
+
+app.get("/api/rank/leaderboard", publicReadLimit, (_req, res) => {
+  res.json({ ok: true, leaderboard: rankRepo.listPublicLeaderboard({ limit: 10 }) });
 });
 
 app.get("/api/me", (req, res) => {
@@ -515,6 +551,7 @@ app.get("/api/me", (req, res) => {
       status: req.user.status,
       pointsBalance: req.user.pointsBalance,
       currentStreak: req.user.currentStreak,
+      unreadNotificationCount: notificationRepo.getUnreadCount(req.user.id),
       hasCheckedInToday,
       activeClaimableDrop: activeDrop && !alreadyClaimedDrop ? { id: activeDrop.id, title: activeDrop.title, points: activeDrop.points } : null,
       votedQueueItemIds: queueRepo.listActiveVoteItemIds(req.user.id),
@@ -531,6 +568,34 @@ app.get("/api/me/rank/activity", requireAuth, (req, res) => {
   const { page, limit, offset } = parsePagination(req.query);
   const activity = rankRepo.listActivity(req.user.id, { limit, offset });
   res.json({ ok: true, page, limit, activity });
+});
+
+app.get("/api/me/notifications", requireAuth, (req, res) => {
+  const { page, limit, offset } = parsePagination(req.query, {
+    defaultLimit: NOTIFICATION_USER_LIMIT,
+    maxLimit: NOTIFICATION_USER_LIMIT,
+  });
+  const result = notificationRepo.listForUser(req.user.id, { limit, offset });
+  res.json({ ok: true, page, limit, ...result });
+});
+
+app.post("/api/me/notifications/read-all", requireAuth, (req, res) => {
+  const markedCount = notificationRepo.markAllRead(req.user.id);
+  const unreadCount = notificationRepo.getUnreadCount(req.user.id);
+  notifyUserNotificationsUpdated(req.user.id, unreadCount);
+  res.json({ ok: true, markedCount, unreadCount });
+});
+
+app.post("/api/me/notifications/:id/read", requireAuth, (req, res) => {
+  const notificationId = typeof req.params.id === "string" ? req.params.id.trim() : "";
+  if (!notificationId || notificationId.length > 100) {
+    return res.status(404).json({ ok: false, reason: "Không tìm thấy thông báo." });
+  }
+  const marked = notificationRepo.markRead(notificationId, req.user.id);
+  if (!marked) return res.status(404).json({ ok: false, reason: "Không tìm thấy thông báo chưa đọc." });
+  const unreadCount = notificationRepo.getUnreadCount(req.user.id);
+  notifyUserNotificationsUpdated(req.user.id, unreadCount);
+  res.json({ ok: true, unreadCount });
 });
 
 app.patch("/api/me/profile", requireAuth, (req, res) => {
@@ -892,6 +957,49 @@ app.get("/api/admin/rank/leaderboard", requireAdmin, (req, res) => {
   const eventId = (req.query.eventId || "").toString().trim() || null;
   const leaderboard = rankRepo.listLeaderboard({ eventId, limit, offset });
   res.json({ ok: true, page, limit, eventId, leaderboard });
+});
+
+app.post("/api/admin/notifications", requireAdmin, notificationSendLimit, (req, res) => {
+  const title = typeof req.body?.title === "string" ? req.body.title.trim() : "";
+  const body = typeof req.body?.body === "string" ? req.body.body.trim() : "";
+  const kind = typeof req.body?.kind === "string" ? req.body.kind.trim() : "info";
+  if (!title || title.length > NOTIFICATION_TITLE_MAX_LENGTH) {
+    return res.status(400).json({ ok: false, reason: `Tiêu đề phải từ 1 đến ${NOTIFICATION_TITLE_MAX_LENGTH} ký tự.` });
+  }
+  if (!body || body.length > NOTIFICATION_BODY_MAX_LENGTH) {
+    return res.status(400).json({ ok: false, reason: `Nội dung phải từ 1 đến ${NOTIFICATION_BODY_MAX_LENGTH} ký tự.` });
+  }
+  if (!NOTIFICATION_KINDS.includes(kind)) {
+    return res.status(400).json({ ok: false, reason: "Loại thông báo không hợp lệ." });
+  }
+
+  try {
+    const result = notificationRepo.createForActiveUsers({
+      title,
+      body,
+      kind,
+      createdByUserId: req.user.id,
+    });
+    for (const userId of result.recipientUserIds) {
+      notifyUserNotification(userId, result.notification);
+    }
+    res.json({
+      ok: true,
+      notification: result.notification,
+      recipientCount: result.recipientCount,
+    });
+  } catch (err) {
+    res.status(400).json({ ok: false, reason: err.message || "Không thể gửi thông báo." });
+  }
+});
+
+app.get("/api/admin/notifications", requireAdmin, (req, res) => {
+  const { page, limit, offset } = parsePagination(req.query, {
+    defaultLimit: NOTIFICATION_USER_LIMIT,
+    maxLimit: NOTIFICATION_USER_LIMIT,
+  });
+  const result = notificationRepo.listAdmin({ limit, offset });
+  res.json({ ok: true, page, limit, ...result });
 });
 
 app.post("/api/admin/users/:id/points", requireAdmin, (req, res) => {
@@ -1428,6 +1536,25 @@ function notifyUserRank(userId, rank) {
   }
 }
 
+function notifyUserNotification(userId, notification) {
+  const unreadCount = notificationRepo.getUnreadCount(userId);
+  const msg = JSON.stringify({ type: "notificationCreated", notification, unreadCount });
+  for (const client of wss.clients) {
+    if (client.readyState !== 1) continue;
+    const session = refreshSocketIdentity(client, sessionRepo);
+    if (session?.user_id === userId) client.send(msg);
+  }
+}
+
+function notifyUserNotificationsUpdated(userId, unreadCount = notificationRepo.getUnreadCount(userId)) {
+  const msg = JSON.stringify({ type: "notificationsUpdated", unreadCount });
+  for (const client of wss.clients) {
+    if (client.readyState !== 1) continue;
+    const session = refreshSocketIdentity(client, sessionRepo);
+    if (session?.user_id === userId) client.send(msg);
+  }
+}
+
 function recordRankChatActivity(message, userId) {
   if (!message || !userId) return;
   const normalizedText = String(message.text || "").trim().toLocaleLowerCase("vi-VN");
@@ -1611,6 +1738,21 @@ wss.on("connection", (ws, request) => {
           ok: removed,
           ...(removed ? {} : { reason: "Bài hát không còn trong hàng đợi hoặc không thuộc về bạn." }),
         }));
+        return;
+      }
+
+      if (msg.type === "skipOwn") {
+        const id = typeof msg.id === "string" ? msg.id : "";
+        const userId = currentSession?.user_id || null;
+        const requesterId = userId ? "" : (msg.clientId || "").toString().slice(0, 64);
+        const transition = state.skipOwned(id, requesterId, userId);
+        ws.send(JSON.stringify({
+          type: "skipOwnResult",
+          id,
+          ok: !!transition,
+          ...(transition ? {} : { reason: "Bài đang phát không thuộc về bạn hoặc đã chuyển bài." }),
+        }));
+        if (transition) settleRankTransition(transition);
         return;
       }
 
