@@ -58,9 +58,9 @@
       state.pendingIds.clear();
       close();
     } else {
-      const sameUserObject = state.user === nextUser;
+      const sameUser = state.user?.id === nextUser.id;
       state.user = nextUser;
-      if (!sameUserObject) {
+      if (!sameUser) {
         state.userGeneration += 1;
         state.items = [];
         state.unreadCount = 0;
@@ -70,11 +70,16 @@
         state.error = "";
         state.loading = false;
       }
-      if (!sameUserObject && Number.isSafeInteger(nextUser.unreadNotificationCount)) {
+      if (Number.isSafeInteger(nextUser.unreadNotificationCount)) {
         state.unreadCount = nextUser.unreadNotificationCount;
       }
+      if (!sameUser && state.open) load();
     }
     updateBell();
+  }
+
+  function isCurrentRequest(userId, generation) {
+    return state.user?.id === userId && state.userGeneration === generation;
   }
 
   function formatTime(value) {
@@ -180,7 +185,7 @@
     if (!state.user) return Promise.resolve();
     const generationAtStart = state.userGeneration;
     if (activeLoad?.generation === generationAtStart) return activeLoad.promise;
-    const userAtStart = state.user;
+    const userIdAtStart = state.user.id;
     const versionAtStart = state.notificationVersion;
     const request = { generation: generationAtStart, promise: null };
     activeLoad = request;
@@ -191,7 +196,7 @@
       try {
         const response = await fetch("/api/me/notifications?limit=20");
         const data = await response.json();
-        if (state.user !== userAtStart || state.userGeneration !== generationAtStart) return;
+        if (!isCurrentRequest(userIdAtStart, generationAtStart)) return;
         if (response.status === 401) {
           syncUser(null);
           return;
@@ -199,13 +204,17 @@
         if (!response.ok || !data.ok) throw new Error(data.reason || "Không thể tải thông báo.");
         applyLoadedItems(data.items, data.unreadCount, versionAtStart);
       } catch (error) {
-        state.error = error.message || "Không thể tải thông báo.";
+        if (isCurrentRequest(userIdAtStart, generationAtStart)) {
+          state.error = error.message || "Không thể tải thông báo.";
+        }
       } finally {
         if (activeLoad === request) {
+          activeLoad = null;
+        }
+        if (activeLoad !== request && isCurrentRequest(userIdAtStart, generationAtStart)) {
           state.loading = false;
           updateBell();
           render();
-          activeLoad = null;
         }
       }
     })();
@@ -217,14 +226,14 @@
     const item = state.items.find((entry) => entry.id === id);
     if (!item || item.read) return;
     state.pendingIds.add(id);
-    const userAtStart = state.user;
+    const userIdAtStart = state.user.id;
     const versionAtStart = state.notificationVersion;
     const generationAtStart = state.userGeneration;
     render();
     try {
       const response = await fetch(`/api/me/notifications/${encodeURIComponent(id)}/read`, { method: "POST" });
       const data = await response.json();
-      if (state.user !== userAtStart || state.userGeneration !== generationAtStart) return;
+      if (!isCurrentRequest(userIdAtStart, generationAtStart)) return;
       if (response.status === 401) {
         syncUser(null);
         return;
@@ -240,11 +249,15 @@
       state.error = "";
       await reloadAfterCurrent();
     } catch (error) {
-      state.error = error.message || "Không thể đánh dấu thông báo.";
+      if (isCurrentRequest(userIdAtStart, generationAtStart)) {
+        state.error = error.message || "Không thể đánh dấu thông báo.";
+      }
     } finally {
-      state.pendingIds.delete(id);
-      updateBell();
-      render();
+      if (isCurrentRequest(userIdAtStart, generationAtStart)) {
+        state.pendingIds.delete(id);
+        updateBell();
+        render();
+      }
     }
   }
 
@@ -252,13 +265,13 @@
     if (!state.user || !state.unreadCount) return;
     const button = document.querySelector("[data-notification-read-all]");
     if (button) button.disabled = true;
-    const userAtStart = state.user;
+    const userIdAtStart = state.user.id;
     const versionAtStart = state.notificationVersion;
     const generationAtStart = state.userGeneration;
     try {
       const response = await fetch("/api/me/notifications/read-all", { method: "POST" });
       const data = await response.json();
-      if (state.user !== userAtStart || state.userGeneration !== generationAtStart) return;
+      if (!isCurrentRequest(userIdAtStart, generationAtStart)) return;
       if (response.status === 401) {
         syncUser(null);
         return;
@@ -270,10 +283,14 @@
       state.error = "";
       await reloadAfterCurrent();
     } catch (error) {
-      state.error = error.message || "Không thể đánh dấu tất cả thông báo.";
+      if (isCurrentRequest(userIdAtStart, generationAtStart)) {
+        state.error = error.message || "Không thể đánh dấu tất cả thông báo.";
+      }
     } finally {
-      updateBell();
-      render();
+      if (isCurrentRequest(userIdAtStart, generationAtStart)) {
+        updateBell();
+        render();
+      }
     }
   }
 
