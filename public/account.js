@@ -42,6 +42,7 @@ async function loadRankBenefits() {
     .then((response) => response.json())
     .then((data) => {
       rankBenefits = data.ok && Array.isArray(data.benefits) ? data.benefits.slice(0, 6) : [];
+      if (currentUser) renderAccountRankBenefits(currentUser.rank);
       return rankBenefits;
     })
     .catch(() => {

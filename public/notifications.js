@@ -127,6 +127,12 @@
     return `<div class="notification-error" role="alert"><strong>Không thể cập nhật thông báo</strong><span>${escapeHtml(state.error)}</span><button class="notification-retry" type="button" data-notification-retry>Thử lại</button></div>`;
   }
 
+  async function reloadAfterCurrent() {
+    const pendingLoad = loadPromise;
+    if (pendingLoad) await pendingLoad;
+    await load();
+  }
+
   function render() {
     const list = document.getElementById("notification-list");
     const summary = document.getElementById("notification-summary");
@@ -216,6 +222,7 @@
       if (currentVersion === versionAtStart) setUnreadCount(data.unreadCount);
       else setUnreadCount(Math.max(Number(data.unreadCount) || 0, state.items.filter((entry) => !entry.read).length));
       state.error = "";
+      await reloadAfterCurrent();
     } catch (error) {
       state.error = error.message || "Không thể đánh dấu thông báo.";
     } finally {
@@ -242,9 +249,7 @@
         setUnreadCount(data.unreadCount);
       }
       state.error = "";
-      const inFlightLoad = loadPromise;
-      if (inFlightLoad) await inFlightLoad;
-      await load();
+      await reloadAfterCurrent();
     } catch (error) {
       state.error = error.message || "Không thể đánh dấu tất cả thông báo.";
     } finally {
