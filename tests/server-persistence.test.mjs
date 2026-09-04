@@ -217,3 +217,19 @@ test("successfully acknowledged feedback survives a server restart", async () =>
     rmSync(dataDir, { recursive: true, force: true });
   }
 });
+
+test("public rank benefits expose every check-in reward", async () => {
+  const dataDir = mkdtempSync(path.join(os.tmpdir(), "office-jukebox-rank-benefits-"));
+  const { child, baseUrl } = await startServer(dataDir);
+  try {
+    const response = await fetch(`${baseUrl}/api/rank/benefits`);
+    assert.equal(response.status, 200);
+    const payload = await response.json();
+    assert.deepEqual(payload.benefits.map((benefit) => benefit.checkinPoints), [1, 2, 3, 4, 5, 6]);
+    assert.equal(Object.hasOwn(payload.benefits[0], "minXp"), true);
+    assert.equal(Object.hasOwn(payload.benefits[0], "passwordHash"), false);
+  } finally {
+    await stopServer(child);
+    rmSync(dataDir, { recursive: true, force: true });
+  }
+});

@@ -1318,6 +1318,36 @@ header .desktop-intro { display: none; }
 .streak-desc h4 { font-size: 15px; color: var(--text-hi); margin-bottom: 4px; }
 .streak-desc p { font-size: 12px; color: var(--muted); line-height: 1.4; }
 
+.checkin-rank-summary {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 14px;
+  padding: 12px 14px;
+  border: 1px solid oklch(80% 0.14 85 / 0.3);
+  border-radius: 14px;
+  background: oklch(80% 0.14 85 / 0.08);
+}
+.checkin-rank-badge { font-size: 27px; line-height: 1; }
+.checkin-rank-summary > div { min-width: 0; }
+.checkin-rank-summary strong, .checkin-rank-summary span { display: block; overflow-wrap: anywhere; }
+.checkin-rank-summary strong { color: var(--text-hi); font-size: 13px; }
+.checkin-rank-summary span { margin-top: 2px; color: var(--muted); font-size: 11px; }
+.rank-benefits { margin-bottom: 18px; }
+.rank-benefits-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 8px; }
+.rank-benefits-head strong { color: var(--text-hi); font-size: 12px; }
+.rank-benefits-head span { color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
+.rank-benefits-list { max-height: 218px; display: grid; gap: 5px; overflow-y: auto; padding-right: 3px; overscroll-behavior: contain; }
+.rank-benefit-row { min-width: 0; display: grid; grid-template-columns: 28px minmax(0, 1fr) auto; align-items: center; gap: 8px; padding: 7px 8px; border: 1px solid var(--line); border-radius: 10px; background: var(--fill); }
+.rank-benefit-row.current { border-color: var(--gold); background: oklch(80% 0.14 85 / 0.12); }
+.rank-benefit-icon { font-size: 17px; line-height: 1; text-align: center; }
+.rank-benefit-copy { min-width: 0; }
+.rank-benefit-copy strong, .rank-benefit-copy small { display: block; overflow-wrap: anywhere; }
+.rank-benefit-copy strong { color: var(--text-hi); font-size: 11px; }
+.rank-benefit-copy small { margin-top: 1px; color: var(--muted); font-size: 10px; }
+.rank-benefit-reward { color: var(--green); font-size: 11px; font-weight: 800; white-space: nowrap; }
+.rank-benefits-state { display: block; padding: 12px; border-radius: 10px; background: var(--fill); color: var(--muted); font-size: 12px; text-align: center; }
+
 .checkin-milestones {
   display: grid;
   grid-template-columns: repeat(2, 1fr);

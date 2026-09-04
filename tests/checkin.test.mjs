@@ -95,3 +95,34 @@ test("Daily check-in streak and idempotency", () => {
   assert.equal(res5.pointsAwarded, 1);
   assert.equal(res5.newBalance, 6);
 });
+
+test("Daily check-in uses the current rank reward and keeps streak bonus additive", () => {
+  const db = initDb({ dbPath: ":memory:" });
+  const userRepo = new UserRepository(db);
+  const user = userRepo.create({ username: "ranked-miner", passwordHash: "pass" });
+  const now = new Date("2026-08-07T10:00:00Z");
+  const nowIso = now.toISOString();
+
+  db.run(
+    `INSERT INTO user_rank_profiles (user_id, xp_total, rank_level, created_at, updated_at)
+     VALUES (?, 300, 3, ?, ?)`,
+    [user.id, nowIso, nowIso]
+  );
+  db.run(
+    "UPDATE users SET current_streak = 6, last_checkin_date = ?, updated_at = ? WHERE id = ?",
+    ["2026-08-06", nowIso, user.id]
+  );
+
+  const result = performCheckin(db, user.id, { now });
+  assert.equal(result.streak, 7);
+  assert.equal(result.basePoints, 3);
+  assert.equal(result.bonusPoints, 5);
+  assert.equal(result.pointsAwarded, 8);
+  assert.equal(result.newBalance, 8);
+  assert.equal(db.query("SELECT base_points FROM checkins WHERE user_id = ?").get(user.id).base_points, 3);
+
+  const repeat = performCheckin(db, user.id, { now });
+  assert.equal(repeat.alreadyCheckedIn, true);
+  assert.equal(repeat.pointsAwarded, 0);
+  assert.equal(repeat.newBalance, 8);
+});

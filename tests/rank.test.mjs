@@ -2,7 +2,7 @@ import test, { afterEach } from "node:test";
 import assert from "node:assert/strict";
 
 import { initDb, closeDb } from "../src/db.js";
-import { rankForXp, qualifiedPlayThreshold, isQualifiedPlay } from "../src/rank.js";
+import { RANK_LEVELS, rankForXp, qualifiedPlayThreshold, isQualifiedPlay } from "../src/rank.js";
 import { RankRepository } from "../src/repositories/rankRepository.js";
 import { UserRepository } from "../src/repositories/userRepository.js";
 import { JukeboxState } from "../src/state.js";
@@ -19,6 +19,13 @@ test("rank helpers map cumulative XP and bounded skip threshold", () => {
   assert.equal(isQualifiedPlay({ finishReason: "ended", playedSeconds: 0, duration: "3:30" }), true);
   assert.equal(isQualifiedPlay({ finishReason: "skipped", playedSeconds: 29, duration: "3:30" }), false);
   assert.equal(isQualifiedPlay({ finishReason: "skipped", playedSeconds: 63, duration: "3:30" }), true);
+});
+
+test("rank descriptors expose the approved check-in reward", () => {
+  const expected = [1, 2, 3, 4, 5, 6];
+  assert.deepEqual(RANK_LEVELS.map((rank) => rank.checkinPoints), expected);
+  assert.equal(rankForXp(300).checkinPoints, 3);
+  assert.equal(rankForXp(3_000).checkinPoints, 6);
 });
 
 test("rank XP awards are append-only and idempotent per activity source", () => {

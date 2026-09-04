@@ -50,7 +50,7 @@ import { DropRepository } from "./src/repositories/dropRepository.js";
 import { ChatRepository } from "./src/repositories/chatRepository.js";
 import { ChatAiMemoryRepository } from "./src/repositories/chatAiMemoryRepository.js";
 import { RankRepository } from "./src/repositories/rankRepository.js";
-import { isQualifiedPlay } from "./src/rank.js";
+import { RANK_LEVELS, isQualifiedPlay } from "./src/rank.js";
 import {
   createAuthMiddleware,
   hashPasswordAsync,
@@ -133,7 +133,19 @@ function publicRank(userId) {
     nextLevel: rank.nextLevel,
     nextMinXp: rank.nextMinXp,
     xpToNext: rank.xpToNext,
+    checkinPoints: rank.checkinPoints,
   };
+}
+
+function publicRankBenefits() {
+  return RANK_LEVELS.map((rank) => ({
+    level: rank.level,
+    minXp: rank.minXp,
+    name: rank.name,
+    badge: RANK_BADGE_ICONS[rank.badge] || "🎧",
+    badgeId: rank.badge,
+    checkinPoints: rank.checkinPoints,
+  }));
 }
 
 function publicUser(user) {
@@ -492,6 +504,10 @@ app.post("/api/auth/logout", (req, res) => {
   }
   clearSessionCookie(res, req);
   res.json({ ok: true });
+});
+
+app.get("/api/rank/benefits", publicReadLimit, (_req, res) => {
+  res.json({ ok: true, benefits: publicRankBenefits() });
 });
 
 app.get("/api/me", (req, res) => {

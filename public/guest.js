@@ -1,5 +1,50 @@
 let currentUser = null;
 let currentActiveDrop = null;
+let rankBenefits = [];
+let rankBenefitsPromise = null;
+
+async function loadRankBenefits() {
+  if (rankBenefitsPromise) return rankBenefitsPromise;
+  rankBenefitsPromise = fetch("/api/rank/benefits")
+    .then((response) => response.json())
+    .then((data) => {
+      rankBenefits = data.ok && Array.isArray(data.benefits) ? data.benefits.slice(0, 6) : [];
+      return rankBenefits;
+    })
+    .catch(() => {
+      rankBenefitsPromise = null;
+      return [];
+    });
+  return rankBenefitsPromise;
+}
+
+function renderRankBenefits(containerId, currentRank = {}) {
+  const container = document.getElementById(containerId);
+  if (!container) return;
+  if (!rankBenefits.length) {
+    container.innerHTML = '<span class="rank-benefits-state">Chưa tải được quyền lợi. Hãy thử mở lại sau.</span>';
+    return;
+  }
+  const currentLevel = Number(currentRank.level || 1);
+  container.innerHTML = rankBenefits.map((benefit) => {
+    const active = Number(benefit.level) === currentLevel;
+    const xpLabel = Number(benefit.minXp) > 0 ? `${Number(benefit.minXp).toLocaleString("vi-VN")} XP` : "Bắt đầu";
+    return `<div class="rank-benefit-row${active ? " current" : ""}"><span class="rank-benefit-icon">${escapeHtml(benefit.badge || "🎧")}</span><span class="rank-benefit-copy"><strong>Hạng ${Number(benefit.level)} · ${escapeHtml(benefit.name || "")}</strong><small>${xpLabel}</small></span><span class="rank-benefit-reward">+${Number(benefit.checkinPoints) || 1} điểm</span></div>`;
+  }).join("");
+}
+
+function updateRankBenefitModal() {
+  const rank = currentUser?.rank || {};
+  const reward = Number(rank.checkinPoints) || 1;
+  const progress = rank.nextMinXp
+    ? `${Number(rank.xp || 0).toLocaleString("vi-VN")} / ${Number(rank.nextMinXp).toLocaleString("vi-VN")} XP`
+    : `${Number(rank.xp || 0).toLocaleString("vi-VN")} XP · Tối đa`;
+  document.getElementById("checkin-rank-badge")?.replaceChildren(document.createTextNode(rank.badge || "🎧"));
+  document.getElementById("checkin-rank-name")?.replaceChildren(document.createTextNode(rank.name || "Người mới bắt nhịp"));
+  document.getElementById("checkin-rank-reward")?.replaceChildren(document.createTextNode(`Hạng hiện tại · nhận ${reward} điểm cơ bản mỗi lần điểm danh`));
+  document.getElementById("checkin-rank-progress")?.replaceChildren(document.createTextNode(progress));
+  renderRankBenefits("checkin-rank-list", rank);
+}
 
 // --- Authentication & User State -------------------------------------------
 async function fetchMe() {
@@ -224,6 +269,8 @@ function openCheckinModal() {
   const modal = document.getElementById("checkin-modal");
   document.getElementById("modal-streak-count").textContent = currentUser.currentStreak || 0;
   document.getElementById("checkin-greeting").textContent = `Xin chào ${currentUser.displayName || currentUser.username}!`;
+  updateRankBenefitModal();
+  if (!rankBenefits.length) loadRankBenefits().then(updateRankBenefitModal);
 
   const streak = currentUser.currentStreak || 0;
   const cycle = streak % 30;
@@ -239,7 +286,7 @@ function openCheckinModal() {
     document.getElementById("checkin-status-text").textContent = "Hãy quay lại vào ngày mai để duy trì streak nhé!";
   } else {
     checkinBtn.disabled = false;
-    checkinBtn.textContent = "✨ Điểm Danh Nhận Điểm (+1 🪙)";
+    checkinBtn.textContent = `✨ Điểm Danh Nhận Điểm (+${Number(currentUser.rank?.checkinPoints) || 1} 🪙)`;
     document.getElementById("checkin-status-text").textContent = "Điểm danh mỗi ngày để nhận điểm vote bài hát và mở khóa mốc thưởng!";
   }
 
