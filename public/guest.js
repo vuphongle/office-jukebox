@@ -295,6 +295,7 @@ document.getElementById("auth-form")?.addEventListener("submit", async (e) => {
       closeAuthModal();
       await fetchMe();
       if (!currentUser) throw new Error("Không thể tải phiên đăng nhập vừa tạo.");
+      restartWs();
       toast("ok", "👋", `Xin chào, ${currentUser.displayName || currentUser.username}!`);
       if (currentUser.displayName) {
         nameEl.value = currentUser.displayName;
@@ -324,6 +325,7 @@ async function handleLogout() {
   hidePointDropBanner();
   renderUserAuthBar();
   if (lastQueueState) renderQueue(lastQueueState);
+  restartWs();
   toast("info", "👋", "Đã đăng xuất tài khoản.");
 }
 
@@ -1364,6 +1366,17 @@ function cooldownToast(seconds) {
 // ---- Live queue (WebSocket) ------------------------------------------------
 let lastQueueState = null; // retain state so the owned-request badge can be redrawn
 
+function restartWs() {
+  const previous = queueWs;
+  queueWs = null;
+  pendingOwnSkips.clear();
+  if (previous) {
+    previous.onclose = null;
+    previous.close();
+  }
+  connectWs();
+}
+
 function connectWs() {
   const proto = location.protocol === "https:" ? "wss" : "ws";
   const ws = new WebSocket(`${proto}://${location.host}`);
@@ -1442,11 +1455,23 @@ function connectWs() {
         currentUser.displayName = msg.displayName;
         renderUserAuthBar();
       }
+    } else if (msg.type === "rankUpdated") {
+      if (currentUser && msg.rank) {
+        const previousLevel = Number(currentUser.rank?.level || 1);
+        currentUser.rank = msg.rank;
+        renderUserAuthBar();
+        const checkinModal = document.getElementById("checkin-modal");
+        if (checkinModal && !checkinModal.classList.contains("hidden")) updateRankBenefitModal();
+        if (Number(msg.rank.level || 1) > previousLevel) {
+          toast("ok", "🏆", `Bạn đã lên hạng ${msg.rank.name || "mới"}!`);
+        }
+      }
     } else if (msg.type === "sessionRevoked") {
       currentUser = null;
       hidePointDropBanner();
       renderUserAuthBar();
       if (lastQueueState) renderQueue(lastQueueState);
+      restartWs();
       toast("bad", "!", msg.reason || "Phiên đăng nhập không còn hiệu lực.");
     } else if (msg.type === "removeOwnResult") {
       pendingRemovals.delete(msg.id);

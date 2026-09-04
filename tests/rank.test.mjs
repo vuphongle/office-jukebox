@@ -58,6 +58,20 @@ test("rank XP awards are append-only and idempotent per activity source", () => 
   assert.equal(rankRepo.listLeaderboard()[0].displayName, user.display_name);
 });
 
+test("rank profiles expose the current check-in reward", () => {
+  const db = initDb({ dbPath: ":memory:" });
+  const userRepo = new UserRepository(db);
+  const rankRepo = new RankRepository(db);
+  const user = userRepo.create({ username: "rank-reward-user", passwordHash: "p" });
+
+  rankRepo.ensureProfile(user.id);
+  db.run("UPDATE user_rank_profiles SET xp_total = 300, rank_level = 3 WHERE user_id = ?", [user.id]);
+
+  const profile = rankRepo.getRank(user.id);
+  assert.equal(profile.rankLevel, 3);
+  assert.equal(profile.checkinPoints, 3);
+});
+
 test("state transition persists finish reason, played seconds and voters", () => {
   const db = initDb({ dbPath: ":memory:" });
   const userRepo = new UserRepository(db);

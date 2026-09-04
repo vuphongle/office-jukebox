@@ -28,6 +28,7 @@ function mapProfile(row) {
     rankLevel: rank.level,
     rankName: rank.name,
     badge: rank.badge,
+    checkinPoints: rank.checkinPoints,
     minXp: rank.minXp,
     nextLevel: rank.nextLevel,
     nextMinXp: rank.nextMinXp,
