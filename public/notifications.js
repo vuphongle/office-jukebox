@@ -11,8 +11,9 @@
     liveNotifications: new Map(),
     notificationVersion: 0,
     readOverrides: new Map(),
+    userGeneration: 0,
   };
-  let loadPromise = null;
+  let activeLoad = null;
 
   const escapeHtml = (value) => String(value ?? "")
     .replace(/&/g, "&amp;")
@@ -46,10 +47,12 @@
   function syncUser(user) {
     const nextUser = user && user.id ? user : null;
     if (!nextUser) {
+      if (state.user) state.userGeneration += 1;
       state.user = null;
       state.items = [];
       state.unreadCount = 0;
       state.error = "";
+      state.loading = false;
       state.liveNotifications.clear();
       state.readOverrides.clear();
       close();
@@ -57,10 +60,13 @@
       const sameUserObject = state.user === nextUser;
       state.user = nextUser;
       if (!sameUserObject) {
+        state.userGeneration += 1;
         state.items = [];
+        state.unreadCount = 0;
         state.liveNotifications.clear();
         state.readOverrides.clear();
         state.error = "";
+        state.loading = false;
       }
       if (!sameUserObject && Number.isSafeInteger(nextUser.unreadNotificationCount)) {
         state.unreadCount = nextUser.unreadNotificationCount;
@@ -128,7 +134,7 @@
   }
 
   async function reloadAfterCurrent() {
-    const pendingLoad = loadPromise;
+    const pendingLoad = activeLoad?.promise;
     if (pendingLoad) await pendingLoad;
     await load();
   }
@@ -170,10 +176,13 @@
 
   function load() {
     if (!state.user) return Promise.resolve();
-    if (loadPromise) return loadPromise;
+    const generationAtStart = state.userGeneration;
+    if (activeLoad?.generation === generationAtStart) return activeLoad.promise;
     const userAtStart = state.user;
     const versionAtStart = state.notificationVersion;
-    loadPromise = (async () => {
+    const request = { generation: generationAtStart, promise: null };
+    activeLoad = request;
+    request.promise = (async () => {
       state.loading = true;
       state.error = "";
       render();
@@ -185,18 +194,20 @@
           return;
         }
         if (!response.ok || !data.ok) throw new Error(data.reason || "Không thể tải thông báo.");
-        if (state.user !== userAtStart) return;
+        if (state.user !== userAtStart || state.userGeneration !== generationAtStart) return;
         applyLoadedItems(data.items, data.unreadCount, versionAtStart);
       } catch (error) {
         state.error = error.message || "Không thể tải thông báo.";
       } finally {
-        state.loading = false;
-        updateBell();
-        render();
-        loadPromise = null;
+        if (activeLoad === request) {
+          state.loading = false;
+          updateBell();
+          render();
+          activeLoad = null;
+        }
       }
     })();
-    return loadPromise;
+    return request.promise;
   }
 
   async function markRead(id) {
