@@ -233,3 +233,19 @@ test("public rank benefits expose every check-in reward", async () => {
     rmSync(dataDir, { recursive: true, force: true });
   }
 });
+
+test("public leaderboard is available without authentication and stays bounded", async () => {
+  const dataDir = mkdtempSync(path.join(os.tmpdir(), "office-jukebox-leaderboard-"));
+  const { child, baseUrl } = await startServer(dataDir);
+  try {
+    const response = await fetch(`${baseUrl}/api/rank/leaderboard?limit=200`);
+    assert.equal(response.status, 200);
+    const payload = await response.json();
+    assert.ok(Array.isArray(payload.leaderboard));
+    assert.ok(payload.leaderboard.length <= 10);
+    assert.equal(Object.hasOwn(payload.leaderboard[0] || {}, "userId"), false);
+  } finally {
+    await stopServer(child);
+    rmSync(dataDir, { recursive: true, force: true });
+  }
+});

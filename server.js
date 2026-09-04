@@ -510,6 +510,10 @@ app.get("/api/rank/benefits", publicReadLimit, (_req, res) => {
   res.json({ ok: true, benefits: publicRankBenefits() });
 });
 
+app.get("/api/rank/leaderboard", publicReadLimit, (_req, res) => {
+  res.json({ ok: true, leaderboard: rankRepo.listPublicLeaderboard({ limit: 10 }) });
+});
+
 app.get("/api/me", (req, res) => {
   if (!req.user) {
     return res.json({ ok: true, authenticated: false, user: null });
