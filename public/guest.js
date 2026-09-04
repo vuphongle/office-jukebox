@@ -562,6 +562,7 @@ let queueWs = null;
 const CHAT_DISPLAY_LIMIT = 40;
 const CHAT_BOTTOM_LOCK_PX = 64;
 const pendingRemovals = new Set();
+const pendingOwnSkips = new Set();
 const pendingVotes = new Set();
 
 function setChatStatus(message, kind = "") {
@@ -1445,11 +1446,17 @@ function connectWs() {
       if (msg.ok) toast("ok", "✓", "Đã xóa khỏi hàng đợi.");
       else toast("bad", "!", msg.reason || "Không thể xóa bài hát này.");
       if (lastQueueState) renderQueue(lastQueueState);
+    } else if (msg.type === "skipOwnResult") {
+      pendingOwnSkips.delete(msg.id);
+      if (msg.ok) toast("ok", "⏭️", "Đã bỏ qua bài hát của bạn.", { sub: "Điểm vote đã dùng không được hoàn lại." });
+      else toast("bad", "!", msg.reason || "Không thể bỏ qua bài hát đang phát.");
+      if (lastQueueState) renderQueue(lastQueueState);
     }
   };
   ws.onclose = () => {
     if (queueWs !== ws) return;
     queueWs = null;
+    pendingOwnSkips.clear();
     resetChatPending();
     setChatStatus("Mất kết nối chat, đang thử kết nối lại…", "bad");
     setTimeout(() => {
@@ -1458,9 +1465,19 @@ function connectWs() {
   };
 }
 
+function requestOwnSkip(id, button) {
+  if (!id || !button || !queueWs || queueWs.readyState !== WebSocket.OPEN || pendingOwnSkips.has(id)) return;
+  const confirmed = window.confirm("Bỏ qua bài hát đang phát? Điểm vote đã dùng sẽ không được hoàn lại.");
+  if (!confirmed) return;
+  pendingOwnSkips.add(id);
+  button.disabled = true;
+  queueWs.send(JSON.stringify({ type: "skipOwn", id, clientId }));
+}
+
 function renderQueue(state) {
   const np = state.nowPlaying;
   const npEl = document.getElementById("now-playing");
+  const myIds = loadMyRequestIds();
   if (np) {
     npEl.classList.remove("hidden");
     npEl.innerHTML = `
@@ -1472,11 +1489,16 @@ function renderQueue(state) {
         </div>
         <div class="np-title"></div>
         <div class="np-sub"></div>
+      </div>
+      <div class="np-actions">
+        <button class="np-skip-own${myIds.has(np.id) ? "" : " hidden"}" type="button" title="Bỏ qua bài hát của bạn" aria-label="Bỏ qua bài hát của bạn"${pendingOwnSkips.has(np.id) ? " disabled" : ""}>Bỏ qua</button>
       </div>`;
     npEl.querySelector(".np-title").textContent = np.title;
     updateMarqueeTitle(npEl.querySelector(".np-title"));
     npEl.querySelector(".np-sub").textContent =
       (np.channel || "") + (np.addedBy ? ` · Người chọn: ${np.addedBy}` : "");
+    const skipButton = npEl.querySelector(".np-skip-own");
+    skipButton.onclick = () => requestOwnSkip(np.id, skipButton);
   } else {
     npEl.classList.add("hidden");
   }
@@ -1513,7 +1535,6 @@ function renderQueue(state) {
       </li>`;
     return;
   }
-  const myIds = loadMyRequestIds();
   queue.forEach((item, i) => {
     const li = document.createElement("li");
     const voteCount = item.voteScore || 0;

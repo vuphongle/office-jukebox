@@ -482,6 +482,10 @@ header .desktop-intro { display: none; }
   background: var(--thumb);
 }
 .np-body { flex: 1; min-width: 0; }
+.np-actions { flex: 0 0 auto; }
+.np-skip-own { min-height: 34px; padding: 0 10px; border: 1px solid oklch(80% 0.14 85 / .42); border-radius: 9px; background: oklch(80% 0.14 85 / .1); color: var(--gold); font: 700 11px/1 var(--sans); cursor: pointer; }
+.np-skip-own:hover { background: oklch(80% 0.14 85 / .18); }
+.np-skip-own:disabled { opacity: .55; cursor: wait; }
 .np-label {
   display: flex;
   align-items: center;

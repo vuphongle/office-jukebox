@@ -19,6 +19,7 @@ test("rank helpers map cumulative XP and bounded skip threshold", () => {
   assert.equal(isQualifiedPlay({ finishReason: "ended", playedSeconds: 0, duration: "3:30" }), true);
   assert.equal(isQualifiedPlay({ finishReason: "skipped", playedSeconds: 29, duration: "3:30" }), false);
   assert.equal(isQualifiedPlay({ finishReason: "skipped", playedSeconds: 63, duration: "3:30" }), true);
+  assert.equal(isQualifiedPlay({ finishReason: "owner_skipped", playedSeconds: 63, duration: "3:30" }), false);
 });
 
 test("rank descriptors expose the approved check-in reward", () => {

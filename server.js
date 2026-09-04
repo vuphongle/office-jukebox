@@ -1634,6 +1634,21 @@ wss.on("connection", (ws, request) => {
         return;
       }
 
+      if (msg.type === "skipOwn") {
+        const id = typeof msg.id === "string" ? msg.id : "";
+        const userId = currentSession?.user_id || null;
+        const requesterId = userId ? "" : (msg.clientId || "").toString().slice(0, 64);
+        const transition = state.skipOwned(id, requesterId, userId);
+        ws.send(JSON.stringify({
+          type: "skipOwnResult",
+          id,
+          ok: !!transition,
+          ...(transition ? {} : { reason: "Bài đang phát không thuộc về bạn hoặc đã chuyển bài." }),
+        }));
+        if (transition) settleRankTransition(transition);
+        return;
+      }
+
       if (!canUseHostControls(ws, currentSession)) return;
 
       switch (msg.type) {

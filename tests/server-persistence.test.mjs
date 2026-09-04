@@ -249,3 +249,21 @@ test("public leaderboard is available without authentication and stays bounded",
     rmSync(dataDir, { recursive: true, force: true });
   }
 });
+
+test("WebSocket owner skip responds without granting host control", async () => {
+  const dataDir = mkdtempSync(path.join(os.tmpdir(), "office-jukebox-owner-skip-"));
+  const { child, baseUrl } = await startServer(dataDir);
+  let socket;
+  try {
+    socket = await openSocket(baseUrl);
+    await waitForMessage(socket, (message) => message.type === "state");
+    socket.send(JSON.stringify({ type: "skipOwn", id: "missing-item", clientId: "owner-client" }));
+    const result = await waitForMessage(socket, (message) => message.type === "skipOwnResult");
+    assert.equal(result.ok, false);
+    assert.equal(result.id, "missing-item");
+  } finally {
+    socket?.close();
+    await stopServer(child);
+    rmSync(dataDir, { recursive: true, force: true });
+  }
+});
