@@ -30,7 +30,7 @@ The rank UI shows all six levels, each level's check-in reward, the current rank
 
 The leaderboard ranks active regular users by cumulative rank XP, not spendable wallet points. It returns at most the top 10 entries and exposes only display name, rank/badge, XP, and position. Blocked users, admins, usernames, user IDs, and wallet balances are excluded. Ties use a deterministic display-name and ID ordering so positions are stable.
 
-The guest page is the primary entry point. Top 3 entries use podium styling (gold, silver, bronze); entries 4–10 use a compact scrollable list. The page remains usable on a phone and the list cannot expand without bound.
+The full leaderboard is served at public `/leaderboard`, available without authentication. The Guest page keeps only a compact link to that page so song search, discovery, and ordering remain the primary flow on a phone. Top 3 entries use podium styling (gold, silver, bronze); entries 4–10 use compact rows. The result remains bounded at 10 entries.
 
 ### Owner skip
 
@@ -68,7 +68,7 @@ Admins get a notification tab with a bounded composer and recent send history, i
 
 ## Compatibility and migration
 
-No existing rows require a data migration. Rank rewards use the existing `base_points` field. Notification tables are created by the normal idempotent database initialization. Existing public queue snapshots remain token-free, and guest song ordering/removal behavior remains unchanged.
+No existing rows require a data migration. Rank rewards use the existing `base_points` field. Notification tables are created by the normal idempotent database initialization. Existing public queue snapshots remain token-free, and guest song ordering/removal behavior remains unchanged. The leaderboard page reuses the existing public rank endpoint and adds no persistence or authentication state.
 
 ## Test and release gates
 

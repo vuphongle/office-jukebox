@@ -1316,7 +1316,7 @@ function versionedPage(name) {
   const filePath = path.join(__dirname, "public", name);
   if (!existsSync(filePath)) return `<!DOCTYPE html><html><body><h1>${name} not found</h1></body></html>`;
   return readFileSync(filePath, "utf8").replace(
-    /(href|src)="\/((?:guest|host|admin|account|auth-utils)\.(?:css|js))"/g,
+    /(href|src)="\/((?:guest|host|admin|account|leaderboard|auth-utils)\.(?:css|js))"/g,
     `$1="/$2?v=${BOOT_ID}"`
   );
 }
@@ -1325,6 +1325,7 @@ const HOST_PAGE = versionedPage("host.html");
 const GUEST_PAGE = versionedPage("guest.html");
 const ADMIN_PAGE = versionedPage("admin.html");
 const ACCOUNT_PAGE = versionedPage("account.html");
+const LEADERBOARD_PAGE = versionedPage("leaderboard.html");
 
 app.get("/", requireHostAuth, (_req, res) => {
   res.set("Cache-Control", "no-cache").type("html").send(HOST_PAGE);
@@ -1340,6 +1341,10 @@ app.get("/admin", (_req, res) => {
 
 app.get("/account", (_req, res) => {
   res.set("Cache-Control", "no-cache").type("html").send(ACCOUNT_PAGE);
+});
+
+app.get("/leaderboard", (_req, res) => {
+  res.set("Cache-Control", "no-cache").type("html").send(LEADERBOARD_PAGE);
 });
 
 app.get("/feedback", (_req, res) => {

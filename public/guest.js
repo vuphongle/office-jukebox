@@ -2,17 +2,6 @@ let currentUser = null;
 let currentActiveDrop = null;
 let rankBenefits = [];
 let rankBenefitsPromise = null;
-let leaderboardItems = [];
-let leaderboardRequest = null;
-
-const rankBadgeIcons = Object.freeze({
-  "headphones-blue": "🎧",
-  pulse: "⚡",
-  flame: "🔥",
-  turntable: "🎛️",
-  "stage-star": "🌟",
-  "neon-crown": "👑",
-});
 
 async function loadRankBenefits() {
   if (rankBenefitsPromise) return rankBenefitsPromise;
@@ -55,56 +44,6 @@ function updateRankBenefitModal() {
   document.getElementById("checkin-rank-reward")?.replaceChildren(document.createTextNode(`Hạng hiện tại · nhận ${reward} điểm cơ bản mỗi lần điểm danh`));
   document.getElementById("checkin-rank-progress")?.replaceChildren(document.createTextNode(progress));
   renderRankBenefits("checkin-rank-list", rank);
-}
-
-function renderLeaderboard() {
-  const status = document.getElementById("leaderboard-status");
-  const podium = document.getElementById("leaderboard-podium");
-  const list = document.getElementById("leaderboard-list");
-  if (!status || !podium || !list) return;
-  if (!leaderboardItems.length) {
-    podium.innerHTML = "";
-    list.innerHTML = "";
-    status.textContent = "Chưa có thành viên trên bảng xếp hạng.";
-    return;
-  }
-  status.textContent = "Top 10 thành viên có XP nổi bật nhất";
-  podium.innerHTML = leaderboardItems.slice(0, 3).map((entry) => {
-    const level = Number(entry.rank?.level || 1);
-    const icon = rankBadgeIcons[entry.rank?.badge] || "🎧";
-    return `<article class="leaderboard-podium-card place-${Number(entry.position)}"><span class="leaderboard-place">#${Number(entry.position)}</span><span class="leaderboard-avatar">${icon}</span><strong>${escapeHtml(entry.displayName || "Thành viên")}</strong><small>Hạng ${level} · ${Number(entry.xpTotal || 0).toLocaleString("vi-VN")} XP</small></article>`;
-  }).join("");
-  list.innerHTML = leaderboardItems.slice(3).map((entry) => {
-    const icon = rankBadgeIcons[entry.rank?.badge] || "🎧";
-    return `<div class="leaderboard-row"><span class="leaderboard-number">#${Number(entry.position)}</span><span class="leaderboard-row-icon">${icon}</span><span class="leaderboard-row-copy"><strong>${escapeHtml(entry.displayName || "Thành viên")}</strong><small>${escapeHtml(entry.rank?.name || "Người mới bắt nhịp")}</small></span><span class="leaderboard-xp">${Number(entry.xpTotal || 0).toLocaleString("vi-VN")} XP</span></div>`;
-  }).join("");
-}
-
-async function loadLeaderboard() {
-  if (leaderboardRequest) return leaderboardRequest;
-  const status = document.getElementById("leaderboard-status");
-  const refresh = document.getElementById("leaderboard-refresh");
-  status?.classList.add("is-loading");
-  if (refresh) refresh.disabled = true;
-  leaderboardRequest = fetch("/api/rank/leaderboard")
-    .then((response) => response.json())
-    .then((data) => {
-      if (!data.ok || !Array.isArray(data.leaderboard)) throw new Error(data.reason || "Không thể tải bảng xếp hạng.");
-      leaderboardItems = data.leaderboard.slice(0, 10);
-      renderLeaderboard();
-    })
-    .catch((error) => {
-      leaderboardItems = [];
-      if (status) status.textContent = `${error.message} Hãy thử làm mới.`;
-      document.getElementById("leaderboard-podium")?.replaceChildren();
-      document.getElementById("leaderboard-list")?.replaceChildren();
-    })
-    .finally(() => {
-      leaderboardRequest = null;
-      status?.classList.remove("is-loading");
-      if (refresh) refresh.disabled = false;
-    });
-  return leaderboardRequest;
 }
 
 // --- Authentication & User State -------------------------------------------
@@ -1662,8 +1601,6 @@ renderSingers();
 selectGenre("All"); // render the tab and load real songs on page open
 renderRequestSettings();
 renderFeedback();
-document.getElementById("leaderboard-refresh")?.addEventListener("click", loadLeaderboard);
-loadLeaderboard();
 window.addEventListener("jukebox:notification", (event) => {
   if (currentUser) toast("info", "🔔", "Bạn có thông báo mới", { sub: event.detail?.title || "Mở chuông để xem cập nhật." });
 });

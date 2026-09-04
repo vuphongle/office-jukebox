@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Bảng xếp hạng · Office Jukebox</title>
+  <link rel="icon" type="image/png" href="/assets/favicon.png" />
+  <link rel="apple-touch-icon" href="/assets/favicon.png" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Serif:wght@600;700&family=Noto+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/leaderboard.css" />
+</head>
+<body>
+  <a class="skip-link" href="#leaderboard-main">Bỏ qua đến nội dung chính</a>
+
+  <header class="leaderboard-topbar">
+    <a class="back-link" href="/guest">
+      <svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6" /></svg>
+      <span>Quay lại chọn bài</span>
+    </a>
+    <a class="brand-mark" href="/guest" aria-label="Office Jukebox — về trang chọn bài">
+      <img src="/assets/logo.png" alt="" width="38" height="38" />
+      <span>Office Jukebox</span>
+    </a>
+  </header>
+
+  <main id="leaderboard-main" class="leaderboard-shell" tabindex="-1">
+    <section class="leaderboard-hero" aria-labelledby="leaderboard-title">
+      <p class="eyebrow">Vinh danh thành viên</p>
+      <h1 id="leaderboard-title">Bảng xếp hạng</h1>
+      <p>Top 10 thành viên có XP nổi bật nhất từ những đóng góp tích cực cho sự kiện.</p>
+    </section>
+
+    <section class="leaderboard-card" aria-labelledby="leaderboard-card-title">
+      <div class="section-heading">
+        <div>
+          <p class="eyebrow">XP tích lũy</p>
+          <h2 id="leaderboard-card-title">Top 10 nổi bật</h2>
+        </div>
+        <button id="leaderboard-refresh" class="refresh-button" type="button">
+          <span aria-hidden="true">↻</span><span>Làm mới</span>
+        </button>
+      </div>
+      <p class="privacy-note">Chỉ hiển thị tên hiển thị, hạng và XP. Bảng xếp hạng được cập nhật khi bạn làm mới.</p>
+      <div id="leaderboard-status" class="leaderboard-status" role="status" aria-live="polite" aria-atomic="true">Đang tải bảng xếp hạng…</div>
+      <div id="leaderboard-podium" class="leaderboard-podium" aria-label="Ba vị trí dẫn đầu"></div>
+      <div id="leaderboard-list" class="leaderboard-list" aria-label="Các vị trí từ 4 đến 10"></div>
+    </section>
+
+    <a class="return-link" href="/guest">← Tiếp tục chọn bài hát</a>
+  </main>
+
+  <script src="/leaderboard.js"></script>
+</body>
+</html>

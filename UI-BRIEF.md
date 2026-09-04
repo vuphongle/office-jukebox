@@ -1,10 +1,12 @@
 # Office Jukebox — UI brief
 
-This brief describes the two user-facing screens for a live event. The
-projector shows the host page; guests scan its QR code, open the mobile guest
-page, and add YouTube songs to the queue. The current implementation uses plain
-HTML/CSS/JS in public/host.* and public/guest.*. A redesign may change the visual
-style, but the existing element ids and behaviors must continue to work.
+This brief describes the user-facing screens for a live event. The projector
+shows the host page; guests scan its QR code, open the mobile guest page, and
+add YouTube songs to the queue. The public leaderboard has its own page so the
+guest song-request flow stays focused. The current implementation uses plain
+HTML/CSS/JS in public/host.*, public/guest.*, and public/leaderboard.*. A
+redesign may change the visual style, but the existing element ids and
+behaviors must continue to work.
 
 The interface copy is intentionally Vietnamese for the current user base.
 Developer-facing prose in this document is English. Song titles and artist names
@@ -101,6 +103,27 @@ and "Không tìm thấy bài hát — hãy thử tab khác.", plus clear error m
 labelled "ĐANG PHÁT", and numbered rows containing title and channel. The guest's
 own requests have a small **"BẠN"** badge. Empty state:
 "Chưa có gì trong hàng đợi — hãy là người đầu tiên!".
+
+The header keeps a compact **"Xem bảng xếp hạng"** link. It opens the public
+leaderboard page without interrupting the song-request flow; the full podium and
+Top 10 list do not render on the Guest page.
+
+---
+
+## 3. Public leaderboard page (/leaderboard)
+
+This page is available without authentication and is the full public view of
+the XP leaderboard. It uses the same dark event visual system as the Guest page
+and provides a clear **"Quay lại chọn bài"** path.
+
+- A hero heading explains that the page ranks active members by cumulative XP.
+- Top 3 entries use gold, silver, and bronze podium cards.
+- Entries 4–10 use compact rows showing position, badge, display name, rank, and
+  XP.
+- A **"Làm mới"** action reloads the bounded public result and shows a visible
+  loading or retry state when the request is unavailable.
+- Only display names, rank/badges, XP, and positions are shown; no account IDs,
+  usernames, wallet balances, or ownership data are rendered.
 
 ---
 

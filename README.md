@@ -53,6 +53,7 @@ event.
   queue cap, playability checks, and a no-start watchdog.
 - ⚡ Realtime state broadcast to the projector and every guest phone.
 - 👤 Optional accounts for daily check-ins, streaks, points, and voting.
+- 🏆 Public XP leaderboard at `/leaderboard`, linked compactly from the guest page.
 - 🎁 Admin dashboard for members, points, airdrops, ledger, feedback, and chat.
 
 <div align="center">
@@ -101,6 +102,7 @@ Bun is required because SQLite uses the built-in bun:sqlite module.
 |------|---------|
 | / | Host/projector page: player, QR code, queue, and controls |
 | /guest | Guest mobile page opened through the QR code |
+| /leaderboard | Public Top 10 XP leaderboard |
 | /feedback | Redirects to the feedback tab in /admin |
 | /admin | Account, points, airdrop, ledger, feedback, and chat dashboard |
 | GET /api/search?q= | Read YouTube search results without an API key |
@@ -255,6 +257,7 @@ src/state.js               Authoritative in-memory queue state
 src/net.js                 LAN IP detection
 public/host.*              Projector page (player, QR, controls)
 public/guest.*             Mobile page (search, discovery, live queue)
+public/leaderboard.*       Public XP leaderboard page
 scripts/check-llm.mjs      Verify the LLM key and list models
 Dockerfile                 Bun-based image
 docker-compose.yml         Home-server deployment (local build)

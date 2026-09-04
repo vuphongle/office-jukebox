@@ -104,9 +104,11 @@ git commit -m "feat(rank): make check-in rewards rank-aware"
 
 **Files:**
 - Modify: `src/repositories/rankRepository.js` — add a bounded public leaderboard query that joins active regular users and never returns private identifiers or wallet values.
-- Modify: `server.js` — add `GET /api/rank/leaderboard` with a fixed maximum of 10 entries.
+- Modify: `server.js` — add `GET /api/rank/leaderboard` with a fixed maximum of 10 entries and serve the public `/leaderboard` page.
 - Create: `tests/leaderboard.test.mjs` — exercise the repository with real SQLite data.
-- Modify: `public/guest.html`, `public/guest.js`, `public/guest.css` — add the primary leaderboard card, podium styling for top 3, and a bounded list for positions 4–10.
+- Modify: `public/guest.html`, `public/guest.css` — add a compact link to the public leaderboard without displacing the song-request flow.
+- Modify: `public/guest.js` — remove eager leaderboard loading from the song-request page.
+- Create: `public/leaderboard.html`, `public/leaderboard.js`, `public/leaderboard.css` — provide the full public leaderboard page with podium styling for top 3 and a bounded list for positions 4–10.
 
 **Interfaces:**
 - `RankRepository.listPublicLeaderboard({ limit = 10, offset = 0 })` returns `{ position, displayName, xpTotal, rank }` objects only.
@@ -137,18 +139,18 @@ Expected: all repository privacy, filter, tie, and limit assertions pass.
 
 - [ ] **Step 5: Register the public API route.** Return the repository result with the same privacy-safe shape and use the existing public read limiter if the route is exposed to unauthenticated guests.
 
-- [ ] **Step 6: Add the guest UI.** Fetch the route once on page load and on an explicit refresh action; render top 3 as gold/silver/bronze podium cards and positions 4–10 in a `max-height` scroll container. Show a retry state on fetch failure and keep the section readable on narrow screens.
+- [ ] **Step 6: Add the public leaderboard page and compact Guest entry point.** Serve `/leaderboard` without authentication, render top 3 as gold/silver/bronze podium cards and positions 4–10 as bounded rows, and show a retry state on fetch failure. Keep only a compact "Xem bảng xếp hạng" link on `/guest`; load leaderboard data from the new page rather than on every song-request page load.
 
-- [ ] **Step 7: Check the route-facing script and diff.**
+- [ ] **Step 7: Check the route-facing scripts and diff.**
 
-Run: `node --check public/guest.js && git diff --check`
+Run: `node --check public/guest.js && node --check public/leaderboard.js && git diff --check`
 
 Expected: both commands exit `0`.
 
 - [ ] **Step 8: Commit the leaderboard slice.**
 
 ```bash
-git add src/repositories/rankRepository.js server.js public/guest.html public/guest.js public/guest.css tests/leaderboard.test.mjs
+git add server.js public/guest.html public/guest.js public/guest.css public/leaderboard.html public/leaderboard.js public/leaderboard.css tests/server-persistence.test.mjs UI-BRIEF.md README.md docs/superpowers/specs/2026-09-05-engagement-features-design.md
 git commit -m "feat(rank): add public XP leaderboard"
 ```
 
