@@ -8,7 +8,11 @@
     loading: false,
     error: "",
     pendingIds: new Set(),
+    liveNotifications: new Map(),
+    notificationVersion: 0,
+    readOverrides: new Map(),
   };
+  let loadPromise = null;
 
   const escapeHtml = (value) => String(value ?? "")
     .replace(/&/g, "&amp;")
@@ -46,10 +50,18 @@
       state.items = [];
       state.unreadCount = 0;
       state.error = "";
+      state.liveNotifications.clear();
+      state.readOverrides.clear();
       close();
     } else {
       const sameUserObject = state.user === nextUser;
       state.user = nextUser;
+      if (!sameUserObject) {
+        state.items = [];
+        state.liveNotifications.clear();
+        state.readOverrides.clear();
+        state.error = "";
+      }
       if (!sameUserObject && Number.isSafeInteger(nextUser.unreadNotificationCount)) {
         state.unreadCount = nextUser.unreadNotificationCount;
       }
@@ -74,6 +86,47 @@
     if (state.user) state.user.unreadNotificationCount = state.unreadCount;
   }
 
+  function sortItems(items) {
+    return items.sort((a, b) => {
+      const createdDiff = Date.parse(b.createdAt || "") - Date.parse(a.createdAt || "");
+      if (Number.isFinite(createdDiff) && createdDiff !== 0) return createdDiff;
+      return String(b.id || "").localeCompare(String(a.id || ""));
+    });
+  }
+
+  function applyReadOverrides(items) {
+    return items.map((item) => {
+      const override = state.readOverrides.get(item.id);
+      if (item.read) {
+        state.readOverrides.delete(item.id);
+        return item;
+      }
+      return override ? { ...item, ...override } : item;
+    });
+  }
+
+  function applyLoadedItems(items, unreadCount, versionAtStart) {
+    const serverItems = applyReadOverrides(Array.isArray(items) ? items.slice(0, MAX_ITEMS) : []);
+    const serverIds = new Set(serverItems.map((item) => item.id));
+    const liveEntries = [...state.liveNotifications.values()]
+      .filter((entry) => entry.version > versionAtStart && !serverIds.has(entry.item.id));
+    const liveItems = liveEntries.map((entry) => entry.item);
+    state.items = sortItems([...serverItems, ...liveItems]).slice(0, MAX_ITEMS);
+    state.liveNotifications.clear();
+
+    const serverUnread = Number.isSafeInteger(unreadCount) ? Math.max(0, unreadCount) : state.unreadCount;
+    const liveUnread = liveEntries.reduce((highest, entry) => {
+      if (entry.item.read || !Number.isSafeInteger(entry.unreadCount)) return highest;
+      return Math.max(highest, entry.unreadCount);
+    }, 0);
+    setUnreadCount(Math.max(serverUnread, liveUnread));
+  }
+
+  function errorMarkup() {
+    if (!state.error) return "";
+    return `<div class="notification-error" role="alert"><strong>Không thể cập nhật thông báo</strong><span>${escapeHtml(state.error)}</span><button class="notification-retry" type="button" data-notification-retry>Thử lại</button></div>`;
+  }
+
   function render() {
     const list = document.getElementById("notification-list");
     const summary = document.getElementById("notification-summary");
@@ -84,20 +137,21 @@
     if (summary) summary.textContent = unread ? `${unread} chưa đọc` : "Tất cả đã đọc";
     if (readAll) readAll.disabled = state.loading || unread === 0;
 
+    const error = errorMarkup();
     if (state.loading && !state.items.length) {
-      list.innerHTML = '<div class="notification-state">Đang tải thông báo…</div>';
+      list.innerHTML = `${error}<div class="notification-state">Đang tải thông báo…</div>`;
       return;
     }
     if (state.error && !state.items.length) {
-      list.innerHTML = `<div class="notification-state"><strong>Không thể tải thông báo</strong><p>${escapeHtml(state.error)}</p><button class="notification-retry" type="button" data-notification-retry>Thử lại</button></div>`;
+      list.innerHTML = `${error}<div class="notification-state"><strong>Chưa có thông báo để hiển thị</strong></div>`;
       return;
     }
     if (!state.items.length) {
-      list.innerHTML = '<div class="notification-state"><strong>Chưa có thông báo</strong><p>Các cập nhật từ Ban Tổ Chức sẽ xuất hiện tại đây.</p></div>';
+      list.innerHTML = `${error}<div class="notification-state"><strong>Chưa có thông báo</strong><p>Các cập nhật từ Ban Tổ Chức sẽ xuất hiện tại đây.</p></div>`;
       return;
     }
 
-    list.innerHTML = state.items.slice(0, MAX_ITEMS).map((item) => {
+    list.innerHTML = `${error}${state.items.slice(0, MAX_ITEMS).map((item) => {
       const id = escapeHtml(item.id);
       const pending = state.pendingIds.has(item.id);
       return `<button class="notification-item${item.read ? "" : " is-unread"}${pending ? " is-pending" : ""}" type="button" data-notification-id="${id}"${pending ? " disabled" : ""}>
@@ -105,31 +159,38 @@
         <strong>${escapeHtml(item.title)}</strong>
         <span>${escapeHtml(item.body)}</span>
       </button>`;
-    }).join("");
+    }).join("")}`;
   }
 
-  async function load() {
-    if (!state.user || state.loading) return;
-    state.loading = true;
-    state.error = "";
-    render();
-    try {
-      const response = await fetch("/api/me/notifications?limit=20");
-      const data = await response.json();
-      if (response.status === 401) {
-        syncUser(null);
-        return;
-      }
-      if (!response.ok || !data.ok) throw new Error(data.reason || "Không thể tải thông báo.");
-      state.items = Array.isArray(data.items) ? data.items.slice(0, MAX_ITEMS) : [];
-      setUnreadCount(data.unreadCount);
-    } catch (error) {
-      state.error = error.message || "Không thể tải thông báo.";
-    } finally {
-      state.loading = false;
-      updateBell();
+  function load() {
+    if (!state.user) return Promise.resolve();
+    if (loadPromise) return loadPromise;
+    const userAtStart = state.user;
+    const versionAtStart = state.notificationVersion;
+    loadPromise = (async () => {
+      state.loading = true;
+      state.error = "";
       render();
-    }
+      try {
+        const response = await fetch("/api/me/notifications?limit=20");
+        const data = await response.json();
+        if (response.status === 401) {
+          syncUser(null);
+          return;
+        }
+        if (!response.ok || !data.ok) throw new Error(data.reason || "Không thể tải thông báo.");
+        if (state.user !== userAtStart) return;
+        applyLoadedItems(data.items, data.unreadCount, versionAtStart);
+      } catch (error) {
+        state.error = error.message || "Không thể tải thông báo.";
+      } finally {
+        state.loading = false;
+        updateBell();
+        render();
+        loadPromise = null;
+      }
+    })();
+    return loadPromise;
   }
 
   async function markRead(id) {
@@ -137,6 +198,7 @@
     const item = state.items.find((entry) => entry.id === id);
     if (!item || item.read) return;
     state.pendingIds.add(id);
+    const versionAtStart = state.notificationVersion;
     render();
     try {
       const response = await fetch(`/api/me/notifications/${encodeURIComponent(id)}/read`, { method: "POST" });
@@ -146,9 +208,13 @@
         return;
       }
       if (!response.ok || !data.ok) throw new Error(data.reason || "Không thể đánh dấu thông báo.");
+      const readAt = new Date().toISOString();
       item.read = true;
-      item.readAt = new Date().toISOString();
-      setUnreadCount(data.unreadCount);
+      item.readAt = readAt;
+      state.readOverrides.set(id, { read: true, readAt });
+      const currentVersion = state.notificationVersion;
+      if (currentVersion === versionAtStart) setUnreadCount(data.unreadCount);
+      else setUnreadCount(Math.max(Number(data.unreadCount) || 0, state.items.filter((entry) => !entry.read).length));
       state.error = "";
     } catch (error) {
       state.error = error.message || "Không thể đánh dấu thông báo.";
@@ -163,6 +229,7 @@
     if (!state.user || !state.unreadCount) return;
     const button = document.querySelector("[data-notification-read-all]");
     if (button) button.disabled = true;
+    const versionAtStart = state.notificationVersion;
     try {
       const response = await fetch("/api/me/notifications/read-all", { method: "POST" });
       const data = await response.json();
@@ -171,12 +238,13 @@
         return;
       }
       if (!response.ok || !data.ok) throw new Error(data.reason || "Không thể đánh dấu tất cả.");
-      state.items.forEach((item) => {
-        item.read = true;
-        item.readAt ||= new Date().toISOString();
-      });
-      setUnreadCount(Number.isSafeInteger(data.unreadCount) ? data.unreadCount : 0);
+      if (state.notificationVersion === versionAtStart && Number.isSafeInteger(data.unreadCount)) {
+        setUnreadCount(data.unreadCount);
+      }
       state.error = "";
+      const inFlightLoad = loadPromise;
+      if (inFlightLoad) await inFlightLoad;
+      await load();
     } catch (error) {
       state.error = error.message || "Không thể đánh dấu tất cả thông báo.";
     } finally {
@@ -205,7 +273,14 @@
   function handleSocketMessage(message) {
     if (!state.user || !message || typeof message !== "object") return;
     if (message.type === "notificationCreated" && message.notification?.id) {
-      state.items = [message.notification, ...state.items.filter((item) => item.id !== message.notification.id)].slice(0, MAX_ITEMS);
+      state.notificationVersion += 1;
+      const notification = { ...message.notification, read: false, readAt: null };
+      state.liveNotifications.set(notification.id, {
+        item: notification,
+        unreadCount: message.unreadCount,
+        version: state.notificationVersion,
+      });
+      state.items = [notification, ...state.items.filter((item) => item.id !== notification.id)].slice(0, MAX_ITEMS);
       setUnreadCount(message.unreadCount);
       state.error = "";
       updateBell();

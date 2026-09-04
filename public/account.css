@@ -511,6 +511,9 @@ button:focus-visible, a:focus-visible, input:focus-visible {
 .notification-state strong { color: var(--text-high); font-size: 14px; }
 .notification-state p { max-width: 34ch; margin: 0; }
 .notification-state .notification-retry { margin-top: 5px; }
+.notification-error { display: grid; gap: 5px; padding: 10px 11px; border: 1px solid oklch(72% .16 35 / .35); border-radius: 11px; background: oklch(72% .16 35 / .1); color: var(--text-muted); font-size: 11px; line-height: 1.4; overflow-wrap: anywhere; }
+.notification-error strong { color: var(--coral); font-size: 12px; }
+.notification-error .notification-retry { justify-self: start; }
 
 @media (min-width: 720px) {
   .account-shell, .account-topbar { width: min(1120px, calc(100% - 48px)); }

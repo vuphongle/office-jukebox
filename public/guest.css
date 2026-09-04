@@ -1297,6 +1297,9 @@ header .desktop-intro { display: none; }
 .notification-state strong { color: var(--text-hi); font-size: 14px; }
 .notification-state p { max-width: 34ch; margin: 0; }
 .notification-state .notification-retry { margin-top: 5px; }
+.notification-error { display: grid; gap: 5px; padding: 10px 11px; border: 1px solid oklch(68% .18 32 / .35); border-radius: 11px; background: oklch(68% .18 32 / .1); color: var(--muted); font-size: 11px; line-height: 1.4; overflow-wrap: anywhere; }
+.notification-error strong { color: var(--red); font-size: 12px; }
+.notification-error .notification-retry { justify-self: start; }
 .auth-tabs {
   display: flex;
   gap: 8px;
