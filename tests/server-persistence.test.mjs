@@ -6,6 +6,10 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { WebSocket } from "ws";
+import { closeDb, initDb } from "../src/db.js";
+import { hashPassword } from "../src/password.js";
+import { QueueRepository } from "../src/repositories/queueRepository.js";
+import { UserRepository } from "../src/repositories/userRepository.js";
 
 const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 
@@ -49,15 +53,19 @@ async function stopServer(child) {
   await new Promise((resolve) => child.once("exit", resolve));
 }
 
-async function login(baseUrl) {
+async function loginAs(baseUrl, username, password) {
   const response = await fetch(`${baseUrl}/api/auth/login`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ username: "review-admin", password: "review-password-123" }),
+    body: JSON.stringify({ username, password }),
   });
   assert.equal(response.status, 200);
   const cookie = response.headers.get("set-cookie").split(";", 1)[0];
   return cookie;
+}
+
+async function login(baseUrl) {
+  return loginAs(baseUrl, "review-admin", "review-password-123");
 }
 
 async function register(baseUrl, username) {
@@ -276,6 +284,84 @@ test("WebSocket owner skip responds without granting host control", async () => 
   } finally {
     socket?.close();
     await stopServer(child);
+    rmSync(dataDir, { recursive: true, force: true });
+  }
+});
+
+test("authenticated owner can skip the exact current song without refund or XP", async () => {
+  const dataDir = mkdtempSync(path.join(os.tmpdir(), "office-jukebox-owner-skip-auth-"));
+  const dbPath = path.join(dataDir, "jukebox.db");
+  let socket;
+  let child;
+  let baseUrl;
+  try {
+    const seedDb = initDb({ dbPath, adminUser: "review-admin", adminPass: "review-password-123" });
+    const userRepo = new UserRepository(seedDb);
+    const owner = userRepo.create({
+      username: "skip_owner",
+      passwordHash: hashPassword("owner-password-123"),
+      displayName: "Skip Owner",
+    });
+    const voter = userRepo.create({ username: "skip_voter", passwordHash: hashPassword("voter-password-123") });
+    userRepo.updatePoints(voter.id, 1, { type: "admin_adjustment", reason: "owner skip test" });
+    const queueRepo = new QueueRepository(seedDb);
+    const ownerSong = queueRepo.createItem({
+      videoId: "owner-song-auth",
+      title: "Owner song",
+      duration: "3:30",
+      addedBy: owner.display_name,
+      requesterId: "owner-client",
+      addedByUserId: owner.id,
+    });
+    const nextSong = queueRepo.createItem({
+      videoId: "next-song-auth",
+      title: "Next song",
+      duration: "3:30",
+      addedBy: "Another member",
+      requesterId: "other-client",
+    });
+    queueRepo.addVote(ownerSong.id, voter.id);
+    queueRepo.updateStatus(ownerSong.id, "playing", { startedAt: Date.now() - 1000 });
+    closeDb();
+
+    ({ child, baseUrl } = await startServer(dataDir));
+    const ownerCookie = await loginAs(baseUrl, "skip_owner", "owner-password-123");
+    socket = await openSocket(baseUrl, ownerCookie);
+    const initial = await waitForMessage(socket, (message) => message.type === "state");
+    assert.equal(initial.state.nowPlaying.id, ownerSong.id);
+
+    socket.send(JSON.stringify({ type: "skipOwn", id: nextSong.id, clientId: "owner-client" }));
+    const wrongItem = await waitForMessage(socket, (message) => message.type === "skipOwnResult");
+    assert.equal(wrongItem.ok, false);
+
+    const nextStatePromise = waitForMessage(
+      socket,
+      (message) => message.type === "state" && message.state?.nowPlaying?.id === nextSong.id
+    );
+    socket.send(JSON.stringify({ type: "skipOwn", id: ownerSong.id, clientId: "spoofed-client" }));
+    const result = await waitForMessage(socket, (message) => message.type === "skipOwnResult");
+    assert.equal(result.ok, true);
+    assert.equal(result.id, ownerSong.id);
+    const nextState = await nextStatePromise;
+    assert.equal(nextState.state.nowPlaying.id, nextSong.id);
+
+    socket.close();
+    socket = null;
+    await stopServer(child);
+    child = null;
+
+    const verifyDb = initDb({ dbPath });
+    const finished = verifyDb.query("SELECT status, finish_reason FROM queue_items WHERE id = ?").get(ownerSong.id);
+    assert.equal(finished.status, "played");
+    assert.equal(finished.finish_reason, "owner_skipped");
+    assert.equal(verifyDb.query("SELECT points_balance FROM users WHERE id = ?").get(voter.id).points_balance, 0);
+    assert.equal(verifyDb.query("SELECT COUNT(*) AS count FROM point_ledger WHERE type = 'vote_refund'").get().count, 0);
+    assert.equal(verifyDb.query("SELECT COALESCE(SUM(delta_xp), 0) AS total FROM rank_activity_ledger WHERE user_id = ?").get(owner.id).total, 0);
+    closeDb();
+  } finally {
+    socket?.close();
+    if (child) await stopServer(child);
+    try { closeDb(); } catch {}
     rmSync(dataDir, { recursive: true, force: true });
   }
 });
