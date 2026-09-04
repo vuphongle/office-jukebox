@@ -55,6 +55,7 @@
       state.loading = false;
       state.liveNotifications.clear();
       state.readOverrides.clear();
+      state.pendingIds.clear();
       close();
     } else {
       const sameUserObject = state.user === nextUser;
@@ -65,6 +66,7 @@
         state.unreadCount = 0;
         state.liveNotifications.clear();
         state.readOverrides.clear();
+        state.pendingIds.clear();
         state.error = "";
         state.loading = false;
       }
@@ -189,12 +191,12 @@
       try {
         const response = await fetch("/api/me/notifications?limit=20");
         const data = await response.json();
+        if (state.user !== userAtStart || state.userGeneration !== generationAtStart) return;
         if (response.status === 401) {
           syncUser(null);
           return;
         }
         if (!response.ok || !data.ok) throw new Error(data.reason || "Không thể tải thông báo.");
-        if (state.user !== userAtStart || state.userGeneration !== generationAtStart) return;
         applyLoadedItems(data.items, data.unreadCount, versionAtStart);
       } catch (error) {
         state.error = error.message || "Không thể tải thông báo.";
@@ -215,11 +217,14 @@
     const item = state.items.find((entry) => entry.id === id);
     if (!item || item.read) return;
     state.pendingIds.add(id);
+    const userAtStart = state.user;
     const versionAtStart = state.notificationVersion;
+    const generationAtStart = state.userGeneration;
     render();
     try {
       const response = await fetch(`/api/me/notifications/${encodeURIComponent(id)}/read`, { method: "POST" });
       const data = await response.json();
+      if (state.user !== userAtStart || state.userGeneration !== generationAtStart) return;
       if (response.status === 401) {
         syncUser(null);
         return;
@@ -247,10 +252,13 @@
     if (!state.user || !state.unreadCount) return;
     const button = document.querySelector("[data-notification-read-all]");
     if (button) button.disabled = true;
+    const userAtStart = state.user;
     const versionAtStart = state.notificationVersion;
+    const generationAtStart = state.userGeneration;
     try {
       const response = await fetch("/api/me/notifications/read-all", { method: "POST" });
       const data = await response.json();
+      if (state.user !== userAtStart || state.userGeneration !== generationAtStart) return;
       if (response.status === 401) {
         syncUser(null);
         return;
