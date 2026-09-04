@@ -259,6 +259,13 @@ h1 {
 .data-table tbody tr:hover {
   background: var(--fill);
 }
+.notification-history-scroll { max-height: 430px; overflow-y: auto; scrollbar-width: thin; scrollbar-color: oklch(100% 0 0 / .18) transparent; }
+.notification-history-table td { vertical-align: top; }
+.notification-history-copy { min-width: 180px; }
+.notification-history-copy strong, .notification-history-copy small { display: block; overflow-wrap: anywhere; }
+.notification-history-copy strong { color: var(--text-hi); font-size: 12px; line-height: 1.35; }
+.notification-history-copy small { max-width: 34ch; margin-top: 4px; color: var(--muted); font-size: 11px; line-height: 1.4; white-space: pre-wrap; }
+.notification-history-table time { color: var(--muted); font-size: 11px; white-space: nowrap; }
 .rank-cell { min-width: 150px; color: var(--text-hi); font-size: 12px; }
 .rank-cell small { display: block; margin-top: 3px; color: var(--muted); font-size: 10px; }
 .rank-cell-badge { font-size: 15px; vertical-align: -1px; }
@@ -336,6 +343,19 @@ h1 {
   font-size: 14px;
 }
 .admin-form input:focus { border-color: var(--gold); outline: 2px solid var(--gold); outline-offset: 2px; }
+.admin-form textarea, .admin-form select {
+  width: 100%;
+  padding: 10px 14px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--fill);
+  color: var(--text);
+  font: 400 14px/1.45 var(--sans);
+}
+.admin-form textarea { min-height: 132px; resize: vertical; }
+.admin-form select { height: 42px; padding-block: 0; }
+.admin-form textarea:focus, .admin-form select:focus { border-color: var(--gold); outline: 2px solid var(--gold); outline-offset: 2px; }
+.form-hint { display: block; margin-top: 5px; color: var(--muted); font-size: 11px; }
 
 /* Pagination */
 .pagination {

@@ -147,12 +147,17 @@ function renderUserAuthBar() {
         </a>
         <span id="user-points-pill" class="user-points-pill" title="Xem lịch sử / Điểm danh">${currentUser.pointsBalance} 🪙</span>
         <span id="user-streak-pill" class="user-streak-pill" title="Điểm danh streak">🔥 ${currentUser.currentStreak}d</span>
+        <button data-notification-bell class="notification-bell" type="button" aria-label="Mở thông báo">
+          <svg aria-hidden="true" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M18 9a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4" /></svg>
+          <span data-notification-count class="notification-count hidden">0</span>
+        </button>
         <button id="user-logout-btn" class="user-logout-btn" type="button">Thoát</button>
       </div>
     `;
     document.getElementById("user-points-pill")?.addEventListener("click", openCheckinModal);
     document.getElementById("user-streak-pill")?.addEventListener("click", openCheckinModal);
     document.getElementById("user-logout-btn")?.addEventListener("click", handleLogout);
+    window.JukeboxNotifications?.syncUser(currentUser);
   } else {
     bar.innerHTML = `
       <button id="open-auth-btn" class="auth-pill-btn" type="button">
@@ -161,6 +166,7 @@ function renderUserAuthBar() {
       </button>
     `;
     document.getElementById("open-auth-btn")?.addEventListener("click", () => openAuthModal("login"));
+    window.JukeboxNotifications?.reset();
   }
 }
 
@@ -1370,6 +1376,7 @@ function connectWs() {
       return;
     }
     if (!msg || typeof msg !== "object" || Array.isArray(msg)) return;
+    window.JukeboxNotifications?.handleSocketMessage(msg);
     if (msg.type === "state" && msg.state && typeof msg.state === "object") {
       lastQueueState = msg.state;
       if (typeof msg.queueLimitOn === "boolean") queueLimitOn = msg.queueLimitOn;
@@ -1632,6 +1639,9 @@ renderRequestSettings();
 renderFeedback();
 document.getElementById("leaderboard-refresh")?.addEventListener("click", loadLeaderboard);
 loadLeaderboard();
+window.addEventListener("jukebox:notification", (event) => {
+  if (currentUser) toast("info", "🔔", "Bạn có thông báo mới", { sub: event.detail?.title || "Mở chuông để xem cập nhật." });
+});
 fetchMe();
 connectWs();
 setInterval(() => {

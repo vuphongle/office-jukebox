@@ -110,6 +110,7 @@ function showStatus(message, kind = "success") {
 
 function showAuthGate(message = "") {
   currentUser = null;
+  window.JukeboxNotifications?.reset();
   $("#account-loading").classList.add("hidden");
   $("#account-dashboard").classList.add("hidden");
   $("#auth-gate").classList.remove("hidden");
@@ -289,6 +290,7 @@ function renderAccount() {
   if (!hasUnsavedProfileDraft) profileInput.value = displayName;
   updateDisplayNameForm();
   renderPointDrop();
+  window.JukeboxNotifications?.syncUser(currentUser);
 }
 
 function renderPointDrop() {
@@ -595,6 +597,7 @@ function connectSocket() {
     let message;
     try { message = JSON.parse(event.data); } catch { return; }
     if (!message || typeof message !== "object" || Array.isArray(message)) return;
+    window.JukeboxNotifications?.handleSocketMessage(message);
     if (message.type === "state" && currentUser) {
       window.clearTimeout(queueRefreshTimer);
       queueRefreshTimer = window.setTimeout(loadActiveVotes, 160);
@@ -630,6 +633,11 @@ function connectSocket() {
     if (currentUser) socketReconnectTimer = window.setTimeout(connectSocket, 2000);
   };
 }
+
+window.addEventListener("jukebox:notification", (event) => {
+  if (!currentUser) return;
+  showStatus(`Thông báo mới: ${event.detail?.title || "Ban Tổ Chức vừa cập nhật."}`);
+});
 
 $("#account-auth-login-tab").addEventListener("click", () => setAccountAuthMode("login"));
 $("#account-auth-register-tab").addEventListener("click", () => setAccountAuthMode("register"));

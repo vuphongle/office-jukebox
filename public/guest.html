@@ -310,7 +310,26 @@
     </div>
   </div>
 
+  <!-- MODAL: In-app notifications -->
+  <div id="notification-modal" class="guest-modal-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="notification-modal-title">
+    <div class="guest-modal-card notification-modal-card">
+      <div class="guest-modal-head">
+        <div>
+          <p class="notification-eyebrow">Hộp thư cập nhật</p>
+          <h3 id="notification-modal-title">Thông báo</h3>
+        </div>
+        <button class="modal-x-btn" type="button" data-notification-close aria-label="Đóng thông báo">&times;</button>
+      </div>
+      <div class="notification-toolbar">
+        <span id="notification-summary">Tất cả đã đọc</span>
+        <button type="button" data-notification-read-all>Đánh dấu tất cả đã đọc</button>
+      </div>
+      <div id="notification-list" class="notification-list" role="log" aria-live="polite" aria-relevant="additions"></div>
+    </div>
+  </div>
+
   <script src="/auth-utils.js"></script>
+  <script src="/notifications.js"></script>
   <script src="/guest.js"></script>
 </body>
 </html>
