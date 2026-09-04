@@ -60,6 +60,18 @@ async function login(baseUrl) {
   return cookie;
 }
 
+async function register(baseUrl, username) {
+  const response = await fetch(`${baseUrl}/api/auth/register`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ username, password: "member-password-123", displayName: username }),
+  });
+  assert.equal(response.status, 200);
+  const cookie = response.headers.get("set-cookie")?.split(";", 1)[0];
+  assert.ok(cookie);
+  return cookie;
+}
+
 function openSocket(baseUrl, cookie) {
   return new Promise((resolve, reject) => {
     const socket = new WebSocket(baseUrl.replace(/^http/, "ws"), { headers: { Cookie: cookie } });
@@ -263,6 +275,96 @@ test("WebSocket owner skip responds without granting host control", async () => 
     assert.equal(result.id, "missing-item");
   } finally {
     socket?.close();
+    await stopServer(child);
+    rmSync(dataDir, { recursive: true, force: true });
+  }
+});
+
+test("admin notifications fan out to active users with unread/read controls", async () => {
+  const dataDir = mkdtempSync(path.join(os.tmpdir(), "office-jukebox-notifications-"));
+  const { child, baseUrl } = await startServer(dataDir);
+  let memberSocket;
+  try {
+    const memberCookie = await register(baseUrl, "notification_member");
+    const adminCookie = await login(baseUrl);
+    memberSocket = await openSocket(baseUrl, memberCookie);
+    await waitForMessage(memberSocket, (message) => message.type === "state");
+
+    const unauthenticated = await fetch(`${baseUrl}/api/me/notifications`);
+    assert.equal(unauthenticated.status, 401);
+
+    const forbidden = await fetch(`${baseUrl}/api/admin/notifications`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Cookie: memberCookie },
+      body: JSON.stringify({ title: "Không được gửi", body: "Không được gửi" }),
+    });
+    assert.equal(forbidden.status, 403);
+
+    const invalid = await fetch(`${baseUrl}/api/admin/notifications`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Cookie: adminCookie },
+      body: JSON.stringify({ title: "", body: "Nội dung" }),
+    });
+    assert.equal(invalid.status, 400);
+
+    const pushPromise = waitForMessage(memberSocket, (message) => message.type === "notificationCreated");
+    const send = await fetch(`${baseUrl}/api/admin/notifications`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Cookie: adminCookie },
+      body: JSON.stringify({
+        title: "Bảo trì hệ thống",
+        body: "Jukebox sẽ được cập nhật lúc 22:00.",
+        kind: "maintenance",
+      }),
+    });
+    assert.equal(send.status, 200);
+    const sent = await send.json();
+    assert.equal(sent.ok, true);
+    assert.equal(sent.recipientCount, 2);
+    const pushed = await pushPromise;
+    assert.equal(pushed.notification.id, sent.notification.id);
+    assert.equal(pushed.unreadCount, 1);
+
+    const memberMe = await (await fetch(`${baseUrl}/api/me`, { headers: { Cookie: memberCookie } })).json();
+    assert.equal(memberMe.user.unreadNotificationCount, 1);
+    const list = await (await fetch(`${baseUrl}/api/me/notifications?limit=200`, { headers: { Cookie: memberCookie } })).json();
+    assert.equal(list.total, 1);
+    assert.equal(list.limit, 20);
+    assert.equal(list.unreadCount, 1);
+    assert.equal(list.items[0].read, false);
+
+    const read = await fetch(`${baseUrl}/api/me/notifications/${encodeURIComponent(sent.notification.id)}/read`, {
+      method: "POST",
+      headers: { Cookie: memberCookie },
+    });
+    assert.equal(read.status, 200);
+    assert.equal((await read.json()).unreadCount, 0);
+
+    const second = await fetch(`${baseUrl}/api/admin/notifications`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Cookie: adminCookie },
+      body: JSON.stringify({ title: "Tính năng mới", body: "Đã cập nhật bảng xếp hạng.", kind: "feature" }),
+    });
+    assert.equal(second.status, 200);
+
+    const readAll = await fetch(`${baseUrl}/api/me/notifications/read-all`, {
+      method: "POST",
+      headers: { Cookie: memberCookie },
+    });
+    assert.equal(readAll.status, 200);
+    assert.equal((await readAll.json()).markedCount, 1);
+
+    const adminHistory = await (await fetch(`${baseUrl}/api/admin/notifications?limit=100`, {
+      headers: { Cookie: adminCookie },
+    })).json();
+    assert.equal(adminHistory.ok, true);
+    assert.equal(adminHistory.limit, 20);
+    assert.equal(adminHistory.total, 2);
+    assert.equal(adminHistory.items.length, 2);
+    assert.equal(adminHistory.items[1].recipientCount, 2);
+    assert.equal(adminHistory.items[1].readCount, 1);
+  } finally {
+    memberSocket?.close();
     await stopServer(child);
     rmSync(dataDir, { recursive: true, force: true });
   }
