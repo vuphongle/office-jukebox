@@ -270,6 +270,23 @@ test("public leaderboard is available without authentication and stays bounded",
   }
 });
 
+test("public leaderboard page is available without authentication", async () => {
+  const dataDir = mkdtempSync(path.join(os.tmpdir(), "office-jukebox-leaderboard-page-"));
+  const { child, baseUrl } = await startServer(dataDir);
+  try {
+    const response = await fetch(`${baseUrl}/leaderboard`);
+    assert.equal(response.status, 200);
+    const html = await response.text();
+    assert.match(html, /<title>Bảng xếp hạng · Office Jukebox<\/title>/);
+    assert.match(html, /leaderboard\.css\?v=/);
+    assert.match(html, /leaderboard\.js\?v=/);
+    assert.match(html, /id="leaderboard-podium"/);
+  } finally {
+    await stopServer(child);
+    rmSync(dataDir, { recursive: true, force: true });
+  }
+});
+
 test("WebSocket owner skip responds without granting host control", async () => {
   const dataDir = mkdtempSync(path.join(os.tmpdir(), "office-jukebox-owner-skip-"));
   const { child, baseUrl } = await startServer(dataDir);
