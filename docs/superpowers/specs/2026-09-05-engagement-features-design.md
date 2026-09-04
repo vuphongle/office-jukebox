@@ -1,6 +1,6 @@
 # Engagement Features Design
 
-**Date:** 2026-09-05  
+**Date:** 2026-09-05
 **Status:** Approved in chat; implementation follows the decisions confirmed by the product owner.
 
 ## Goal
