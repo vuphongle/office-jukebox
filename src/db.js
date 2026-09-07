@@ -53,7 +53,9 @@ export function initDb({ dbPath = DEFAULT_DB_PATH, adminUser = process.env.ADMIN
       body TEXT NOT NULL,
       kind TEXT NOT NULL DEFAULT 'info' CHECK(kind IN ('info', 'maintenance', 'feature')),
       created_by_user_id TEXT NOT NULL REFERENCES users(id),
-      created_at TEXT NOT NULL
+      created_at TEXT NOT NULL,
+      source_type TEXT NOT NULL DEFAULT 'admin',
+      source_key TEXT
     );
     CREATE INDEX IF NOT EXISTS idx_notifications_created_at
       ON notifications(created_at DESC, id DESC);
@@ -73,7 +75,8 @@ export function initDb({ dbPath = DEFAULT_DB_PATH, adminUser = process.env.ADMIN
       delta INTEGER NOT NULL,
       type TEXT NOT NULL CHECK(type IN (
         'daily_checkin', 'streak_bonus', 'vote_spend',
-        'vote_refund', 'admin_adjustment', 'airdrop_direct', 'point_drop_claim'
+        'vote_refund', 'admin_adjustment', 'airdrop_direct', 'point_drop_claim',
+        'engagement_reward'
       )),
       reference_id TEXT,
       actor_user_id TEXT REFERENCES users(id),
@@ -90,6 +93,8 @@ export function initDb({ dbPath = DEFAULT_DB_PATH, adminUser = process.env.ADMIN
       streak_after INTEGER NOT NULL,
       base_points INTEGER NOT NULL DEFAULT 1,
       bonus_points INTEGER NOT NULL DEFAULT 0,
+      tier_bonus_points INTEGER NOT NULL DEFAULT 0,
+      achievement_points INTEGER NOT NULL DEFAULT 0,
       checked_in_at TEXT NOT NULL,
       UNIQUE(user_id, local_date)
     );
@@ -200,7 +205,10 @@ export function initDb({ dbPath = DEFAULT_DB_PATH, adminUser = process.env.ADMIN
       status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active', 'closed', 'superseded')),
       created_by_user_id TEXT NOT NULL REFERENCES users(id),
       created_at TEXT NOT NULL,
-      closed_at TEXT
+      closed_at TEXT,
+      expires_at TEXT,
+      closed_by_user_id TEXT REFERENCES users(id),
+      close_reason TEXT
     );
     CREATE INDEX IF NOT EXISTS idx_point_drops_status ON point_drops(status);
 
@@ -222,6 +230,7 @@ export function initDb({ dbPath = DEFAULT_DB_PATH, adminUser = process.env.ADMIN
       text TEXT NOT NULL,
       is_admin INTEGER NOT NULL DEFAULT 0,
       is_ai INTEGER NOT NULL DEFAULT 0,
+      message_type TEXT NOT NULL DEFAULT 'human' CHECK(message_type IN ('human', 'ai', 'system')),
       created_at TEXT NOT NULL
     );
     CREATE INDEX IF NOT EXISTS idx_chat_messages_event_seq
@@ -266,6 +275,94 @@ export function initDb({ dbPath = DEFAULT_DB_PATH, adminUser = process.env.ADMIN
   if (!queueItemColumns.some((column) => column.name === "played_seconds")) {
     db.run("ALTER TABLE queue_items ADD COLUMN played_seconds INTEGER");
   }
+
+  const notificationColumns = db.query("PRAGMA table_info(notifications)").all();
+  if (!notificationColumns.some((column) => column.name === "source_type")) {
+    db.run("ALTER TABLE notifications ADD COLUMN source_type TEXT NOT NULL DEFAULT 'admin'");
+  }
+  if (!notificationColumns.some((column) => column.name === "source_key")) {
+    db.run("ALTER TABLE notifications ADD COLUMN source_key TEXT");
+  }
+  db.run(
+    `CREATE UNIQUE INDEX IF NOT EXISTS idx_notifications_source_key
+     ON notifications(source_type, source_key) WHERE source_key IS NOT NULL`
+  );
+
+  const checkinColumns = db.query("PRAGMA table_info(checkins)").all();
+  if (!checkinColumns.some((column) => column.name === "tier_bonus_points")) {
+    db.run("ALTER TABLE checkins ADD COLUMN tier_bonus_points INTEGER NOT NULL DEFAULT 0");
+  }
+  if (!checkinColumns.some((column) => column.name === "achievement_points")) {
+    db.run("ALTER TABLE checkins ADD COLUMN achievement_points INTEGER NOT NULL DEFAULT 0");
+  }
+
+  const dropColumns = db.query("PRAGMA table_info(point_drops)").all();
+  if (!dropColumns.some((column) => column.name === "expires_at")) {
+    db.run("ALTER TABLE point_drops ADD COLUMN expires_at TEXT");
+  }
+  if (!dropColumns.some((column) => column.name === "closed_by_user_id")) {
+    db.run("ALTER TABLE point_drops ADD COLUMN closed_by_user_id TEXT REFERENCES users(id)");
+  }
+  if (!dropColumns.some((column) => column.name === "close_reason")) {
+    db.run("ALTER TABLE point_drops ADD COLUMN close_reason TEXT");
+  }
+
+  const chatColumns = db.query("PRAGMA table_info(chat_messages)").all();
+  if (!chatColumns.some((column) => column.name === "message_type")) {
+    db.run("ALTER TABLE chat_messages ADD COLUMN message_type TEXT NOT NULL DEFAULT 'human'");
+  }
+
+  // SQLite cannot alter a CHECK constraint in place. Rebuild the small,
+  // append-only ledger only for databases created before engagement rewards.
+  const pointLedgerSql = db
+    .query("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'point_ledger'")
+    .get()?.sql || "";
+  if (!pointLedgerSql.includes("engagement_reward")) {
+    db.exec(`
+      ALTER TABLE point_ledger RENAME TO point_ledger_legacy;
+      CREATE TABLE point_ledger (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL REFERENCES users(id),
+        delta INTEGER NOT NULL,
+        type TEXT NOT NULL CHECK(type IN (
+          'daily_checkin', 'streak_bonus', 'vote_spend',
+          'vote_refund', 'admin_adjustment', 'airdrop_direct', 'point_drop_claim',
+          'engagement_reward'
+        )),
+        reference_id TEXT,
+        actor_user_id TEXT REFERENCES users(id),
+        reason TEXT,
+        created_at TEXT NOT NULL
+      );
+      INSERT INTO point_ledger (id, user_id, delta, type, reference_id, actor_user_id, reason, created_at)
+      SELECT id, user_id, delta, type, reference_id, actor_user_id, reason, created_at
+      FROM point_ledger_legacy;
+      DROP TABLE point_ledger_legacy;
+      CREATE INDEX IF NOT EXISTS idx_point_ledger_user_id ON point_ledger(user_id);
+      CREATE INDEX IF NOT EXISTS idx_point_ledger_created_at ON point_ledger(created_at);
+    `);
+  }
+
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS engagement_awards (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      award_kind TEXT NOT NULL CHECK(award_kind IN ('personal', 'podium')),
+      category TEXT NOT NULL CHECK(category IN ('streak', 'rank')),
+      milestone_key TEXT NOT NULL,
+      scope_key TEXT NOT NULL,
+      place INTEGER,
+      points INTEGER NOT NULL CHECK(points > 0),
+      source_id TEXT,
+      created_at TEXT NOT NULL,
+      UNIQUE(user_id, award_kind, category, milestone_key, scope_key)
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_engagement_awards_podium_slot
+      ON engagement_awards(award_kind, category, milestone_key, scope_key, place)
+      WHERE award_kind = 'podium' AND place IS NOT NULL;
+    CREATE INDEX IF NOT EXISTS idx_engagement_awards_user_created
+      ON engagement_awards(user_id, created_at DESC);
+  `);
   db.run(
     `CREATE INDEX IF NOT EXISTS idx_queue_items_vote_order
      ON queue_items(status, pinned, pinned_order, vote_score DESC, vote_rank_sequence, queue_sequence)`

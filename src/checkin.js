@@ -1,5 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { rankForXp } from "./rank.js";
+import { DEFAULT_EVENT_ID, streakTierFor, streakTierBonusFor } from "./engagement.js";
+import { EngagementRepository } from "./repositories/engagementRepository.js";
 
 export const DEFAULT_TIMEZONE = "Asia/Ho_Chi_Minh";
 
@@ -37,9 +39,26 @@ export function calculateMilestoneBonus(streakAfter) {
   return { bonus: 0, isMilestone: false, milestoneDay: cycleDay };
 }
 
-export function performCheckin(db, userId, { timezone = null, now = new Date() } = {}) {
+export function calculateStreakTierBonus(streakAfter) {
+  const tier = streakTierFor(streakAfter);
+  return { bonus: streakTierBonusFor(streakAfter), tier };
+}
+
+export function performCheckin(
+  db,
+  userId,
+  {
+    timezone = null,
+    now = new Date(),
+    eventId = DEFAULT_EVENT_ID,
+    notificationRepo = null,
+    engagementRepo = null,
+    getNotificationsEnabled = () => true,
+  } = {}
+) {
   const today = getLocalDate(timezone, now);
   const yesterday = getYesterdayLocalDate(timezone, now);
+  const rewards = engagementRepo || new EngagementRepository(db, { notificationRepo, getNotificationsEnabled });
 
   const tx = db.transaction(() => {
     const user = db.query("SELECT * FROM users WHERE id = ?").get(userId);
@@ -64,7 +83,12 @@ export function performCheckin(db, userId, { timezone = null, now = new Date() }
         basePoints: rank.checkinPoints,
         newBalance: user.points_balance,
         isMilestone: false,
+        tierBonusPoints: 0,
+        achievementPoints: 0,
+        notifications: [],
+        announcements: [],
         localDate: today,
+        streakTier: streakTierFor(user.current_streak || 0),
         rank: {
           level: rank.level,
           name: rank.name,
@@ -79,17 +103,18 @@ export function performCheckin(db, userId, { timezone = null, now = new Date() }
       streakAfter = (user.current_streak || 0) + 1;
     }
 
-    const { bonus: bonusPoints, isMilestone } = calculateMilestoneBonus(streakAfter);
+    const { bonus: bonusPoints, isMilestone, milestoneDay } = calculateMilestoneBonus(streakAfter);
+    const { bonus: tierBonusPoints, tier: streakTier } = calculateStreakTierBonus(streakAfter);
     const basePoints = rank.checkinPoints;
-    const totalAwarded = basePoints + bonusPoints;
-    const newBalance = user.points_balance + totalAwarded;
+    const immediateAwarded = basePoints + bonusPoints + tierBonusPoints;
     const nowIso = now.toISOString();
 
     const checkinId = randomUUID();
     db.run(
-      `INSERT INTO checkins (id, user_id, local_date, streak_after, base_points, bonus_points, checked_in_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
-      [checkinId, userId, today, streakAfter, basePoints, bonusPoints, nowIso]
+      `INSERT INTO checkins
+       (id, user_id, local_date, streak_after, base_points, bonus_points, tier_bonus_points, achievement_points, checked_in_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?)`,
+      [checkinId, userId, today, streakAfter, basePoints, bonusPoints, tierBonusPoints, nowIso]
     );
 
     // Ledger for base point
@@ -110,23 +135,81 @@ export function performCheckin(db, userId, { timezone = null, now = new Date() }
       );
     }
 
+    if (tierBonusPoints > 0) {
+      const tierLedgerId = randomUUID();
+      db.run(
+        `INSERT INTO point_ledger (id, user_id, delta, type, reference_id, actor_user_id, reason, created_at)
+         VALUES (?, ?, ?, 'streak_bonus', ?, NULL, ?, ?)`,
+        [tierLedgerId, userId, tierBonusPoints, checkinId, `Thưởng tier streak ${streakTier.minStreak}+ ngày (+${tierBonusPoints}đ)`, nowIso]
+      );
+    }
+
     // Update user
+    const immediateBalance = user.points_balance + immediateAwarded;
     db.run(
       `UPDATE users
        SET points_balance = ?, current_streak = ?, last_checkin_date = ?, updated_at = ?
        WHERE id = ?`,
-      [newBalance, streakAfter, today, nowIso, userId]
+      [immediateBalance, streakAfter, today, nowIso, userId]
     );
+
+    const notifications = [];
+    const announcements = [];
+    if (isMilestone) {
+      const milestoneTitle = `Chúc mừng streak ${streakAfter} ngày!`;
+      const milestoneBody = `Bạn nhận thưởng mốc +${bonusPoints} điểm cho streak ${streakAfter} ngày.`;
+      if (getNotificationsEnabled() && notificationRepo) {
+        const notification = notificationRepo.createForUserInTransaction({
+          userId,
+          createdByUserId: userId,
+          title: milestoneTitle,
+          body: `${milestoneBody} Số dư mới: ${immediateBalance} điểm.`,
+          sourceKey: `checkin_milestone:${checkinId}:${milestoneDay}`,
+        });
+        if (notification) notifications.push(notification);
+      }
+      announcements.push({
+        awardId: `checkin_milestone:${checkinId}:${milestoneDay}`,
+        userId,
+        displayName: user.display_name,
+        category: "streak",
+        milestoneKey: String(milestoneDay),
+        place: null,
+        points: bonusPoints,
+        title: milestoneTitle,
+        body: `${user.display_name} vừa đạt streak ${streakAfter} ngày và nhận +${bonusPoints} điểm!`,
+        createdAt: nowIso,
+      });
+    }
+
+    const achievementResult = rewards.awardStreakMilestonesUnsafe({
+      userId,
+      streakAfter,
+      eventId,
+      sourceId: checkinId,
+      now: nowIso,
+    });
+    notifications.push(...achievementResult.notifications);
+    announcements.push(...achievementResult.announcements);
+    const achievementPoints = achievementResult.pointsAwarded;
+    db.run("UPDATE checkins SET achievement_points = ? WHERE id = ?", [achievementPoints, checkinId]);
+    const finalUser = db.query("SELECT points_balance FROM users WHERE id = ?").get(userId);
 
     return {
       ok: true,
       alreadyCheckedIn: false,
       streak: streakAfter,
-      pointsAwarded: totalAwarded,
+      pointsAwarded: immediateAwarded + achievementPoints,
       basePoints,
       bonusPoints,
-      newBalance,
+      tierBonusPoints,
+      achievementPoints,
+      newBalance: Number(finalUser?.points_balance || 0),
       isMilestone,
+      isAchievement: achievementPoints > 0,
+      streakTier,
+      notifications,
+      announcements,
       localDate: today,
       rank: {
         level: rank.level,
