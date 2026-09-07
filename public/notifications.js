@@ -94,7 +94,14 @@
   }
 
   function notificationLabel(item) {
-    return item?.sourceType === "system_reward" ? "Thưởng thành tích" : kindLabel(item?.kind);
+    return {
+      engagement_reward: "Thưởng thành tích",
+      streak_milestone: "Mốc streak",
+      vote_refund: "Hoàn điểm vote",
+      airdrop_direct: "Airdrop điểm",
+      admin_adjustment: "Cộng điểm từ admin",
+      system_reward: "Thưởng hệ thống",
+    }[item?.sourceType] || kindLabel(item?.kind);
   }
 
   function setUnreadCount(value) {

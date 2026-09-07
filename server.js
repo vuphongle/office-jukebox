@@ -129,6 +129,7 @@ const rankRepo = new RankRepository(db, {
   notificationRepo,
   getNotificationsEnabled: () => rewardNotificationsOn,
   engagementRepo,
+  createAnnouncementInTransaction: createEngagementAnnouncementMessagesInTransaction,
 });
 chatRepo.prune();
 sessionRepo.pruneExpired();
@@ -710,9 +711,11 @@ app.post("/api/me/checkin", requireAuth, (req, res) => {
       notificationRepo,
       engagementRepo,
       getNotificationsEnabled: () => rewardNotificationsOn,
+      createAnnouncementInTransaction: createEngagementAnnouncementMessagesInTransaction,
     });
     publishEngagementResult(result, { userId: req.user.id });
-    res.json(result);
+    const { chatMessages: _chatMessages, ...response } = result;
+    res.json(response);
   } catch (err) {
     res.status(400).json({ ok: false, reason: err.message });
   }
@@ -1671,22 +1674,9 @@ function broadcastPointDropClosed(dropId, reason = "expired") {
   }
 }
 
-function publishEngagementResult(result, { userId = null } = {}) {
-  if (!result) return;
-  publishNotificationEvents(result.notifications, userId);
-  if (userId && Number(result.pointsAwarded || 0) > 0) {
-    const user = userRepo.findById(userId);
-    if (user) {
-      notifyUserBalance(userId, user.points_balance, {
-        delta: result.pointsAwarded,
-        reason: "Thưởng hoạt động thành tích",
-      });
-    }
-  }
-  if (!milestoneAnnouncementsOn || !chatOn || !Array.isArray(result.announcements) || !result.announcements.length) return;
-
+function groupEngagementAnnouncements(announcements) {
   const grouped = new Map();
-  for (const announcement of result.announcements) {
+  for (const announcement of announcements) {
     const key = `${announcement.userId}:${announcement.category}:${announcement.milestoneKey}`;
     const current = grouped.get(key) || {
       ...announcement,
@@ -1697,8 +1687,13 @@ function publishEngagementResult(result, { userId = null } = {}) {
     if (announcement.place) current.places.push(announcement.place);
     grouped.set(key, current);
   }
+  return grouped.values();
+}
 
-  for (const announcement of grouped.values()) {
+function createEngagementAnnouncementMessagesInTransaction(announcements) {
+  if (!milestoneAnnouncementsOn || !chatOn || !Array.isArray(announcements) || !announcements.length) return [];
+  const messages = [];
+  for (const announcement of groupEngagementAnnouncements(announcements)) {
     const isRank = announcement.category === "rank";
     const label = isRank ? announcement.title.replace(/^Top \d+ /, "") : `streak ${announcement.milestoneKey} ngày`;
     const placeText = announcement.places.length
@@ -1715,9 +1710,31 @@ function publishEngagementResult(result, { userId = null } = {}) {
       isSystem: true,
       createdAt: announcement.createdAt || new Date().toISOString(),
     }, DEFAULT_EVENT_ID);
+    messages.push(message);
+  }
+  return messages;
+}
+
+function publishEngagementAnnouncementMessages(messages) {
+  for (const message of messages || []) {
     pushRecentChat(chatMessages, message);
     broadcastChatMessage(message);
   }
+}
+
+function publishEngagementResult(result, { userId = null } = {}) {
+  if (!result) return;
+  publishNotificationEvents(result.notifications, userId);
+  if (userId && Number(result.pointsAwarded || 0) > 0) {
+    const user = userRepo.findById(userId);
+    if (user) {
+      notifyUserBalance(userId, user.points_balance, {
+        delta: result.pointsAwarded,
+        reason: "Thưởng hoạt động thành tích",
+      });
+    }
+  }
+  publishEngagementAnnouncementMessages(result.chatMessages);
 }
 
 function notifyUserNotificationsUpdated(userId, unreadCount = notificationRepo.getUnreadCount(userId)) {

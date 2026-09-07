@@ -279,6 +279,7 @@ export class QueueRepository {
           createdByUserId: vote.user_id,
           title: "Bạn được hoàn điểm vote",
           body: `Hệ thống đã hoàn +${vote.points_spent} điểm vì bài hát không thể phát hoặc đã bị xóa. Số dư mới: ${updatedUser.points_balance} điểm.`,
+          sourceType: "vote_refund",
           sourceKey: `vote_refund:${ledgerId}`,
         });
         if (notification) this.lastNotificationEvents.push({ userId: vote.user_id, notification });

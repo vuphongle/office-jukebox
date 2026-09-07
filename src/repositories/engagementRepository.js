@@ -86,6 +86,7 @@ export class EngagementRepository {
         createdByUserId: userId,
         title,
         body: `${body} Số dư mới: ${newBalance} điểm.`,
+        sourceType: "engagement_reward",
         sourceKey: `engagement_award:${awardId}`,
       });
     }

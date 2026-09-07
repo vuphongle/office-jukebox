@@ -54,6 +54,7 @@ export function performCheckin(
     notificationRepo = null,
     engagementRepo = null,
     getNotificationsEnabled = () => true,
+    createAnnouncementInTransaction = null,
   } = {}
 ) {
   const today = getLocalDate(timezone, now);
@@ -155,19 +156,11 @@ export function performCheckin(
 
     const notifications = [];
     const announcements = [];
+    let legacyMilestoneNotification = null;
     if (isMilestone) {
       const milestoneTitle = `Chúc mừng streak ${streakAfter} ngày!`;
       const milestoneBody = `Bạn nhận thưởng mốc +${bonusPoints} điểm cho streak ${streakAfter} ngày.`;
-      if (getNotificationsEnabled() && notificationRepo) {
-        const notification = notificationRepo.createForUserInTransaction({
-          userId,
-          createdByUserId: userId,
-          title: milestoneTitle,
-          body: `${milestoneBody} Số dư mới: ${immediateBalance} điểm.`,
-          sourceKey: `checkin_milestone:${checkinId}:${milestoneDay}`,
-        });
-        if (notification) notifications.push(notification);
-      }
+      legacyMilestoneNotification = { title: milestoneTitle, body: milestoneBody };
       announcements.push({
         awardId: `checkin_milestone:${checkinId}:${milestoneDay}`,
         userId,
@@ -194,6 +187,21 @@ export function performCheckin(
     const achievementPoints = achievementResult.pointsAwarded;
     db.run("UPDATE checkins SET achievement_points = ? WHERE id = ?", [achievementPoints, checkinId]);
     const finalUser = db.query("SELECT points_balance FROM users WHERE id = ?").get(userId);
+    const finalBalance = Number(finalUser?.points_balance || 0);
+    if (legacyMilestoneNotification && getNotificationsEnabled() && notificationRepo) {
+      const notification = notificationRepo.createForUserInTransaction({
+        userId,
+        createdByUserId: userId,
+        title: legacyMilestoneNotification.title,
+        body: `${legacyMilestoneNotification.body} Số dư mới: ${finalBalance} điểm.`,
+        sourceType: "streak_milestone",
+        sourceKey: `checkin_milestone:${checkinId}:${milestoneDay}`,
+      });
+      if (notification) notifications.push(notification);
+    }
+    const chatMessages = typeof createAnnouncementInTransaction === "function"
+      ? createAnnouncementInTransaction(announcements)
+      : [];
 
     return {
       ok: true,
@@ -204,12 +212,13 @@ export function performCheckin(
       bonusPoints,
       tierBonusPoints,
       achievementPoints,
-      newBalance: Number(finalUser?.points_balance || 0),
+      newBalance: finalBalance,
       isMilestone,
       isAchievement: achievementPoints > 0,
       streakTier,
       notifications,
       announcements,
+      chatMessages,
       localDate: today,
       rank: {
         level: rank.level,

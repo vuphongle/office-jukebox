@@ -50,6 +50,7 @@ export class DropRepository {
             createdByUserId: creatorId || u.id,
             title: "Bạn vừa nhận được airdrop",
             body: `Ban Tổ Chức đã cộng +${points} điểm cho bạn${dropTitle ? `: ${dropTitle}` : "."}`,
+            sourceType: "airdrop_direct",
             sourceKey: `point_drop:${dropId}:${u.id}`,
           });
           if (notification) notifications.push({ userId: u.id, notification });
@@ -154,7 +155,7 @@ export class DropRepository {
            WHERE id = ? AND status = 'active'`,
           [now.toISOString(), dropId]
         );
-        throw new Error("Đợt nhận điểm này đã hết hạn");
+        return { expired: true };
       }
 
       const user = this.db.query("SELECT * FROM users WHERE id = ?").get(userId);
@@ -185,7 +186,9 @@ export class DropRepository {
       return { pointsReceived: drop.points, pointsClaimed: drop.points, newBalance };
     });
 
-    return tx.immediate();
+    const result = tx.immediate();
+    if (result?.expired) throw new Error("Đợt nhận điểm này đã hết hạn");
+    return result;
   }
 
   cancelClaimableDrop(dropId, closedByUserId, reason = "Admin hủy đợt phát điểm") {

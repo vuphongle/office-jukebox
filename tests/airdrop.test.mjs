@@ -86,6 +86,17 @@ test("Claimable drops expire at the configured boundary and can be cancelled by 
   assert.equal(dropRepo.findDropById(expiring.id).close_reason, "expired");
   assert.throws(() => dropRepo.claimDrop(expiring.id, user.id), /kết thúc|hết hạn/);
 
+  const directExpired = dropRepo.createClaimableDrop({
+    title: "Hết hạn khi claim trực tiếp",
+    points: 4,
+    createdByUserId: admin.id,
+    durationHours: 1,
+    now: createdAt,
+  });
+  assert.throws(() => dropRepo.claimDrop(directExpired.id, user.id), /hết hạn/);
+  assert.equal(dropRepo.findDropById(directExpired.id).status, "closed");
+  assert.equal(dropRepo.findDropById(directExpired.id).close_reason, "expired");
+
   const cancellable = dropRepo.createClaimableDrop({ title: "Có thể hủy", points: 5, createdByUserId: admin.id, durationHours: 8, now: createdAt });
   const cancelled = dropRepo.cancelClaimableDrop(cancellable.id, admin.id, "Đổi lịch sự kiện");
   assert.equal(cancelled.status, "closed");

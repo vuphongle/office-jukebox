@@ -59,6 +59,7 @@ export class UserRepository {
             createdByUserId: actorUserId || userId,
             title: "Bạn vừa được cộng điểm",
             body: `Ban Tổ Chức đã cộng +${delta} điểm cho tài khoản của bạn${reason ? `: ${reason}` : "."}`,
+            sourceType: "admin_adjustment",
             sourceKey: `point_ledger:${ledgerId}`,
           })
         : null;

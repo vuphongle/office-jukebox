@@ -54,9 +54,15 @@ function mapActivity(row) {
 }
 
 export class RankRepository {
-  constructor(db, { notificationRepo = null, getNotificationsEnabled = () => true, engagementRepo = null } = {}) {
+  constructor(db, {
+    notificationRepo = null,
+    getNotificationsEnabled = () => true,
+    engagementRepo = null,
+    createAnnouncementInTransaction = null,
+  } = {}) {
     this.db = db;
     this.engagementRepo = engagementRepo || new EngagementRepository(db, { notificationRepo, getNotificationsEnabled });
+    this.createAnnouncementInTransaction = createAnnouncementInTransaction;
   }
 
   ensureProfile(userId) {
@@ -174,8 +180,11 @@ export class RankRepository {
             eventId: cleanEventId,
             sourceId: ledgerId,
             now,
-          })
+        })
         : { pointsAwarded: 0, notifications: [], announcements: [] };
+      const chatMessages = inserted && typeof this.createAnnouncementInTransaction === "function"
+        ? this.createAnnouncementInTransaction(engagement.announcements)
+        : [];
 
       const stored = this.db
         .query(
@@ -190,6 +199,7 @@ export class RankRepository {
         profile: this.getRank(userId),
         notifications: engagement.notifications,
         announcements: engagement.announcements,
+        chatMessages,
         pointsAwarded: engagement.pointsAwarded,
       };
     });

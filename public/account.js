@@ -479,7 +479,14 @@ async function claimPointDrop() {
   setButtonLoading(button, true);
   try {
     const { data } = await requestJson(`/api/me/point-drops/${currentDrop.id}/claim`, { method: "POST" });
-    if (!data.ok) throw new Error(data.reason || "Không thể nhận điểm.");
+    if (!data.ok) {
+      const reason = data.reason || "Không thể nhận điểm.";
+      if (/đã kết thúc|hết hạn|không tồn tại|đã đóng/i.test(reason)) {
+        currentDrop = null;
+        renderPointDrop();
+      }
+      throw new Error(reason);
+    }
     currentUser.pointsBalance = data.newBalance;
     const received = data.pointsReceived;
     currentDrop = null;

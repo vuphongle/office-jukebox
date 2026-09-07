@@ -5,6 +5,7 @@ import { initDb, closeDb } from "../src/db.js";
 import { performCheckin } from "../src/checkin.js";
 import { getEngagementRules, streakTierBonusFor } from "../src/engagement.js";
 import { EngagementRepository } from "../src/repositories/engagementRepository.js";
+import { ChatRepository } from "../src/repositories/chatRepository.js";
 import { NotificationRepository } from "../src/repositories/notificationRepository.js";
 import { RankRepository } from "../src/repositories/rankRepository.js";
 import { UserRepository } from "../src/repositories/userRepository.js";
@@ -50,7 +51,7 @@ test("streak awards are transactional, idempotent, and podium rewards stop at se
   assert.equal(db.query("SELECT points FROM engagement_awards WHERE user_id = ? AND category = 'streak' AND award_kind = 'podium'").get(first.id).points, 5);
   assert.equal(db.query("SELECT points FROM engagement_awards WHERE user_id = ? AND category = 'streak' AND award_kind = 'podium'").get(second.id).points, 3);
   assert.equal(db.query("SELECT COUNT(*) AS total FROM engagement_awards WHERE user_id = ? AND category = 'streak' AND award_kind = 'personal'").get(first.id).total, 1);
-  assert.equal(notificationRepo.listForUser(first.id).items.some((item) => item.sourceType === "system_reward"), true);
+  assert.equal(notificationRepo.listForUser(first.id).items.some((item) => item.sourceType === "engagement_reward"), true);
 
   const beforeAwards = db.query("SELECT COUNT(*) AS total FROM engagement_awards").get().total;
   const repeat = checkinDay(db, first.id, 10, checkinOptions);
@@ -82,4 +83,59 @@ test("rank promotion grants the personal and event podium rewards once", () => {
   assert.equal(userRepo.findById(user.id).points_balance, 8);
   assert.equal(result.notifications.length, 2);
   assert.equal(db.query("SELECT COUNT(*) AS total FROM point_ledger WHERE type = 'engagement_reward'").get().total, 2);
+});
+
+test("streak milestone inbox uses the final balance after achievement rewards", () => {
+  const db = initDb({ dbPath: ":memory:", adminUser: "admin", adminPass: "p" });
+  const userRepo = new UserRepository(db);
+  const notificationRepo = new NotificationRepository(db);
+  const engagementRepo = new EngagementRepository(db, { notificationRepo });
+  const user = userRepo.create({ username: "streak-thirty", passwordHash: "p" });
+  db.run(
+    "UPDATE users SET current_streak = 29, last_checkin_date = '2026-08-29' WHERE id = ?",
+    [user.id]
+  );
+
+  const result = performCheckin(db, user.id, {
+    now: new Date("2026-08-30T10:00:00.000Z"),
+    notificationRepo,
+    engagementRepo,
+  });
+  const finalBalance = userRepo.findById(user.id).points_balance;
+  const milestoneNotification = notificationRepo
+    .listForUser(user.id, { limit: 20 })
+    .items.find((item) => item.sourceType === "streak_milestone");
+
+  assert.equal(result.newBalance, finalBalance);
+  assert.match(milestoneNotification.body, new RegExp(`Số dư mới: ${finalBalance} điểm`));
+});
+
+test("engagement announcements can be persisted inside the reward transaction", () => {
+  const db = initDb({ dbPath: ":memory:", adminUser: "admin", adminPass: "p" });
+  const userRepo = new UserRepository(db);
+  const engagementRepo = new EngagementRepository(db);
+  const chatRepo = new ChatRepository(db);
+  const user = userRepo.create({ username: "announcement-user", passwordHash: "p" });
+  db.run(
+    "UPDATE users SET current_streak = 2, last_checkin_date = '2026-08-02' WHERE id = ?",
+    [user.id]
+  );
+
+  const result = performCheckin(db, user.id, {
+    now: new Date("2026-08-03T10:00:00.000Z"),
+    engagementRepo,
+    createAnnouncementInTransaction: (announcements) => announcements.map((announcement) => chatRepo.create({
+      id: `announcement-${announcement.awardId}`,
+      name: "Thành tích",
+      text: announcement.body,
+      senderId: "system:engagement",
+      userId: announcement.userId,
+      isSystem: true,
+      createdAt: announcement.createdAt,
+    })),
+  });
+
+  assert.equal(result.chatMessages.length, 1);
+  assert.equal(chatRepo.listRecent().length, 1);
+  assert.equal(chatRepo.listRecent()[0].isSystem, true);
 });
