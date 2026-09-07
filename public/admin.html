@@ -147,6 +147,15 @@
               <label for="claimable-title">Tiêu đề quà tặng *</label>
               <input id="claimable-title" type="text" maxlength="80" placeholder="Ví dụ: Quà quẩy đêm cùng Laztar 🔥" required />
             </div>
+            <div class="form-group">
+              <label for="claimable-duration">Thời hạn nhận *</label>
+              <select id="claimable-duration">
+                <option value="1">1 giờ</option>
+                <option value="4">4 giờ</option>
+                <option value="8" selected>8 giờ (mặc định)</option>
+                <option value="24">24 giờ</option>
+              </select>
+            </div>
             <button id="claimable-submit-btn" type="submit" class="submit-btn red">Phát Sóng Quà Tặng Realtime</button>
           </form>
         </div>
@@ -166,10 +175,11 @@
                 <th>Số người nhận</th>
                 <th>Người tạo</th>
                 <th>Thời gian</th>
+                <th>Hạn / hành động</th>
               </tr>
             </thead>
             <tbody id="drops-tbody">
-              <tr><td colspan="7" class="text-center">Đang tải danh sách…</td></tr>
+              <tr><td colspan="8" class="text-center">Đang tải danh sách…</td></tr>
             </tbody>
           </table>
         </div>
@@ -193,6 +203,7 @@
               <option value="admin_adjustment">Admin điều chỉnh (admin_adjustment)</option>
               <option value="airdrop_direct">Airdrop trực tiếp (airdrop_direct)</option>
               <option value="point_drop_claim">Nhận quà drop (point_drop_claim)</option>
+              <option value="engagement_reward">Thưởng mốc thành tích (engagement_reward)</option>
             </select>
             <button id="ledger-refresh-btn" class="action-btn">Làm mới</button>
           </div>
@@ -291,6 +302,8 @@
         <div class="feedback-actions-bar">
           <button id="feedback-toggle" class="toggle-btn" type="button">Góp ý: Bật</button>
           <button id="chat-toggle" class="toggle-btn" type="button">Chat: Bật</button>
+          <button id="reward-notification-toggle" class="toggle-btn" type="button">Inbox thưởng: Bật</button>
+          <button id="milestone-announcement-toggle" class="toggle-btn" type="button">Chúc mừng group: Bật</button>
           <button id="chat-clear" class="toggle-btn danger" type="button">Xóa sạch Chat</button>
         </div>
       </div>

@@ -93,6 +93,10 @@
     return { maintenance: "Bảo trì", feature: "Tính năng", info: "Thông tin" }[kind] || "Thông tin";
   }
 
+  function notificationLabel(item) {
+    return item?.sourceType === "system_reward" ? "Thưởng thành tích" : kindLabel(item?.kind);
+  }
+
   function setUnreadCount(value) {
     if (!Number.isSafeInteger(value)) return;
     state.unreadCount = Math.max(0, value);
@@ -174,7 +178,7 @@
       const id = escapeHtml(item.id);
       const pending = state.pendingIds.has(item.id);
       return `<button class="notification-item${item.read ? "" : " is-unread"}${pending ? " is-pending" : ""}" type="button" data-notification-id="${id}"${pending ? " disabled" : ""}>
-        <span class="notification-item-meta"><span class="notification-kind kind-${escapeHtml(item.kind)}">${kindLabel(item.kind)}</span><time>${escapeHtml(formatTime(item.createdAt))}</time></span>
+        <span class="notification-item-meta"><span class="notification-kind kind-${escapeHtml(item.kind)}">${notificationLabel(item)}</span><time>${escapeHtml(formatTime(item.createdAt))}</time></span>
         <strong>${escapeHtml(item.title)}</strong>
         <span>${escapeHtml(item.body)}</span>
       </button>`;
