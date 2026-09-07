@@ -10,15 +10,16 @@ const DEFAULT_DURATION_SECONDS = 3 * 60 + 30;
 const DEFAULT_DURATION = "3:30";
 
 export class JukeboxState {
-  constructor(db = null) {
+  constructor(db = null, options = {}) {
     this.db = db;
-    this.queueRepo = db ? new QueueRepository(db) : null;
+    this.queueRepo = db ? new QueueRepository(db, options) : null;
     this.nowPlaying = null; // current item or null
     this.queue = []; // upcoming items
     this.history = []; // played items (newest last), bounded
     this.voteSortOn = true;
     this.onChange = () => {};
     this.onBalanceChange = () => {};
+    this.onNotification = () => {};
 
     if (this.db) {
       this.initFromDb();
@@ -284,6 +285,7 @@ export class JukeboxState {
         playedSeconds: resolvedPlayedSeconds,
         refundReason: "Lỗi phát video YouTube",
       });
+      this._emitNotificationChanges(this.queueRepo.takeNotificationEvents());
     }
     if (finishedItem) {
       finishedItem.finishReason = resolvedFinishReason;
@@ -329,6 +331,7 @@ export class JukeboxState {
     const refunds = this.queueRepo
       ? this.queueRepo.removeAndRefund(id, "Host xóa bài khỏi hàng đợi")
       : [];
+    if (this.queueRepo) this._emitNotificationChanges(this.queueRepo.takeNotificationEvents());
     this.queue.splice(index, 1);
     this._emit();
     this._emitBalanceChanges(refunds, "Hoàn điểm do bài hát bị xóa khỏi hàng đợi");
@@ -344,6 +347,7 @@ export class JukeboxState {
     const refunds = this.queueRepo
       ? this.queueRepo.removeAndRefund(id, "Người yêu cầu tự xóa bài")
       : [];
+    if (this.queueRepo) this._emitNotificationChanges(this.queueRepo.takeNotificationEvents());
     this.queue.splice(index, 1);
     this._emit();
     this._emitBalanceChanges(refunds, "Hoàn điểm do bài hát bị xóa khỏi hàng đợi");
@@ -462,6 +466,12 @@ export class JukeboxState {
   _emitBalanceChanges(changes, reason) {
     for (const change of changes || []) {
       this.onBalanceChange({ ...change, reason });
+    }
+  }
+
+  _emitNotificationChanges(events) {
+    for (const event of events || []) {
+      if (event?.userId && event.notification) this.onNotification(event);
     }
   }
 }

@@ -13,6 +13,7 @@ function mapMessage(row) {
     text: row.text,
     isAdmin: row.is_admin === 1,
     isAI: row.is_ai === 1,
+    isSystem: row.message_type === "system",
     createdAt: row.created_at,
   };
 }
@@ -26,8 +27,8 @@ export class ChatRepository {
   create(message, eventId = DEFAULT_EVENT_ID) {
     this.db.run(
       `INSERT INTO chat_messages
-       (id, event_id, user_id, sender_id, name, text, is_admin, is_ai, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       (id, event_id, user_id, sender_id, name, text, is_admin, is_ai, message_type, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         message.id,
         eventId,
@@ -37,6 +38,7 @@ export class ChatRepository {
         message.text,
         message.isAdmin ? 1 : 0,
         message.isAI ? 1 : 0,
+        message.isSystem ? "system" : message.isAI ? "ai" : "human",
         message.createdAt,
       ]
     );

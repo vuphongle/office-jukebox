@@ -356,7 +356,11 @@ function showPointDropBanner(drop) {
   const banner = document.getElementById("point-drop-banner");
   if (!banner) return;
   document.getElementById("drop-banner-title").textContent = drop.title;
-  document.getElementById("drop-banner-sub").textContent = `+${drop.points} điểm quà tặng realtime từ BTC`;
+  const expires = drop.expiresAt ? new Date(drop.expiresAt) : null;
+  const expiryLabel = expires && !Number.isNaN(expires.getTime())
+    ? ` · hết hạn ${expires.toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" })}`
+    : "";
+  document.getElementById("drop-banner-sub").textContent = `+${drop.points} điểm quà tặng realtime từ BTC${expiryLabel}`;
   banner.classList.remove("hidden");
 }
 
@@ -548,7 +552,7 @@ function renderChatMessages({ scrollToLatest = false } = {}) {
   }
   for (const message of chatMessages) {
     const item = document.createElement("article");
-    item.className = `chat-message${message.senderId === clientId ? " is-own" : ""}${message.isAdmin ? " is-admin" : ""}${message.isAI ? " is-ai" : ""}`;
+    item.className = `chat-message${message.senderId === clientId ? " is-own" : ""}${message.isAdmin ? " is-admin" : ""}${message.isAI ? " is-ai" : ""}${message.isSystem ? " is-system" : ""}`;
     const name = document.createElement("strong");
     name.className = "chat-message-name";
     name.textContent = message.name;
@@ -559,10 +563,10 @@ function renderChatMessages({ scrollToLatest = false } = {}) {
       rankBadge.title = message.rank.name || "Hạng thành viên";
       name.append(" ", rankBadge);
     }
-    if (message.isAdmin || message.isAI) {
+    if (message.isAdmin || message.isAI || message.isSystem) {
       const badge = document.createElement("span");
       badge.className = "chat-message-badge";
-      badge.textContent = message.isAI ? "AI" : "ADMIN";
+      badge.textContent = message.isAI ? "AI" : message.isSystem ? "MỐC THƯỞNG" : "ADMIN";
       name.append(" ", badge);
     }
     const text = document.createElement("p");
@@ -592,6 +596,7 @@ function appendChatMessage(message, { notify = true, render = true } = {}) {
     senderId: typeof message.senderId === "string" ? message.senderId.slice(0, 64) : "",
     isAdmin: message.isAdmin === true,
     isAI: message.isAI === true,
+    isSystem: message.isSystem === true,
     createdAt: typeof message.createdAt === "string" ? message.createdAt : "",
     rank: message.rank && typeof message.rank === "object"
       ? { name: String(message.rank.name || "").slice(0, 40), badge: String(message.rank.badge || "").slice(0, 8) }
@@ -1376,6 +1381,9 @@ function connectWs() {
     } else if (msg.type === "pointDropAvailable") {
       showPointDropBanner(msg.drop);
       toast("info", "🎁", "Có đợt quà tặng điểm mới từ BTC!");
+    } else if (msg.type === "pointDropClosed" && currentActiveDrop?.id === msg.dropId) {
+      hidePointDropBanner();
+      toast("info", "🎁", "Đợt quà tặng đã kết thúc.");
     } else if (msg.type === "airdropDirect") {
       if (currentUser) {
         currentUser.pointsBalance += msg.points;

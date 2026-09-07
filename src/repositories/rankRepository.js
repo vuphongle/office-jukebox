@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { rankForXp, RANK_XP_DEFAULTS } from "../rank.js";
+import { EngagementRepository } from "./engagementRepository.js";
 
 function parseMetadata(raw) {
   try {
@@ -53,8 +54,15 @@ function mapActivity(row) {
 }
 
 export class RankRepository {
-  constructor(db) {
+  constructor(db, {
+    notificationRepo = null,
+    getNotificationsEnabled = () => true,
+    engagementRepo = null,
+    createAnnouncementInTransaction = null,
+  } = {}) {
     this.db = db;
+    this.engagementRepo = engagementRepo || new EngagementRepository(db, { notificationRepo, getNotificationsEnabled });
+    this.createAnnouncementInTransaction = createAnnouncementInTransaction;
   }
 
   ensureProfile(userId) {
@@ -119,6 +127,9 @@ export class RankRepository {
           deltaXp: 0,
           ledger: mapActivity(existing),
           profile: this.getRank(userId),
+          notifications: [],
+          announcements: [],
+          pointsAwarded: 0,
         };
       }
       const utcDayStart = new Date();
@@ -129,7 +140,15 @@ export class RankRepository {
       ).get(userId, utcDayStart.toISOString())?.total || 0);
       const awardAmount = Math.min(amount, Math.max(0, RANK_XP_DEFAULTS.dailyCap - usedToday));
       if (awardAmount <= 0) {
-        return { awarded: false, deltaXp: 0, ledger: null, profile: this.getRank(userId) };
+        return {
+          awarded: false,
+          deltaXp: 0,
+          ledger: null,
+          profile: this.getRank(userId),
+          notifications: [],
+          announcements: [],
+          pointsAwarded: 0,
+        };
       }
       const ledgerId = randomUUID();
       const insert = this.db.run(
@@ -140,6 +159,7 @@ export class RankRepository {
       );
       const inserted = Number(insert?.changes || 0) > 0;
 
+      let previousRank = rankForXp(profile.xpTotal);
       if (inserted) {
         const current = this.db.query("SELECT xp_total FROM user_rank_profiles WHERE user_id = ?").get(userId);
         const xpTotal = Number(current?.xp_total || 0) + awardAmount;
@@ -149,6 +169,22 @@ export class RankRepository {
           [xpTotal, rank.level, now, userId]
         );
       }
+
+      const engagement = inserted
+        ? this.engagementRepo.awardRankMilestonesUnsafe({
+            userId,
+            crossedLevels: Array.from(
+              { length: Math.max(0, this.getRank(userId).rankLevel - previousRank.level) },
+              (_, index) => previousRank.level + index + 1
+            ),
+            eventId: cleanEventId,
+            sourceId: ledgerId,
+            now,
+        })
+        : { pointsAwarded: 0, notifications: [], announcements: [] };
+      const chatMessages = inserted && typeof this.createAnnouncementInTransaction === "function"
+        ? this.createAnnouncementInTransaction(engagement.announcements)
+        : [];
 
       const stored = this.db
         .query(
@@ -161,6 +197,10 @@ export class RankRepository {
         deltaXp: inserted ? awardAmount : 0,
         ledger: mapActivity(stored),
         profile: this.getRank(userId),
+        notifications: engagement.notifications,
+        announcements: engagement.announcements,
+        chatMessages,
+        pointsAwarded: engagement.pointsAwarded,
       };
     });
 

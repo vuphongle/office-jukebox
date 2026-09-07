@@ -50,6 +50,8 @@ import { DropRepository } from "./src/repositories/dropRepository.js";
 import { ChatRepository } from "./src/repositories/chatRepository.js";
 import { ChatAiMemoryRepository } from "./src/repositories/chatAiMemoryRepository.js";
 import { RankRepository } from "./src/repositories/rankRepository.js";
+import { EngagementRepository } from "./src/repositories/engagementRepository.js";
+import { getEngagementRules, DEFAULT_EVENT_ID, CLAIMABLE_DROP_DURATION_PRESETS, DEFAULT_CLAIMABLE_DROP_DURATION_HOURS } from "./src/engagement.js";
 import {
   NotificationRepository,
   NOTIFICATION_BODY_MAX_LENGTH,
@@ -100,15 +102,35 @@ const GUEST_URL = PUBLIC_BASE ? `${PUBLIC_BASE}/guest` : `http://${LAN_IP}:${POR
 
 // --- Initialize SQLite database and repositories (SSOT) --------------------
 const db = initDb();
-const userRepo = new UserRepository(db);
+let rewardNotificationsOn = true;
+let milestoneAnnouncementsOn = true;
+const notificationRepo = new NotificationRepository(db);
+const engagementRepo = new EngagementRepository(db, {
+  notificationRepo,
+  getNotificationsEnabled: () => rewardNotificationsOn,
+});
+const userRepo = new UserRepository(db, {
+  notificationRepo,
+  getNotificationsEnabled: () => rewardNotificationsOn,
+});
 const sessionRepo = new SessionRepository(db);
 const ledgerRepo = new LedgerRepository(db);
-const queueRepo = new QueueRepository(db);
-const dropRepo = new DropRepository(db);
+const queueRepo = new QueueRepository(db, {
+  notificationRepo,
+  getNotificationsEnabled: () => rewardNotificationsOn,
+});
+const dropRepo = new DropRepository(db, {
+  notificationRepo,
+  getNotificationsEnabled: () => rewardNotificationsOn,
+});
 const chatRepo = new ChatRepository(db);
 const chatAiMemoryRepo = new ChatAiMemoryRepository(db);
-const rankRepo = new RankRepository(db);
-const notificationRepo = new NotificationRepository(db);
+const rankRepo = new RankRepository(db, {
+  notificationRepo,
+  getNotificationsEnabled: () => rewardNotificationsOn,
+  engagementRepo,
+  createAnnouncementInTransaction: createEngagementAnnouncementMessagesInTransaction,
+});
 chatRepo.prune();
 sessionRepo.pruneExpired();
 const sessionPruneTimer = setInterval(() => sessionRepo.pruneExpired(), 6 * 60 * 60 * 1000);
@@ -118,7 +140,10 @@ if (!db.query("SELECT 1 FROM users WHERE role = 'admin' AND status = 'active' LI
   console.warn("[auth] No active admin account. Set ADMIN_USERNAME and ADMIN_PASSWORD before the first startup to create one.");
 }
 
-const state = new JukeboxState(db);
+const state = new JukeboxState(db, {
+  notificationRepo,
+  getNotificationsEnabled: () => rewardNotificationsOn,
+});
 
 const RANK_BADGE_ICONS = Object.freeze({
   "headphones-blue": "🎧",
@@ -208,6 +233,8 @@ let queueLimit = QUEUE_LIMIT_STEPS.includes(savedSettings.queueLimit) ? savedSet
 let requireName = savedSettings.requireName ?? false;
 let feedbackOn = savedSettings.feedbackOn ?? true;
 let chatOn = savedSettings.chatOn ?? true;
+rewardNotificationsOn = savedSettings.rewardNotificationsOn ?? true;
+milestoneAnnouncementsOn = savedSettings.milestoneAnnouncementsOn ?? true;
 let voteSortOn = savedSettings.voteSortOn ?? true;
 let chatAiSettings = normalizeChatAiSettings(savedSettings.chatAi || {});
 state.setVoteSort(voteSortOn);
@@ -253,6 +280,8 @@ function saveSettings() {
     requireName,
     feedbackOn,
     chatOn,
+    rewardNotificationsOn,
+    milestoneAnnouncementsOn,
     voteSortOn,
     chatAi: chatAiSettings,
     feedbackDigest,
@@ -275,6 +304,8 @@ function settingsSnapshot() {
     requireName,
     feedbackOn,
     chatOn,
+    rewardNotificationsOn,
+    milestoneAnnouncementsOn,
     voteSortOn,
     chatAi: chatAiSettings,
     feedbackDigest,
@@ -292,6 +323,8 @@ function restoreSettings(snapshot) {
     requireName,
     feedbackOn,
     chatOn,
+    rewardNotificationsOn,
+    milestoneAnnouncementsOn,
     voteSortOn,
     chatAi: chatAiSettings,
     feedbackDigest,
@@ -526,6 +559,10 @@ app.get("/api/rank/benefits", publicReadLimit, (_req, res) => {
   res.json({ ok: true, benefits: publicRankBenefits() });
 });
 
+app.get("/api/engagement/rules", publicReadLimit, (_req, res) => {
+  res.json({ ok: true, rules: getEngagementRules() });
+});
+
 app.get("/api/rank/leaderboard", publicReadLimit, (_req, res) => {
   res.json({ ok: true, leaderboard: rankRepo.listPublicLeaderboard({ limit: 10 }) });
 });
@@ -553,7 +590,9 @@ app.get("/api/me", (req, res) => {
       currentStreak: req.user.currentStreak,
       unreadNotificationCount: notificationRepo.getUnreadCount(req.user.id),
       hasCheckedInToday,
-      activeClaimableDrop: activeDrop && !alreadyClaimedDrop ? { id: activeDrop.id, title: activeDrop.title, points: activeDrop.points } : null,
+      activeClaimableDrop: activeDrop && !alreadyClaimedDrop
+        ? { id: activeDrop.id, title: activeDrop.title, points: activeDrop.points, expiresAt: activeDrop.expires_at }
+        : null,
       votedQueueItemIds: queueRepo.listActiveVoteItemIds(req.user.id),
       rank: publicRank(req.user.id),
     },
@@ -667,8 +706,16 @@ app.post(
 
 app.post("/api/me/checkin", requireAuth, (req, res) => {
   try {
-    const result = performCheckin(db, req.user.id);
-    res.json(result);
+    const result = performCheckin(db, req.user.id, {
+      eventId: DEFAULT_EVENT_ID,
+      notificationRepo,
+      engagementRepo,
+      getNotificationsEnabled: () => rewardNotificationsOn,
+      createAnnouncementInTransaction: createEngagementAnnouncementMessagesInTransaction,
+    });
+    publishEngagementResult(result, { userId: req.user.id });
+    const { chatMessages: _chatMessages, ...response } = result;
+    res.json(response);
   } catch (err) {
     res.status(400).json({ ok: false, reason: err.message });
   }
@@ -714,7 +761,13 @@ app.get("/api/me/point-drops/active", (req, res) => {
   const alreadyClaimed = req.user ? dropRepo.hasUserClaimed(drop.id, req.user.id) : false;
   res.json({
     ok: true,
-    drop: { id: drop.id, title: drop.title, points: drop.points, createdAt: drop.created_at },
+    drop: {
+      id: drop.id,
+      title: drop.title,
+      points: drop.points,
+      createdAt: drop.created_at,
+      expiresAt: drop.expires_at,
+    },
     alreadyClaimed,
   });
 });
@@ -757,6 +810,8 @@ app.get("/api/info", async (_req, res) => {
       requireName,
       feedbackOn,
       chatOn,
+      rewardNotificationsOn,
+      milestoneAnnouncementsOn,
       chatAiOn: chatAiSettings.enabled && chatOn,
       chatAiName: chatAiSettings.name,
       voteSortOn,
@@ -1022,6 +1077,7 @@ app.post("/api/admin/users/:id/points", requireAdmin, (req, res) => {
       actorUserId: actorId,
       reason,
     });
+    publishNotificationEvents(result.notification ? [{ userId: req.params.id, notification: result.notification }] : []);
     notifyUserBalance(req.params.id, result.points_balance, { delta, reason });
     res.json({ ok: true, pointsBalance: result.points_balance, ledgerId: result.ledgerId });
   } catch (err) {
@@ -1083,6 +1139,10 @@ app.post("/api/admin/point-drops", requireAdmin, (req, res) => {
     const reason = cleanTitle || "Airdrop từ Ban Quản Trị";
     const result = dropRepo.createDirectAirdrop({ points: numPoints, reason, createdByUserId: actorId });
 
+    for (const event of result.notifications || []) {
+      notifyUserNotification(event.userId, event.notification);
+    }
+
     // WebSocket broadcast airdrop event
     const msg = JSON.stringify({ type: "airdropDirect", points: numPoints, reason });
     for (const client of wss.clients) {
@@ -1096,10 +1156,27 @@ app.post("/api/admin/point-drops", requireAdmin, (req, res) => {
     if (!cleanTitle) {
       return res.status(400).json({ ok: false, reason: "Vui lòng nhập tiêu đề đợt nhận điểm." });
     }
-    const drop = dropRepo.createClaimableDrop({ title: cleanTitle, points: numPoints, createdByUserId: actorId });
+    const durationHours = Number(req.body?.durationHours || DEFAULT_CLAIMABLE_DROP_DURATION_HOURS);
+    if (!CLAIMABLE_DROP_DURATION_PRESETS.includes(durationHours)) {
+      return res.status(400).json({ ok: false, reason: `Thời hạn chỉ được chọn: ${CLAIMABLE_DROP_DURATION_PRESETS.join(", ")} giờ.` });
+    }
+    const previousActiveDrop = dropRepo.getActiveClaimableDrop();
+    const drop = dropRepo.createClaimableDrop({
+      title: cleanTitle,
+      points: numPoints,
+      createdByUserId: actorId,
+      durationHours,
+    });
+
+    if (previousActiveDrop && previousActiveDrop.id !== drop.id) {
+      broadcastPointDropClosed(previousActiveDrop.id, "superseded");
+    }
 
     // WebSocket broadcast claimable drop event
-    const msg = JSON.stringify({ type: "pointDropAvailable", drop: { id: drop.id, title: drop.title, points: drop.points } });
+    const msg = JSON.stringify({
+      type: "pointDropAvailable",
+      drop: { id: drop.id, title: drop.title, points: drop.points, expiresAt: drop.expires_at },
+    });
     for (const client of wss.clients) {
       if (client.readyState === 1) client.send(msg);
     }
@@ -1108,6 +1185,19 @@ app.post("/api/admin/point-drops", requireAdmin, (req, res) => {
   }
 
   res.status(400).json({ ok: false, reason: "Hình thức phát điểm không hợp lệ." });
+});
+
+app.post("/api/admin/point-drops/:id/cancel", requireAdmin, (req, res) => {
+  const reason = typeof req.body?.reason === "string" && req.body.reason.trim()
+    ? req.body.reason.trim().slice(0, MAX_MODERATION_REASON_LENGTH)
+    : "Admin hủy đợt phát điểm";
+  try {
+    const drop = dropRepo.cancelClaimableDrop(req.params.id, req.user.id, reason);
+    broadcastPointDropClosed(drop.id, "cancelled");
+    res.json({ ok: true, drop });
+  } catch (err) {
+    res.status(400).json({ ok: false, reason: err.message || "Không thể hủy đợt nhận điểm." });
+  }
 });
 
 app.get("/api/admin/point-drops", requireAdmin, (req, res) => {
@@ -1148,18 +1238,29 @@ app.post("/api/feedback", feedbackSubmitLimit, (req, res) => {
 });
 
 app.get("/api/feedback", requireAdmin, (_req, res) => {
-  res.json({ feedbackOn, chatOn, stats: feedbackStats(), items: feedbackItems });
+  res.json({
+    feedbackOn,
+    chatOn,
+    rewardNotificationsOn,
+    milestoneAnnouncementsOn,
+    stats: feedbackStats(),
+    items: feedbackItems,
+  });
 });
 
 app.patch("/api/feedback/settings", requireAdmin, (req, res) => {
   const hasFeedbackSetting = typeof req.body?.on === "boolean";
   const hasChatSetting = typeof req.body?.chatOn === "boolean";
-  if (!hasFeedbackSetting && !hasChatSetting) {
+  const hasRewardNotificationsSetting = typeof req.body?.rewardNotificationsOn === "boolean";
+  const hasMilestoneAnnouncementsSetting = typeof req.body?.milestoneAnnouncementsOn === "boolean";
+  if (!hasFeedbackSetting && !hasChatSetting && !hasRewardNotificationsSetting && !hasMilestoneAnnouncementsSetting) {
     return res.status(400).json({ ok: false, reason: "Giá trị không hợp lệ." });
   }
   const previous = settingsSnapshot();
   if (hasFeedbackSetting) feedbackOn = req.body.on;
   if (hasChatSetting) chatOn = req.body.chatOn;
+  if (hasRewardNotificationsSetting) rewardNotificationsOn = req.body.rewardNotificationsOn;
+  if (hasMilestoneAnnouncementsSetting) milestoneAnnouncementsOn = req.body.milestoneAnnouncementsOn;
   try {
     saveSettings();
   } catch (err) {
@@ -1186,7 +1287,7 @@ app.patch("/api/feedback/settings", requireAdmin, (req, res) => {
     }
   }
   broadcastState();
-  res.json({ ok: true, feedbackOn, chatOn });
+  res.json({ ok: true, feedbackOn, chatOn, rewardNotificationsOn, milestoneAnnouncementsOn });
 });
 
 app.delete("/api/feedback/:id", requireAdmin, (req, res) => {
@@ -1316,7 +1417,7 @@ function versionedPage(name) {
   const filePath = path.join(__dirname, "public", name);
   if (!existsSync(filePath)) return `<!DOCTYPE html><html><body><h1>${name} not found</h1></body></html>`;
   return readFileSync(filePath, "utf8").replace(
-    /(href|src)="\/((?:guest|host|admin|account|leaderboard|auth-utils)\.(?:css|js))"/g,
+    /(href|src)="\/((?:guest|host|admin|account|leaderboard|rules|auth-utils)\.(?:css|js))"/g,
     `$1="/$2?v=${BOOT_ID}"`
   );
 }
@@ -1326,6 +1427,7 @@ const GUEST_PAGE = versionedPage("guest.html");
 const ADMIN_PAGE = versionedPage("admin.html");
 const ACCOUNT_PAGE = versionedPage("account.html");
 const LEADERBOARD_PAGE = versionedPage("leaderboard.html");
+const RULES_PAGE = versionedPage("rules.html");
 
 app.get("/", requireHostAuth, (_req, res) => {
   res.set("Cache-Control", "no-cache").type("html").send(HOST_PAGE);
@@ -1345,6 +1447,10 @@ app.get("/account", (_req, res) => {
 
 app.get("/leaderboard", (_req, res) => {
   res.set("Cache-Control", "no-cache").type("html").send(LEADERBOARD_PAGE);
+});
+
+app.get("/rules", (_req, res) => {
+  res.set("Cache-Control", "no-cache").type("html").send(RULES_PAGE);
 });
 
 app.get("/feedback", (_req, res) => {
@@ -1468,6 +1574,8 @@ function stateMessage() {
     requireName,
     feedbackOn,
     chatOn,
+    rewardNotificationsOn,
+    milestoneAnnouncementsOn,
     chatAiOn: chatAiSettings.enabled && chatOn,
     chatAiName: chatAiSettings.name,
     voteSortOn,
@@ -1551,6 +1659,84 @@ function notifyUserNotification(userId, notification) {
   }
 }
 
+function publishNotificationEvents(events, fallbackUserId = null) {
+  for (const event of events || []) {
+    const userId = event?.userId || fallbackUserId;
+    const notification = event?.notification || (event?.id ? event : null);
+    if (userId && notification) notifyUserNotification(userId, notification);
+  }
+}
+
+function broadcastPointDropClosed(dropId, reason = "expired") {
+  const payload = JSON.stringify({ type: "pointDropClosed", dropId, reason });
+  for (const client of wss.clients) {
+    if (client.readyState === 1) client.send(payload);
+  }
+}
+
+function groupEngagementAnnouncements(announcements) {
+  const grouped = new Map();
+  for (const announcement of announcements) {
+    const key = `${announcement.userId}:${announcement.category}:${announcement.milestoneKey}`;
+    const current = grouped.get(key) || {
+      ...announcement,
+      points: 0,
+      places: [],
+    };
+    current.points += Number(announcement.points || 0);
+    if (announcement.place) current.places.push(announcement.place);
+    grouped.set(key, current);
+  }
+  return grouped.values();
+}
+
+function createEngagementAnnouncementMessagesInTransaction(announcements) {
+  if (!milestoneAnnouncementsOn || !chatOn || !Array.isArray(announcements) || !announcements.length) return [];
+  const messages = [];
+  for (const announcement of groupEngagementAnnouncements(announcements)) {
+    const isRank = announcement.category === "rank";
+    const label = isRank ? announcement.title.replace(/^Top \d+ /, "") : `streak ${announcement.milestoneKey} ngày`;
+    const placeText = announcement.places.length
+      ? ` và đứng top ${Math.min(...announcement.places)}`
+      : "";
+    const message = chatRepo.create({
+      id: randomUUID(),
+      name: "Thành tích",
+      text: `${announcement.displayName} vừa đạt ${label}${placeText}, nhận tổng +${announcement.points} điểm! 🎉`,
+      senderId: "system:engagement",
+      userId: announcement.userId,
+      isAdmin: false,
+      isAI: false,
+      isSystem: true,
+      createdAt: announcement.createdAt || new Date().toISOString(),
+    }, DEFAULT_EVENT_ID);
+    messages.push(message);
+  }
+  return messages;
+}
+
+function publishEngagementAnnouncementMessages(messages) {
+  for (const message of messages || []) {
+    pushRecentChat(chatMessages, message);
+    broadcastChatMessage(message);
+  }
+}
+
+function publishEngagementResult(result, { userId = null } = {}) {
+  if (!result) return;
+  publishNotificationEvents(result.notifications, userId);
+  if (userId && Number(result.pointsAwarded || 0) > 0) {
+    const user = userRepo.findById(userId);
+    if (user) {
+      notifyUserBalance(userId, user.points_balance, {
+        delta: result.pointsAwarded,
+        reason: "Thưởng hoạt động thành tích",
+      });
+    }
+  }
+  publishEngagementAnnouncementMessages(result.chatMessages);
+}
+
 function notifyUserNotificationsUpdated(userId, unreadCount = notificationRepo.getUnreadCount(userId)) {
   const msg = JSON.stringify({ type: "notificationsUpdated", unreadCount });
   for (const client of wss.clients) {
@@ -1586,6 +1772,7 @@ function recordRankChatActivity(message, userId) {
     metadata: { windowStart: activity.windowStart, messageCount: activity.messageCount },
   });
   if (award.awarded) {
+    publishEngagementResult(award, { userId });
     notifyUserRank(userId, publicRank(userId));
     broadcastState();
   }
@@ -1609,7 +1796,10 @@ function settleRankTransition(transition) {
       title: finishedItem.title,
       playedSeconds: transition.playedSeconds,
     });
-    if (playAward.awarded) updatedUsers.set(finishedItem.addedByUserId, playAward.profile);
+    if (playAward.awarded) {
+      publishEngagementResult(playAward, { userId: finishedItem.addedByUserId });
+      updatedUsers.set(finishedItem.addedByUserId, playAward.profile);
+    }
   }
 
   // A voter earns one participation XP for a qualifying played item. The
@@ -1621,7 +1811,10 @@ function settleRankTransition(transition) {
       queueItemId: finishedItem.id,
       title: finishedItem.title,
     });
-    if (award.awarded) updatedUsers.set(voter.user_id, award.profile);
+    if (award.awarded) {
+      publishEngagementResult(award, { userId: voter.user_id });
+      updatedUsers.set(voter.user_id, award.profile);
+    }
   }
   for (const [userId, profile] of updatedUsers) notifyUserRank(userId, publicRank(userId));
   if (updatedUsers.size) broadcastState();
@@ -1643,6 +1836,20 @@ function reportSettingsPersistenceFailure(ws, err) {
 state.onBalanceChange = ({ userId, newBalance, pointsRefunded, reason }) => {
   notifyUserBalance(userId, newBalance, { delta: pointsRefunded, reason });
 };
+state.onNotification = (event) => {
+  publishNotificationEvents([event]);
+};
+
+const dropExpiryTimer = setInterval(() => {
+  try {
+    for (const drop of dropRepo.expireDueClaimableDrops()) {
+      broadcastPointDropClosed(drop.id, "expired");
+    }
+  } catch (err) {
+    console.error(`[point-drops] expiry sweep failed: ${err.message}`);
+  }
+}, 60_000);
+dropExpiryTimer.unref?.();
 
 wss.on("connection", (ws, request) => {
   const clientIp = request.__jukeboxClientIp || getClientIp(request, TRUST_PROXY);
@@ -1890,6 +2097,7 @@ function shutdown(signal) {
   console.log(`[server] ${signal} received; closing connections.`);
   clearInterval(sessionPruneTimer);
   clearInterval(wsHeartbeatTimer);
+  clearInterval(dropExpiryTimer);
   chatAiCoordinator.stop();
   for (const client of wss.clients) client.close(1001, "Server shutting down");
 

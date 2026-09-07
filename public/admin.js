@@ -420,7 +420,12 @@ async function handleClaimableDrop(e) {
     const res = await fetch("/api/admin/point-drops", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ type: "claimable", points, title }),
+      body: JSON.stringify({
+        type: "claimable",
+        points,
+        title,
+        durationHours: Number(document.getElementById("claimable-duration")?.value || 8),
+      }),
     });
     const data = await res.json();
     if (data.ok) {
@@ -451,7 +456,7 @@ async function loadDrops() {
       loadDrops();
     });
     if (!data.ok || !data.drops.length) {
-      tbody.innerHTML = `<tr><td colspan="7" class="text-center">Chưa có đợt phát điểm nào</td></tr>`;
+      tbody.innerHTML = `<tr><td colspan="8" class="text-center">Chưa có đợt phát điểm nào</td></tr>`;
       return;
     }
 
@@ -459,10 +464,21 @@ async function loadDrops() {
       .map((d) => {
         let statusBadge = "";
         if (d.status === "active") statusBadge = '<span class="badge badge-active">Đang mở</span>';
-        else if (d.status === "superseded") statusBadge = '<span class="badge badge-blocked">Hết hạn</span>';
+        else if (d.status === "superseded") statusBadge = '<span class="badge badge-blocked">Đã thay thế</span>';
         else statusBadge = '<span class="badge badge-user">Đã đóng</span>';
 
         const typeLabel = d.type === "direct" ? "Trực tiếp" : "Chờ nhận (Claim)";
+
+        const closeLabel = d.close_reason === "expired"
+          ? "Hết hạn"
+          : String(d.close_reason || "").startsWith("cancelled")
+            ? "Admin hủy"
+            : d.status === "active"
+              ? (d.expires_at ? `Hạn ${formatTime(d.expires_at)}` : "Không hạn")
+              : "—";
+        const action = d.type === "claimable" && d.status === "active"
+          ? `<button class="action-btn btn-sm btn-warn" onclick="cancelPointDrop('${escapeHtml(d.id)}')">Hủy</button>`
+          : "";
 
         return `
           <tr>
@@ -473,14 +489,32 @@ async function loadDrops() {
             <td>${d.type === "claimable" ? `${d.claim_count || 0} người` : "Tất cả"}</td>
             <td>${escapeHtml(d.created_by_username || "Admin")}</td>
             <td>${escapeHtml(formatTime(d.created_at))}</td>
+            <td>${escapeHtml(closeLabel)} ${action}</td>
           </tr>
         `;
       })
       .join("");
   } catch (err) {
-    tbody.innerHTML = `<tr><td colspan="7" class="text-center">Lỗi: ${escapeHtml(err.message)}</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="8" class="text-center">Lỗi: ${escapeHtml(err.message)}</td></tr>`;
   }
 }
+
+window.cancelPointDrop = async function (dropId) {
+  if (!dropId || !confirm("Hủy đợt nhận điểm này? Người dùng chưa nhận sẽ không thể nhận nữa.")) return;
+  try {
+    const res = await fetch(`/api/admin/point-drops/${encodeURIComponent(dropId)}/cancel`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ reason: "Admin hủy đợt phát điểm" }),
+    });
+    const data = await res.json();
+    if (!res.ok || !data.ok) throw new Error(data.reason || "Không thể hủy đợt nhận điểm.");
+    showStatus("Đã hủy đợt nhận điểm.");
+    loadDrops();
+  } catch (error) {
+    showStatus(error.message || "Không thể hủy đợt nhận điểm.", true);
+  }
+};
 
 // --- TAB 3: LEDGER AUDIT LOG ----------------------------------------------
 
@@ -613,6 +647,8 @@ async function handleNotificationSubmit(event) {
 function initFeedbackTab() {
   document.getElementById("feedback-toggle")?.addEventListener("click", toggleFeedbackSetting);
   document.getElementById("chat-toggle")?.addEventListener("click", toggleChatSetting);
+  document.getElementById("reward-notification-toggle")?.addEventListener("click", toggleRewardNotificationSetting);
+  document.getElementById("milestone-announcement-toggle")?.addEventListener("click", toggleMilestoneAnnouncementSetting);
   document.getElementById("chat-clear")?.addEventListener("click", clearChat);
   document.getElementById("admin-chat-form")?.addEventListener("submit", handleAdminChatSubmit);
   document.getElementById("chat-ai-settings-form")?.addEventListener("submit", saveChatAiSettings);
@@ -642,6 +678,17 @@ async function loadFeedback() {
     if (chatToggle) {
       chatToggle.textContent = data.chatOn ? "Chat: Bật" : "Chat: Tắt";
       chatToggle.className = data.chatOn ? "toggle-btn on" : "toggle-btn";
+    }
+
+    const rewardToggle = document.getElementById("reward-notification-toggle");
+    if (rewardToggle) {
+      rewardToggle.textContent = data.rewardNotificationsOn ? "Inbox thưởng: Bật" : "Inbox thưởng: Tắt";
+      rewardToggle.className = data.rewardNotificationsOn ? "toggle-btn on" : "toggle-btn";
+    }
+    const announcementToggle = document.getElementById("milestone-announcement-toggle");
+    if (announcementToggle) {
+      announcementToggle.textContent = data.milestoneAnnouncementsOn ? "Chúc mừng group: Bật" : "Chúc mừng group: Tắt";
+      announcementToggle.className = data.milestoneAnnouncementsOn ? "toggle-btn on" : "toggle-btn";
     }
 
     const container = document.getElementById("feedback-list");
@@ -701,6 +748,38 @@ async function toggleChatSetting() {
     await loadFeedback();
   } catch (error) {
     showStatus(error.message || "Không thể cập nhật chat.", true);
+  }
+}
+
+async function toggleRewardNotificationSetting() {
+  const current = document.getElementById("reward-notification-toggle").classList.contains("on");
+  try {
+    const res = await fetch("/api/feedback/settings", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ rewardNotificationsOn: !current }),
+    });
+    const data = await res.json();
+    if (!res.ok || !data.ok) throw new Error(data.reason || "Không thể cập nhật inbox thưởng.");
+    await loadFeedback();
+  } catch (error) {
+    showStatus(error.message || "Không thể cập nhật inbox thưởng.", true);
+  }
+}
+
+async function toggleMilestoneAnnouncementSetting() {
+  const current = document.getElementById("milestone-announcement-toggle").classList.contains("on");
+  try {
+    const res = await fetch("/api/feedback/settings", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ milestoneAnnouncementsOn: !current }),
+    });
+    const data = await res.json();
+    if (!res.ok || !data.ok) throw new Error(data.reason || "Không thể cập nhật chúc mừng group.");
+    await loadFeedback();
+  } catch (error) {
+    showStatus(error.message || "Không thể cập nhật chúc mừng group.", true);
   }
 }
 
@@ -1007,7 +1086,7 @@ function initWebSocket() {
     } else if (msg.type === "chatCleared") {
       const box = document.getElementById("admin-chat-messages");
       if (box) box.innerHTML = "";
-    } else if (msg.type === "pointDropAvailable" || msg.type === "airdropDirect") {
+    } else if (msg.type === "pointDropAvailable" || msg.type === "pointDropClosed" || msg.type === "airdropDirect") {
       loadDrops();
       loadLedger();
     }
@@ -1028,14 +1107,17 @@ function renderChatMessage(m) {
   if (!m || typeof m !== "object") return "";
   const isAdmin = m.isAdmin;
   const isAI = m.isAI;
+  const isSystem = m.isSystem;
   const badge = isAI
     ? '<span class="ai-badge">AI</span> '
+    : isSystem
+      ? '<span class="admin-badge">MỐC THƯỞNG</span> '
     : isAdmin
       ? '<span class="admin-badge">ADMIN</span> '
       : "";
   return `
     <div style="margin-bottom: 8px; font-size: 13px;">
-      <strong style="color: ${isAI ? "oklch(82% .12 245)" : isAdmin ? "var(--red)" : "var(--gold)"}">${badge}${escapeHtml(m.name)}:</strong>
+      <strong style="color: ${isAI ? "oklch(82% .12 245)" : isSystem ? "var(--gold)" : isAdmin ? "var(--red)" : "var(--gold)"}">${badge}${escapeHtml(m.name)}:</strong>
       <span style="color: var(--text)">${escapeHtml(m.text)}</span>
       <time class="admin-chat-time" datetime="${escapeHtml(m.createdAt || "")}">${escapeHtml(formatTime(m.createdAt))}</time>
     </div>

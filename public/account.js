@@ -9,12 +9,15 @@ const LEDGER_LABELS = {
   admin_adjustment: "Điều chỉnh bởi quản trị viên",
   airdrop_direct: "Nhận điểm từ quản trị viên",
   point_drop_claim: "Nhận điểm phát thưởng",
+  engagement_reward: "Thưởng mốc thành tích",
 };
 
 let currentUser = null;
 let currentDrop = null;
 let rankBenefits = [];
 let rankBenefitsPromise = null;
+let engagementRules = null;
+let engagementRulesPromise = null;
 let ledgerDirection = "all";
 let ledgerPage = 0;
 let ledgerTotal = 0;
@@ -50,6 +53,52 @@ async function loadRankBenefits() {
       return [];
     });
   return rankBenefitsPromise;
+}
+
+async function loadEngagementRules() {
+  if (engagementRulesPromise) return engagementRulesPromise;
+  engagementRulesPromise = fetch("/api/engagement/rules")
+    .then((response) => response.json())
+    .then((data) => {
+      engagementRules = data.ok ? data.rules : null;
+      renderEngagementMilestones();
+      return engagementRules;
+    })
+    .catch(() => {
+      engagementRulesPromise = null;
+      return null;
+    });
+  return engagementRulesPromise;
+}
+
+function renderEngagementMilestones() {
+  const container = $("#milestone-list");
+  if (!container || !engagementRules) return;
+  const streak = engagementRules.streak || {};
+  const legacy = (streak.legacyMilestones || []).map((item) => ({
+    days: item.day,
+    label: `${item.day} ngày`,
+    reward: `+${item.points} điểm mốc`,
+    type: "legacy",
+  }));
+  const tiers = (streak.tiers || []).filter((tier) => tier.minStreak > 0).map((tier) => ({
+    days: tier.minStreak,
+    label: `${tier.minStreak}+ ngày`,
+    reward: `+${tier.bonusPoints}/lần điểm danh`,
+    type: "tier",
+  }));
+  const personal = (streak.personalRewards || []).map((item) => ({
+    days: item.day,
+    label: `${item.day} ngày`,
+    reward: `+${item.points} điểm một lần`,
+    type: "personal",
+  }));
+  const currentStreak = Number(currentUser?.currentStreak || 0);
+  container.innerHTML = [...legacy, ...tiers, ...personal].map((item) => `
+    <div class="milestone${currentStreak >= item.days ? " achieved" : ""}" data-days="${item.days}" data-milestone-type="${item.type}">
+      <strong>${escapeHtml(item.label)}</strong><span>${escapeHtml(item.reward)}</span>
+    </div>
+  `).join("");
 }
 
 function renderAccountRankBenefits(rank = {}) {
@@ -233,7 +282,7 @@ async function loadAccount() {
     currentDrop = data.user.activeClaimableDrop || null;
     renderAccount();
     showDashboard();
-    await Promise.all([loadLedger({ reset: true }), loadActiveVotes(), loadRankBenefits()]);
+    await Promise.all([loadLedger({ reset: true }), loadActiveVotes(), loadRankBenefits(), loadEngagementRules()]);
   } catch (error) {
     showAuthGate(`Không thể tải tài khoản: ${error.message}`);
   }
@@ -280,7 +329,8 @@ function renderAccount() {
 
   const streak = currentUser.currentStreak || 0;
   const cycle = streak % 30;
-  $$(".milestone").forEach((milestone) => {
+  renderEngagementMilestones();
+  $$(".milestone[data-milestone-type=legacy]").forEach((milestone) => {
     const days = Number(milestone.dataset.days);
     const achieved = days === 30 ? cycle === 0 && streak > 0 : cycle >= days;
     milestone.classList.toggle("achieved", achieved);
@@ -301,7 +351,11 @@ function renderPointDrop() {
     return;
   }
   $("#point-drop-title").textContent = currentDrop.title;
-  $("#point-drop-copy").textContent = `Nhận +${currentDrop.points} điểm vào tài khoản.`;
+  const expires = currentDrop.expiresAt ? new Date(currentDrop.expiresAt) : null;
+  const expiryLabel = expires && !Number.isNaN(expires.getTime())
+    ? ` Hạn đến ${expires.toLocaleString("vi-VN", { dateStyle: "short", timeStyle: "short" })}.`
+    : "";
+  $("#point-drop-copy").textContent = `Nhận +${currentDrop.points} điểm vào tài khoản.${expiryLabel}`;
   card.classList.remove("hidden");
 }
 
@@ -425,7 +479,14 @@ async function claimPointDrop() {
   setButtonLoading(button, true);
   try {
     const { data } = await requestJson(`/api/me/point-drops/${currentDrop.id}/claim`, { method: "POST" });
-    if (!data.ok) throw new Error(data.reason || "Không thể nhận điểm.");
+    if (!data.ok) {
+      const reason = data.reason || "Không thể nhận điểm.";
+      if (/đã kết thúc|hết hạn|không tồn tại|đã đóng/i.test(reason)) {
+        currentDrop = null;
+        renderPointDrop();
+      }
+      throw new Error(reason);
+    }
     currentUser.pointsBalance = data.newBalance;
     const received = data.pointsReceived;
     currentDrop = null;
@@ -620,6 +681,10 @@ function connectSocket() {
     } else if (message.type === "pointDropAvailable" && currentUser) {
       currentDrop = message.drop;
       renderPointDrop();
+    } else if (message.type === "pointDropClosed" && currentDrop?.id === message.dropId) {
+      currentDrop = null;
+      renderPointDrop();
+      showStatus("Đợt quà tặng đã kết thúc.", "error");
     } else if (message.type === "airdropDirect" && currentUser) {
       currentUser.pointsBalance += Number(message.points || 0);
       renderAccount();

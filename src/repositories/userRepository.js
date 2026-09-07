@@ -1,8 +1,10 @@
 import { randomUUID } from "node:crypto";
 
 export class UserRepository {
-  constructor(db) {
+  constructor(db, { notificationRepo = null, getNotificationsEnabled = () => true } = {}) {
     this.db = db;
+    this.notificationRepo = notificationRepo;
+    this.getNotificationsEnabled = getNotificationsEnabled;
   }
 
   create({ username, passwordHash, displayName, role = "user" }) {
@@ -51,7 +53,18 @@ export class UserRepository {
         [ledgerId, userId, delta, type, referenceId, actorUserId, reason, now]
       );
 
-      return { ...user, points_balance: newBalance, ledgerId };
+      const notification = delta > 0 && type === "admin_adjustment" && this.getNotificationsEnabled() && this.notificationRepo
+        ? this.notificationRepo.createForUserInTransaction({
+            userId,
+            createdByUserId: actorUserId || userId,
+            title: "Bạn vừa được cộng điểm",
+            body: `Ban Tổ Chức đã cộng +${delta} điểm cho tài khoản của bạn${reason ? `: ${reason}` : "."}`,
+            sourceType: "admin_adjustment",
+            sourceKey: `point_ledger:${ledgerId}`,
+          })
+        : null;
+
+      return { ...user, points_balance: newBalance, ledgerId, notification };
     });
 
     return tx.immediate();

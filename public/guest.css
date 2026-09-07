@@ -789,6 +789,9 @@ header .desktop-intro { display: none; }
 .chat-message.is-ai { border-color: oklch(72% .15 250 / .44); background: oklch(62% .15 250 / .13); }
 .chat-message.is-ai .chat-message-name { color: oklch(86% .09 245); }
 .chat-message.is-ai .chat-message-badge { background: oklch(62% .15 250); color: oklch(98% .01 250); }
+.chat-message.is-system { border-color: oklch(80% .14 85 / .48); background: oklch(80% .14 85 / .14); }
+.chat-message.is-system .chat-message-name { color: var(--gold); }
+.chat-message.is-system .chat-message-badge { background: var(--gold); color: var(--gold-ink); }
 .chat-message-badge { display: inline-block; margin-left: 4px; padding: 2px 5px; border-radius: 999px; background: var(--red); color: var(--red-ink); font: 700 8px/1 var(--sans); letter-spacing: .05em; vertical-align: 1px; }
 .chat-message-rank { display: inline-block; margin-left: 4px; padding: 2px 6px; border: 1px solid oklch(80% .14 85 / .28); border-radius: 999px; color: var(--gold); background: oklch(80% .14 85 / .08); font: 700 8px/1 var(--sans); vertical-align: 1px; }
 @keyframes chat-message-in { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
