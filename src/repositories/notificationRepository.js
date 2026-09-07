@@ -19,13 +19,18 @@ function clampOffset(value) {
 
 function mapNotification(row) {
   if (!row) return null;
-  return {
+  const notification = {
     id: row.id,
     title: row.title,
     body: row.body,
     kind: row.kind,
     createdAt: row.created_at,
   };
+  if (row.source_type && row.source_type !== "admin") {
+    notification.sourceType = row.source_type;
+    if (row.source_key) notification.sourceKey = row.source_key;
+  }
+  return notification;
 }
 
 function mapUserNotification(row) {
@@ -38,12 +43,16 @@ function mapUserNotification(row) {
 }
 
 function mapAdminNotification(row) {
-  return {
+  const mapped = {
     ...mapNotification(row),
     createdByDisplayName: row.created_by_display_name,
     recipientCount: Number(row.recipient_count || 0),
     readCount: Number(row.read_count || 0),
   };
+  if (row.source_type && row.source_type !== "admin") {
+    mapped.createdByDisplayName = "Hệ thống";
+  }
+  return mapped;
 }
 
 export class NotificationRepository {
@@ -67,8 +76,9 @@ export class NotificationRepository {
       const id = randomUUID();
       const createdAt = new Date().toISOString();
       this.db.run(
-        `INSERT INTO notifications (id, title, body, kind, created_by_user_id, created_at)
-         VALUES (?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO notifications
+         (id, title, body, kind, created_by_user_id, created_at, source_type, source_key)
+         VALUES (?, ?, ?, ?, ?, ?, 'admin', NULL)`,
         [id, cleanTitle, cleanBody, kind, createdByUserId, createdAt]
       );
 
@@ -90,6 +100,7 @@ export class NotificationRepository {
           body: cleanBody,
           kind,
           created_at: createdAt,
+          source_type: "admin",
         }),
         recipientCount: recipients.length,
         recipientUserIds: recipients.map((recipient) => recipient.id),
@@ -97,6 +108,61 @@ export class NotificationRepository {
     });
 
     return transaction.immediate();
+  }
+
+  // This method deliberately does not open a transaction. Callers that award
+  // points use it inside their existing SQLite transaction so the inbox row
+  // rolls back together with the balance and ledger entry.
+  createForUserInTransaction({
+    userId,
+    title,
+    body,
+    kind = "info",
+    createdByUserId = userId,
+    sourceType = "system_reward",
+    sourceKey,
+  } = {}) {
+    const cleanTitle = typeof title === "string" ? title.trim() : "";
+    const cleanBody = typeof body === "string" ? body.trim() : "";
+    if (!cleanTitle || cleanTitle.length > NOTIFICATION_TITLE_MAX_LENGTH) {
+      throw new Error(`Tiêu đề thông báo phải từ 1 đến ${NOTIFICATION_TITLE_MAX_LENGTH} ký tự.`);
+    }
+    if (!cleanBody || cleanBody.length > NOTIFICATION_BODY_MAX_LENGTH) {
+      throw new Error(`Nội dung thông báo phải từ 1 đến ${NOTIFICATION_BODY_MAX_LENGTH} ký tự.`);
+    }
+    if (!NOTIFICATION_KINDS.includes(kind)) throw new Error("Loại thông báo không hợp lệ.");
+    if (!userId || !createdByUserId) throw new Error("Thiếu người nhận thông báo.");
+    if (!sourceKey || typeof sourceKey !== "string") throw new Error("Thiếu khóa idempotency của thông báo.");
+
+    const recipient = this.db.query("SELECT id, status FROM users WHERE id = ?").get(userId);
+    if (!recipient || recipient.status !== "active") return null;
+
+    const existing = this.db
+      .query("SELECT * FROM notifications WHERE source_type = ? AND source_key = ?")
+      .get(sourceType, sourceKey);
+    if (existing) return mapNotification(existing);
+
+    const id = randomUUID();
+    const createdAt = new Date().toISOString();
+    this.db.run(
+      `INSERT INTO notifications
+       (id, title, body, kind, created_by_user_id, created_at, source_type, source_key)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      [id, cleanTitle, cleanBody, kind, createdByUserId, createdAt, sourceType, sourceKey]
+    );
+    this.db.run(
+      `INSERT INTO notification_recipients (notification_id, user_id) VALUES (?, ?)`,
+      [id, userId]
+    );
+    return mapNotification({
+      id,
+      title: cleanTitle,
+      body: cleanBody,
+      kind,
+      created_at: createdAt,
+      source_type: sourceType,
+      source_key: sourceKey,
+    });
   }
 
   listForUser(userId, { limit = NOTIFICATION_USER_LIMIT, offset = 0 } = {}) {
@@ -108,7 +174,7 @@ export class NotificationRepository {
     const unreadCount = this.getUnreadCount(userId);
     const items = this.db
       .query(
-        `SELECT n.id, n.title, n.body, n.kind, n.created_at, nr.read_at
+        `SELECT n.id, n.title, n.body, n.kind, n.created_at, n.source_type, n.source_key, nr.read_at
          FROM notification_recipients nr
          JOIN notifications n ON n.id = nr.notification_id
          WHERE nr.user_id = ?
@@ -154,7 +220,7 @@ export class NotificationRepository {
     const total = Number(this.db.query("SELECT COUNT(*) AS total FROM notifications").get()?.total || 0);
     const items = this.db
       .query(
-        `SELECT n.id, n.title, n.body, n.kind, n.created_at,
+        `SELECT n.id, n.title, n.body, n.kind, n.created_at, n.source_type, n.source_key,
                 creator.display_name AS created_by_display_name,
                 (SELECT COUNT(*) FROM notification_recipients nr WHERE nr.notification_id = n.id) AS recipient_count,
                 (SELECT COUNT(*) FROM notification_recipients nr WHERE nr.notification_id = n.id AND nr.read_at IS NOT NULL) AS read_count

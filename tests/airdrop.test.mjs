@@ -64,3 +64,31 @@ test("Claimable point drops (Non-stackable supersede and single-claim)", () => {
   assert.equal(claim2Res.pointsReceived, 10);
   assert.equal(userRepo.findById(u2.id).points_balance, 10);
 });
+
+test("Claimable drops expire at the configured boundary and can be cancelled by admin", () => {
+  const db = initDb({ dbPath: ":memory:", adminUser: "admin", adminPass: "test-admin-password" });
+  const userRepo = new UserRepository(db);
+  const dropRepo = new DropRepository(db);
+  const admin = userRepo.findByUsername("admin");
+  const user = userRepo.create({ username: "expiry-user", passwordHash: "p" });
+  const createdAt = new Date("2026-08-01T10:00:00.000Z");
+
+  const expiring = dropRepo.createClaimableDrop({
+    title: "Hết hạn nhanh",
+    points: 4,
+    createdByUserId: admin.id,
+    durationHours: 1,
+    now: createdAt,
+  });
+  assert.equal(expiring.expires_at, "2026-08-01T11:00:00.000Z");
+  assert.equal(dropRepo.getActiveClaimableDrop({ now: new Date("2026-08-01T10:59:59.999Z") }).id, expiring.id);
+  assert.equal(dropRepo.getActiveClaimableDrop({ now: new Date("2026-08-01T11:00:00.000Z") }), null);
+  assert.equal(dropRepo.findDropById(expiring.id).close_reason, "expired");
+  assert.throws(() => dropRepo.claimDrop(expiring.id, user.id), /kết thúc|hết hạn/);
+
+  const cancellable = dropRepo.createClaimableDrop({ title: "Có thể hủy", points: 5, createdByUserId: admin.id, durationHours: 8, now: createdAt });
+  const cancelled = dropRepo.cancelClaimableDrop(cancellable.id, admin.id, "Đổi lịch sự kiện");
+  assert.equal(cancelled.status, "closed");
+  assert.match(cancelled.close_reason, /^cancelled:/);
+  assert.throws(() => dropRepo.claimDrop(cancellable.id, user.id), /kết thúc/);
+});

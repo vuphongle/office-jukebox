@@ -1,8 +1,11 @@
 import { randomUUID } from "node:crypto";
 
 export class QueueRepository {
-  constructor(db) {
+  constructor(db, { notificationRepo = null, getNotificationsEnabled = () => true } = {}) {
     this.db = db;
+    this.notificationRepo = notificationRepo;
+    this.getNotificationsEnabled = getNotificationsEnabled;
+    this.lastNotificationEvents = [];
   }
 
   getNextSequence(eventId = "default_event") {
@@ -244,6 +247,7 @@ export class QueueRepository {
   }
 
   _refundVotesUnsafe(queueItemId, reason) {
+    this.lastNotificationEvents = [];
     const activeVotes = this.getVoters(queueItemId);
     if (!activeVotes.length) return [];
 
@@ -269,6 +273,17 @@ export class QueueRepository {
         [ledgerId, vote.user_id, vote.points_spent, queueItemId, reason, now]
       );
 
+      if (this.getNotificationsEnabled() && this.notificationRepo) {
+        const notification = this.notificationRepo.createForUserInTransaction({
+          userId: vote.user_id,
+          createdByUserId: vote.user_id,
+          title: "Bạn được hoàn điểm vote",
+          body: `Hệ thống đã hoàn +${vote.points_spent} điểm vì bài hát không thể phát hoặc đã bị xóa. Số dư mới: ${updatedUser.points_balance} điểm.`,
+          sourceKey: `vote_refund:${ledgerId}`,
+        });
+        if (notification) this.lastNotificationEvents.push({ userId: vote.user_id, notification });
+      }
+
       refunded.push({
         userId: vote.user_id,
         pointsRefunded: vote.points_spent,
@@ -277,6 +292,12 @@ export class QueueRepository {
     }
 
     return refunded;
+  }
+
+  takeNotificationEvents() {
+    const events = this.lastNotificationEvents;
+    this.lastNotificationEvents = [];
+    return events;
   }
 
   refundVotes(queueItemId, reason = "Bài hát bị xóa khỏi hàng đợi") {
