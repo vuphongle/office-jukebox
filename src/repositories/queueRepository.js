@@ -95,7 +95,7 @@ export class QueueRepository {
                 vote_score, finished_at, finish_reason, played_seconds
          FROM queue_items
          WHERE event_id = ? AND status = 'played'
-         ORDER BY finished_at DESC LIMIT ? OFFSET ?`
+         ORDER BY finished_at DESC, rowid DESC LIMIT ? OFFSET ?`
       )
       .all(eventId, boundedLimit, boundedOffset);
     return { total, limit: boundedLimit, offset: boundedOffset, items };

@@ -1487,13 +1487,12 @@ function renderQueue(state) {
   if (typeof state.historyCount === "number") {
     updateHistoryBadgeCount(state.historyCount);
   }
-  if (
-    previousHistoryCount !== null &&
-    typeof state.historyCount === "number" &&
-    state.historyCount > previousHistoryCount &&
-    activeQueueTab === "history"
-  ) {
-    loadHistory({ reset: true });
+  if (previousHistoryCount !== null && typeof state.historyCount === "number" && state.historyCount > previousHistoryCount) {
+    if (activeQueueTab === "history") {
+      void loadHistory({ reset: true });
+    } else {
+      historyController.requestReset();
+    }
   }
   if (typeof state.historyCount === "number") {
     previousHistoryCount = state.historyCount;
@@ -1624,9 +1623,9 @@ let activeQueueTab = "queue";
 let historyItems = [];
 let historyPage = 1;
 let historyHasMore = true;
-let historyLoading = false;
 let historyLoadedOnce = false;
 let previousHistoryCount = null;
+const historyController = window.JukeboxHistoryController.create();
 
 function updateHistoryBadgeCount(count) {
   const badgeEl = document.getElementById("history-count-badge");
@@ -1660,8 +1659,8 @@ function switchQueueTab(tabName) {
     paneHistory?.classList.remove("hidden");
     paneQueue?.classList.add("hidden");
 
-    if (!historyLoadedOnce) {
-      loadHistory({ reset: true });
+    if (!historyLoadedOnce || historyController.refreshPending) {
+      void loadHistory({ reset: true });
     }
   }
 }
@@ -1677,10 +1676,9 @@ function formatHistoryTime(timestamp) {
 }
 
 async function loadHistory({ reset = false } = {}) {
-  if (historyLoading) return;
   if (!reset && !historyHasMore) return;
+  if (!historyController.begin(reset)) return;
 
-  historyLoading = true;
   const loadingEl = document.getElementById("history-loading");
   const emptyEl = document.getElementById("history-empty");
   const endEl = document.getElementById("history-end");
@@ -1729,8 +1727,11 @@ async function loadHistory({ reset = false } = {}) {
   } catch (err) {
     console.error("[history] load error:", err);
   } finally {
-    historyLoading = false;
+    const refreshPending = historyController.finish();
     loadingEl?.classList.add("hidden");
+    if (refreshPending && activeQueueTab === "history") {
+      void loadHistory({ reset: true });
+    }
   }
 }
 
@@ -1790,8 +1791,8 @@ function setupHistoryInfiniteScroll() {
     const observer = new IntersectionObserver(
       (entries) => {
         const entry = entries[0];
-        if (entry && entry.isIntersecting && activeQueueTab === "history" && historyHasMore && !historyLoading) {
-          loadHistory();
+        if (entry && entry.isIntersecting && activeQueueTab === "history" && historyHasMore && !historyController.loading) {
+          void loadHistory();
         }
       },
       {
@@ -1804,16 +1805,16 @@ function setupHistoryInfiniteScroll() {
   }
 
   const checkScroll = () => {
-    if (activeQueueTab !== "history" || !historyHasMore || historyLoading) return;
+    if (activeQueueTab !== "history" || !historyHasMore || historyController.loading) return;
     const queueSection = document.querySelector(".queue-section");
     if (queueSection && queueSection.scrollHeight - queueSection.scrollTop - queueSection.clientHeight < 150) {
-      loadHistory();
+      void loadHistory();
       return;
     }
     const docHeight = document.documentElement.scrollHeight;
     const scrollPos = window.innerHeight + window.scrollY;
     if (docHeight - scrollPos < 200) {
-      loadHistory();
+      void loadHistory();
     }
   };
 

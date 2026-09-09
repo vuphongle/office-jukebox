@@ -928,43 +928,6 @@ app.get("/api/host-token", requireHostAuth, (req, res) => {
   res.json({ token: HOST_PASSWORD && !isAdminSession ? hostToken : "" });
 });
 
-app.post(["/api/points", "/api/points/add"], (req, res) => {
-  const { points, clientId } = req.body || {};
-  const delta = Number(points);
-  if (!clientId || typeof clientId !== "string" || !Number.isInteger(delta) || delta <= 0) {
-    return res.status(400).json({ ok: false, reason: "Dữ liệu không hợp lệ (cần clientId và points > 0)." });
-  }
-
-  const cleanClientId = clientId.trim().slice(0, 64);
-  try {
-    let user = userRepo.findById(cleanClientId) || userRepo.findByUsername(cleanClientId);
-    if (!user) {
-      const now = new Date().toISOString();
-      const shortId = cleanClientId.slice(0, 8);
-      db.run(
-        `INSERT OR IGNORE INTO users (id, username, password_hash, display_name, role, status, points_balance, current_streak, created_at, updated_at)
-         VALUES (?, ?, 'guest_no_auth', ?, 'user', 'active', 0, 0, ?, ?)`,
-        [cleanClientId, `client_${shortId}_${Date.now().toString(36)}`, `Khách ${shortId}`, now, now]
-      );
-      user = userRepo.findById(cleanClientId);
-    }
-
-    if (!user) return res.status(500).json({ ok: false, reason: "Không thể tạo tài khoản client." });
-
-    const result = userRepo.updatePoints(user.id, delta, {
-      type: "admin_adjustment",
-      reason: "Cộng điểm API",
-    });
-
-    publishNotificationEvents(result.notification ? [{ userId: user.id, notification: result.notification }] : []);
-    notifyUserBalance(user.id, result.points_balance, { delta, reason: "Cộng điểm API" });
-
-    res.json({ ok: true, clientId: cleanClientId, pointsAdded: delta, pointsBalance: result.points_balance });
-  } catch (err) {
-    res.status(400).json({ ok: false, reason: err.message });
-  }
-});
-
 app.post("/api/request", songRequestIpLimit, async (req, res) => {
   const { videoId, title, channel, duration, thumbnail, name, clientId } = req.body || {};
   if (!isValidYouTubeVideoId(videoId)) {
@@ -1481,7 +1444,7 @@ function versionedPage(name) {
   const filePath = path.join(__dirname, "public", name);
   if (!existsSync(filePath)) return `<!DOCTYPE html><html><body><h1>${name} not found</h1></body></html>`;
   return readFileSync(filePath, "utf8").replace(
-    /(href|src)="\/((?:guest|host|admin|account|leaderboard|rules|auth-utils)\.(?:css|js))"/g,
+    /(href|src)="\/((?:guest|host|admin|account|leaderboard|rules|auth-utils|history-controller)\.(?:css|js))"/g,
     `$1="/$2?v=${BOOT_ID}"`
   );
 }
@@ -1494,27 +1457,27 @@ const LEADERBOARD_PAGE = versionedPage("leaderboard.html");
 const RULES_PAGE = versionedPage("rules.html");
 
 app.get("/", requireHostAuth, (_req, res) => {
-  res.set("Cache-Control", "no-cache").type("html").send(versionedPage("host.html"));
+  res.set("Cache-Control", "no-cache").type("html").send(HOST_PAGE);
 });
 
 app.get("/guest", (_req, res) => {
-  res.set("Cache-Control", "no-cache").type("html").send(versionedPage("guest.html"));
+  res.set("Cache-Control", "no-cache").type("html").send(GUEST_PAGE);
 });
 
 app.get("/admin", (_req, res) => {
-  res.set("Cache-Control", "no-cache").type("html").send(versionedPage("admin.html"));
+  res.set("Cache-Control", "no-cache").type("html").send(ADMIN_PAGE);
 });
 
 app.get("/account", (_req, res) => {
-  res.set("Cache-Control", "no-cache").type("html").send(versionedPage("account.html"));
+  res.set("Cache-Control", "no-cache").type("html").send(ACCOUNT_PAGE);
 });
 
 app.get("/leaderboard", (_req, res) => {
-  res.set("Cache-Control", "no-cache").type("html").send(versionedPage("leaderboard.html"));
+  res.set("Cache-Control", "no-cache").type("html").send(LEADERBOARD_PAGE);
 });
 
 app.get("/rules", (_req, res) => {
-  res.set("Cache-Control", "no-cache").type("html").send(versionedPage("rules.html"));
+  res.set("Cache-Control", "no-cache").type("html").send(RULES_PAGE);
 });
 
 app.get("/feedback", (_req, res) => {
@@ -1666,7 +1629,7 @@ function notifyUserBalance(userId, newBalance, { delta = 0, reason = "" } = {}) 
   for (const client of wss.clients) {
     if (client.readyState !== 1) continue;
     const session = refreshSocketIdentity(client, sessionRepo);
-    if (session?.user_id === userId || client.clientId === userId) client.send(msg);
+    if (session?.user_id === userId) client.send(msg);
   }
 }
 
@@ -1955,9 +1918,6 @@ wss.on("connection", (ws, request) => {
         return;
       }
       if (!msg || typeof msg !== "object" || Array.isArray(msg)) return;
-      if (msg.clientId && typeof msg.clientId === "string") {
-        ws.clientId = msg.clientId.slice(0, 64);
-      }
 
       const currentSession = refreshSocketIdentity(ws, sessionRepo);
 

@@ -1,10 +1,11 @@
 import test, { afterEach } from "node:test";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import vm from "node:vm";
 import { initDb, closeDb } from "../src/db.js";
 import { QueueRepository } from "../src/repositories/queueRepository.js";
 
@@ -65,6 +66,52 @@ test("Queue repository playback history returns paginated played songs in descen
   assert.equal(sample.finish_reason, "skipped");
 });
 
+test("Queue repository playback history uses insertion order for identical finish times", () => {
+  const db = initDb({ dbPath: ":memory:" });
+  const queueRepo = new QueueRepository(db);
+
+  for (let i = 1; i <= 3; i++) {
+    const item = queueRepo.createItem({
+      videoId: `same_time_${i}`,
+      title: `Cùng thời điểm ${i}`,
+      channel: "Ca sĩ",
+      duration: "3:00",
+      thumbnail: null,
+      addedBy: "Người chọn",
+    });
+    queueRepo.updateStatus(item.id, "playing", { startedAt: 3000 });
+    queueRepo.updateStatus(item.id, "played", {
+      finishedAt: 3060,
+      finishReason: "ended",
+      playedSeconds: 180,
+    });
+  }
+
+  const history = queueRepo.getPlaybackHistory("default_event", { limit: 3 });
+  assert.deepEqual(
+    history.items.map((item) => item.video_id),
+    ["same_time_3", "same_time_2", "same_time_1"]
+  );
+});
+
+test("History controller defers a reset requested during an in-flight page load", () => {
+  const source = readFileSync(path.join(ROOT, "public/history-controller.js"), "utf8");
+  const context = { window: {} };
+  vm.runInNewContext(source, context);
+
+  const controller = context.window.JukeboxHistoryController.create();
+  assert.equal(controller.begin(), true);
+  assert.equal(controller.begin(true), false);
+  assert.equal(controller.refreshPending, true);
+  assert.equal(controller.finish(), true);
+  assert.equal(controller.refreshPending, true);
+  assert.equal(controller.begin(true), true);
+  assert.equal(controller.refreshPending, false);
+  assert.equal(controller.finish(), false);
+  controller.requestReset();
+  assert.equal(controller.refreshPending, true);
+});
+
 test("GET /api/history returns sanitized paginated history over HTTP", async () => {
   const dataDir = mkdtempSync(path.join(os.tmpdir(), "jukebox-history-test-"));
   const dbPath = path.join(dataDir, "jukebox.db");
@@ -121,6 +168,15 @@ test("GET /api/history returns sanitized paginated history over HTTP", async () 
   assert.ok(ready, "Server failed to start");
 
   try {
+    for (const route of ["/api/points", "/api/points/add"]) {
+      const pointsRes = await fetch(`${baseUrl}${route}`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ clientId: "attacker", points: 100 }),
+      });
+      assert.equal(pointsRes.status, 404);
+    }
+
     // Fetch page 1
     const res1 = await fetch(`${baseUrl}/api/history?page=1&limit=10`);
     assert.equal(res1.status, 200);
