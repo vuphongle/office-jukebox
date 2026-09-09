@@ -851,6 +851,33 @@ app.get("/api/browse", publicReadLimit, async (req, res) => {
   }
 });
 
+app.get("/api/history", publicReadLimit, (req, res) => {
+  const { page, limit, offset } = parsePagination(req.query, { defaultLimit: 10, maxLimit: 50 });
+  const result = queueRepo.getPlaybackHistory("default_event", { limit, offset });
+  const items = result.items.map((item) => ({
+    id: item.id,
+    videoId: item.video_id,
+    title: item.title,
+    channel: item.channel || "",
+    duration: item.duration || "3:30",
+    thumbnail: sanitizeThumbnail(item.thumbnail),
+    addedBy: item.added_by || "",
+    voteScore: item.vote_score || 0,
+    finishedAt: item.finished_at || null,
+    finishReason: item.finish_reason || "ended",
+    playedSeconds: item.played_seconds || null,
+  }));
+  res.json({
+    ok: true,
+    page,
+    limit,
+    offset,
+    total: result.total,
+    hasMore: offset + items.length < result.total,
+    items,
+  });
+});
+
 const lastRequestAt = new Map();
 function pruneLastRequestAt() {
   if (lastRequestAt.size <= 500) return;
@@ -899,6 +926,43 @@ app.post("/api/youtube/resolve", publicReadLimit, async (req, res) => {
 app.get("/api/host-token", requireHostAuth, (req, res) => {
   const isAdminSession = req.user?.role === "admin" && req.user?.status === "active";
   res.json({ token: HOST_PASSWORD && !isAdminSession ? hostToken : "" });
+});
+
+app.post(["/api/points", "/api/points/add"], (req, res) => {
+  const { points, clientId } = req.body || {};
+  const delta = Number(points);
+  if (!clientId || typeof clientId !== "string" || !Number.isInteger(delta) || delta <= 0) {
+    return res.status(400).json({ ok: false, reason: "Dữ liệu không hợp lệ (cần clientId và points > 0)." });
+  }
+
+  const cleanClientId = clientId.trim().slice(0, 64);
+  try {
+    let user = userRepo.findById(cleanClientId) || userRepo.findByUsername(cleanClientId);
+    if (!user) {
+      const now = new Date().toISOString();
+      const shortId = cleanClientId.slice(0, 8);
+      db.run(
+        `INSERT OR IGNORE INTO users (id, username, password_hash, display_name, role, status, points_balance, current_streak, created_at, updated_at)
+         VALUES (?, ?, 'guest_no_auth', ?, 'user', 'active', 0, 0, ?, ?)`,
+        [cleanClientId, `client_${shortId}_${Date.now().toString(36)}`, `Khách ${shortId}`, now, now]
+      );
+      user = userRepo.findById(cleanClientId);
+    }
+
+    if (!user) return res.status(500).json({ ok: false, reason: "Không thể tạo tài khoản client." });
+
+    const result = userRepo.updatePoints(user.id, delta, {
+      type: "admin_adjustment",
+      reason: "Cộng điểm API",
+    });
+
+    publishNotificationEvents(result.notification ? [{ userId: user.id, notification: result.notification }] : []);
+    notifyUserBalance(user.id, result.points_balance, { delta, reason: "Cộng điểm API" });
+
+    res.json({ ok: true, clientId: cleanClientId, pointsAdded: delta, pointsBalance: result.points_balance });
+  } catch (err) {
+    res.status(400).json({ ok: false, reason: err.message });
+  }
 });
 
 app.post("/api/request", songRequestIpLimit, async (req, res) => {
@@ -1430,27 +1494,27 @@ const LEADERBOARD_PAGE = versionedPage("leaderboard.html");
 const RULES_PAGE = versionedPage("rules.html");
 
 app.get("/", requireHostAuth, (_req, res) => {
-  res.set("Cache-Control", "no-cache").type("html").send(HOST_PAGE);
+  res.set("Cache-Control", "no-cache").type("html").send(versionedPage("host.html"));
 });
 
 app.get("/guest", (_req, res) => {
-  res.set("Cache-Control", "no-cache").type("html").send(GUEST_PAGE);
+  res.set("Cache-Control", "no-cache").type("html").send(versionedPage("guest.html"));
 });
 
 app.get("/admin", (_req, res) => {
-  res.set("Cache-Control", "no-cache").type("html").send(ADMIN_PAGE);
+  res.set("Cache-Control", "no-cache").type("html").send(versionedPage("admin.html"));
 });
 
 app.get("/account", (_req, res) => {
-  res.set("Cache-Control", "no-cache").type("html").send(ACCOUNT_PAGE);
+  res.set("Cache-Control", "no-cache").type("html").send(versionedPage("account.html"));
 });
 
 app.get("/leaderboard", (_req, res) => {
-  res.set("Cache-Control", "no-cache").type("html").send(LEADERBOARD_PAGE);
+  res.set("Cache-Control", "no-cache").type("html").send(versionedPage("leaderboard.html"));
 });
 
 app.get("/rules", (_req, res) => {
-  res.set("Cache-Control", "no-cache").type("html").send(RULES_PAGE);
+  res.set("Cache-Control", "no-cache").type("html").send(versionedPage("rules.html"));
 });
 
 app.get("/feedback", (_req, res) => {
@@ -1602,7 +1666,7 @@ function notifyUserBalance(userId, newBalance, { delta = 0, reason = "" } = {}) 
   for (const client of wss.clients) {
     if (client.readyState !== 1) continue;
     const session = refreshSocketIdentity(client, sessionRepo);
-    if (session?.user_id === userId) client.send(msg);
+    if (session?.user_id === userId || client.clientId === userId) client.send(msg);
   }
 }
 
@@ -1891,6 +1955,9 @@ wss.on("connection", (ws, request) => {
         return;
       }
       if (!msg || typeof msg !== "object" || Array.isArray(msg)) return;
+      if (msg.clientId && typeof msg.clientId === "string") {
+        ws.clientId = msg.clientId.slice(0, 64);
+      }
 
       const currentSession = refreshSocketIdentity(ws, sessionRepo);
 

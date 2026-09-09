@@ -90,10 +90,13 @@ export class JukeboxState {
 
   snapshot() {
     const queue = this._estimatedQueue();
+    const historyCount = this.queueRepo
+      ? this.queueRepo.getTotalPlayedCount()
+      : this.history.length;
     return {
       nowPlaying: this._publicItem(this.nowPlaying),
       queue,
-      historyCount: this.history.length,
+      historyCount,
       voteSortOn: this.voteSortOn,
     };
   }

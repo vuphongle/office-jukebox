@@ -148,9 +148,47 @@
   </section>
 
   <section class="queue-section">
-    <h2>Tiếp theo <small>Sắp phát</small> <span id="queue-count" class="count">0</span></h2>
-    <div id="queue-limit-notice" class="queue-limit-notice hidden" role="status" aria-live="polite"></div>
-    <ul id="queue"></ul>
+    <div class="queue-nav-tabs" role="tablist" aria-label="Danh sách phát nhạc">
+      <button id="tab-btn-queue" class="queue-nav-tab active" type="button" role="tab" aria-selected="true" aria-controls="pane-queue">
+        <div class="queue-nav-tab-item">
+          <span class="tab-title">Tiếp theo</span>
+          <small class="tab-sub">Sắp phát</small>
+        </div>
+        <span id="queue-count" class="count">0</span>
+      </button>
+      <button id="tab-btn-history" class="queue-nav-tab" type="button" role="tab" aria-selected="false" aria-controls="pane-history">
+        <div class="queue-nav-tab-item">
+          <span class="tab-title">Lịch sử</span>
+          <small class="tab-sub">Đã phát</small>
+        </div>
+        <span id="history-count-badge" class="count history-badge hidden">0</span>
+      </button>
+    </div>
+
+    <div id="pane-queue" class="queue-tab-pane active" role="tabpanel" aria-labelledby="tab-btn-queue">
+      <div id="queue-limit-notice" class="queue-limit-notice hidden" role="status" aria-live="polite"></div>
+      <ul id="queue"></ul>
+    </div>
+
+    <div id="pane-history" class="queue-tab-pane hidden" role="tabpanel" aria-labelledby="tab-btn-history">
+      <ul id="history-list" class="history-list"></ul>
+      <div id="history-loading" class="history-loading hidden">
+        <span class="history-spinner" aria-hidden="true"></span>
+        <span>Đang tải thêm...</span>
+      </div>
+      <div id="history-empty" class="q-empty hidden">
+        <span class="q-empty-icon" aria-hidden="true">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="12" r="10" />
+            <polyline points="12 6 12 12 16 14" />
+          </svg>
+        </span>
+        <strong>Chưa có lịch sử phát</strong>
+        <span>Các bài hát sau khi phát xong sẽ xuất hiện tại đây.</span>
+      </div>
+      <div id="history-end" class="history-end hidden">Đã hiển thị hết lịch sử</div>
+      <div id="history-sentinel" class="history-sentinel"></div>
+    </div>
   </section>
 
   <!-- Request feedback toasts; each in-flight request owns one toast. -->

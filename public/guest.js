@@ -1484,6 +1484,20 @@ function renderQueue(state) {
 
   const queue = state.queue || [];
   document.getElementById("queue-count").textContent = queue.length;
+  if (typeof state.historyCount === "number") {
+    updateHistoryBadgeCount(state.historyCount);
+  }
+  if (
+    previousHistoryCount !== null &&
+    typeof state.historyCount === "number" &&
+    state.historyCount > previousHistoryCount &&
+    activeQueueTab === "history"
+  ) {
+    loadHistory({ reset: true });
+  }
+  if (typeof state.historyCount === "number") {
+    previousHistoryCount = state.historyCount;
+  }
   const limitNotice = document.getElementById("queue-limit-notice");
   const limitReached = queueLimitOn && queue.length >= queueLimit;
   limitNotice.classList.toggle("hidden", !limitReached);
@@ -1605,10 +1619,226 @@ function formatEstimatedStart(timestamp) {
   return `Dự kiến phát lúc ${new Date(timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`;
 }
 
+// ---- Queue and Playback History Tabs & Lazy Loading --------------------------
+let activeQueueTab = "queue";
+let historyItems = [];
+let historyPage = 1;
+let historyHasMore = true;
+let historyLoading = false;
+let historyLoadedOnce = false;
+let previousHistoryCount = null;
+
+function updateHistoryBadgeCount(count) {
+  const badgeEl = document.getElementById("history-count-badge");
+  if (!badgeEl) return;
+  const num = typeof count === "number" ? count : Number(count) || 0;
+  badgeEl.textContent = num > 99 ? "99+" : String(num);
+  badgeEl.classList.toggle("hidden", num <= 0);
+}
+
+function switchQueueTab(tabName) {
+  if (tabName !== "queue" && tabName !== "history") return;
+  activeQueueTab = tabName;
+
+  const btnQueue = document.getElementById("tab-btn-queue");
+  const btnHistory = document.getElementById("tab-btn-history");
+  const paneQueue = document.getElementById("pane-queue");
+  const paneHistory = document.getElementById("pane-history");
+
+  if (tabName === "queue") {
+    btnQueue?.classList.add("active");
+    btnQueue?.setAttribute("aria-selected", "true");
+    btnHistory?.classList.remove("active");
+    btnHistory?.setAttribute("aria-selected", "false");
+    paneQueue?.classList.remove("hidden");
+    paneHistory?.classList.add("hidden");
+  } else {
+    btnHistory?.classList.add("active");
+    btnHistory?.setAttribute("aria-selected", "true");
+    btnQueue?.classList.remove("active");
+    btnQueue?.setAttribute("aria-selected", "false");
+    paneHistory?.classList.remove("hidden");
+    paneQueue?.classList.add("hidden");
+
+    if (!historyLoadedOnce) {
+      loadHistory({ reset: true });
+    }
+  }
+}
+
+function formatHistoryTime(timestamp) {
+  if (!timestamp) return "";
+  const date = new Date(timestamp);
+  const now = Date.now();
+  const diffMinutes = Math.floor((now - date.getTime()) / 60000);
+  if (diffMinutes < 1) return "Vừa xong";
+  if (diffMinutes < 60) return `${diffMinutes} phút trước`;
+  return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+}
+
+async function loadHistory({ reset = false } = {}) {
+  if (historyLoading) return;
+  if (!reset && !historyHasMore) return;
+
+  historyLoading = true;
+  const loadingEl = document.getElementById("history-loading");
+  const emptyEl = document.getElementById("history-empty");
+  const endEl = document.getElementById("history-end");
+  const listEl = document.getElementById("history-list");
+  const badgeEl = document.getElementById("history-count-badge");
+
+  loadingEl?.classList.remove("hidden");
+
+  if (reset) {
+    historyPage = 1;
+    historyHasMore = true;
+    historyItems = [];
+    if (listEl) listEl.innerHTML = "";
+    emptyEl?.classList.add("hidden");
+    endEl?.classList.add("hidden");
+  }
+
+  try {
+    const res = await fetch(`/api/history?page=${historyPage}&limit=10`);
+    const data = await res.json();
+    if (data.ok) {
+      historyLoadedOnce = true;
+      const newItems = Array.isArray(data.items) ? data.items : [];
+      historyItems.push(...newItems);
+      historyHasMore = !!data.hasMore;
+      historyPage++;
+
+      if (typeof data.total === "number") {
+        updateHistoryBadgeCount(data.total);
+      }
+
+      if (historyItems.length === 0) {
+        emptyEl?.classList.remove("hidden");
+      } else {
+        emptyEl?.classList.add("hidden");
+      }
+
+      renderHistoryItems(newItems, listEl);
+
+      if (!historyHasMore && historyItems.length > 0) {
+        endEl?.classList.remove("hidden");
+      } else {
+        endEl?.classList.add("hidden");
+      }
+    }
+  } catch (err) {
+    console.error("[history] load error:", err);
+  } finally {
+    historyLoading = false;
+    loadingEl?.classList.add("hidden");
+  }
+}
+
+function renderHistoryItems(items, listEl) {
+  if (!listEl || !Array.isArray(items)) return;
+  for (const item of items) {
+    const li = document.createElement("li");
+    li.className = "history-item";
+    li.dataset.id = item.id;
+
+    const isSkipped = item.finishReason === "skipped" || item.finishReason === "owner_skipped";
+    const statusText = isSkipped ? "Bỏ qua" : "Đã phát";
+    const statusClass = isSkipped ? "skipped" : "played";
+    const timeText = formatHistoryTime(item.finishedAt);
+    const addedByText = item.addedBy ? `Người chọn: ${item.addedBy}` : "Người chọn: Khách ẩn danh";
+
+    li.innerHTML = `
+      <img src="${safeImageUrl(item.thumbnail)}" alt="" loading="lazy" />
+      <div class="history-text">
+        <div class="history-title"></div>
+        <span class="history-byline"></span>
+        <div class="history-meta">
+          <span class="history-tag ${statusClass}">${statusText}</span>
+          ${timeText ? `<span class="history-time">${escapeHtml(timeText)}</span>` : ""}
+        </div>
+      </div>
+      <button class="history-readd-btn" type="button" title="Thêm lại vào hàng đợi" aria-label="Thêm lại bài hát ${escapeHtml(item.title)}">
+        <span>+</span> Thêm lại
+      </button>
+    `;
+
+    li.querySelector(".history-title").textContent = item.title;
+    updateMarqueeTitle(li.querySelector(".history-title"));
+    li.querySelector(".history-byline").textContent = `${item.channel || ""} · ${addedByText}`.trim();
+
+    const readdBtn = li.querySelector(".history-readd-btn");
+    readdBtn.onclick = () => {
+      requestSong(
+        {
+          videoId: item.videoId,
+          title: item.title,
+          channel: item.channel,
+          duration: item.duration,
+          thumbnail: item.thumbnail,
+        },
+        readdBtn
+      );
+    };
+
+    listEl.appendChild(li);
+  }
+}
+
+function setupHistoryInfiniteScroll() {
+  const sentinel = document.getElementById("history-sentinel");
+  if (sentinel && "IntersectionObserver" in window) {
+    const observer = new IntersectionObserver(
+      (entries) => {
+        const entry = entries[0];
+        if (entry && entry.isIntersecting && activeQueueTab === "history" && historyHasMore && !historyLoading) {
+          loadHistory();
+        }
+      },
+      {
+        root: null,
+        rootMargin: "150px",
+        threshold: 0.1,
+      }
+    );
+    observer.observe(sentinel);
+  }
+
+  const checkScroll = () => {
+    if (activeQueueTab !== "history" || !historyHasMore || historyLoading) return;
+    const queueSection = document.querySelector(".queue-section");
+    if (queueSection && queueSection.scrollHeight - queueSection.scrollTop - queueSection.clientHeight < 150) {
+      loadHistory();
+      return;
+    }
+    const docHeight = document.documentElement.scrollHeight;
+    const scrollPos = window.innerHeight + window.scrollY;
+    if (docHeight - scrollPos < 200) {
+      loadHistory();
+    }
+  };
+
+  document.querySelector(".queue-section")?.addEventListener("scroll", checkScroll, { passive: true });
+  window.addEventListener("scroll", checkScroll, { passive: true });
+
+  document.getElementById("tab-btn-queue")?.addEventListener("click", () => switchQueueTab("queue"));
+  document.getElementById("tab-btn-history")?.addEventListener("click", () => switchQueueTab("history"));
+
+  // Fetch initial total count so badge displays immediately on page load
+  fetch("/api/history?page=1&limit=1")
+    .then((res) => res.json())
+    .then((data) => {
+      if (data.ok && typeof data.total === "number") {
+        updateHistoryBadgeCount(data.total);
+      }
+    })
+    .catch(() => {});
+}
+
 renderSingers();
 selectGenre("All"); // render the tab and load real songs on page open
 renderRequestSettings();
 renderFeedback();
+setupHistoryInfiniteScroll();
 window.addEventListener("jukebox:notification", (event) => {
   if (currentUser) toast("info", "🔔", "Bạn có thông báo mới", { sub: event.detail?.title || "Mở chuông để xem cập nhật." });
 });
