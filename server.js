@@ -851,6 +851,33 @@ app.get("/api/browse", publicReadLimit, async (req, res) => {
   }
 });
 
+app.get("/api/history", publicReadLimit, (req, res) => {
+  const { page, limit, offset } = parsePagination(req.query, { defaultLimit: 10, maxLimit: 50 });
+  const result = queueRepo.getPlaybackHistory("default_event", { limit, offset });
+  const items = result.items.map((item) => ({
+    id: item.id,
+    videoId: item.video_id,
+    title: item.title,
+    channel: item.channel || "",
+    duration: item.duration || "3:30",
+    thumbnail: sanitizeThumbnail(item.thumbnail),
+    addedBy: item.added_by || "",
+    voteScore: item.vote_score || 0,
+    finishedAt: item.finished_at || null,
+    finishReason: item.finish_reason || "ended",
+    playedSeconds: item.played_seconds || null,
+  }));
+  res.json({
+    ok: true,
+    page,
+    limit,
+    offset,
+    total: result.total,
+    hasMore: offset + items.length < result.total,
+    items,
+  });
+});
+
 const lastRequestAt = new Map();
 function pruneLastRequestAt() {
   if (lastRequestAt.size <= 500) return;
@@ -1417,7 +1444,7 @@ function versionedPage(name) {
   const filePath = path.join(__dirname, "public", name);
   if (!existsSync(filePath)) return `<!DOCTYPE html><html><body><h1>${name} not found</h1></body></html>`;
   return readFileSync(filePath, "utf8").replace(
-    /(href|src)="\/((?:guest|host|admin|account|leaderboard|rules|auth-utils)\.(?:css|js))"/g,
+    /(href|src)="\/((?:guest|host|admin|account|leaderboard|rules|auth-utils|history-controller)\.(?:css|js))"/g,
     `$1="/$2?v=${BOOT_ID}"`
   );
 }
