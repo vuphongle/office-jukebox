@@ -8,6 +8,8 @@ import { fileURLToPath } from "node:url";
 import vm from "node:vm";
 import { initDb, closeDb } from "../src/db.js";
 import { QueueRepository } from "../src/repositories/queueRepository.js";
+import { SessionRepository } from "../src/repositories/sessionRepository.js";
+import { UserRepository } from "../src/repositories/userRepository.js";
 
 const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 
@@ -16,6 +18,7 @@ afterEach(() => closeDb());
 test("Queue repository playback history returns paginated played songs in descending order", () => {
   const db = initDb({ dbPath: ":memory:" });
   const queueRepo = new QueueRepository(db);
+  const user = new UserRepository(db).create({ username: "history-pages", passwordHash: "p" });
 
   // Insert 25 items and transition them to played status
   for (let i = 1; i <= 25; i++) {
@@ -26,6 +29,7 @@ test("Queue repository playback history returns paginated played songs in descen
       duration: "3:45",
       thumbnail: `https://i.ytimg.com/vi/video_${i}/hqdefault.jpg`,
       addedBy: `Người chọn ${i}`,
+      addedByUserId: user.id,
     });
 
     // Mark as played with spaced finished_at timestamps
@@ -38,21 +42,21 @@ test("Queue repository playback history returns paginated played songs in descen
   }
 
   // Page 1: limit 10, offset 0
-  const page1 = queueRepo.getPlaybackHistory("default_event", { limit: 10, offset: 0 });
+  const page1 = queueRepo.getPlaybackHistory("default_event", user.id, { limit: 10, offset: 0 });
   assert.equal(page1.total, 25);
   assert.equal(page1.items.length, 10);
   assert.equal(page1.items[0].video_id, "video_25"); // Most recent first
   assert.equal(page1.items[9].video_id, "video_16");
 
   // Page 2: limit 10, offset 10
-  const page2 = queueRepo.getPlaybackHistory("default_event", { limit: 10, offset: 10 });
+  const page2 = queueRepo.getPlaybackHistory("default_event", user.id, { limit: 10, offset: 10 });
   assert.equal(page2.total, 25);
   assert.equal(page2.items.length, 10);
   assert.equal(page2.items[0].video_id, "video_15");
   assert.equal(page2.items[9].video_id, "video_6");
 
   // Page 3: limit 10, offset 20 (only 5 items remaining)
-  const page3 = queueRepo.getPlaybackHistory("default_event", { limit: 10, offset: 20 });
+  const page3 = queueRepo.getPlaybackHistory("default_event", user.id, { limit: 10, offset: 20 });
   assert.equal(page3.total, 25);
   assert.equal(page3.items.length, 5);
   assert.equal(page3.items[0].video_id, "video_5");
@@ -69,6 +73,7 @@ test("Queue repository playback history returns paginated played songs in descen
 test("Queue repository playback history uses insertion order for identical finish times", () => {
   const db = initDb({ dbPath: ":memory:" });
   const queueRepo = new QueueRepository(db);
+  const user = new UserRepository(db).create({ username: "history-order", passwordHash: "p" });
 
   for (let i = 1; i <= 3; i++) {
     const item = queueRepo.createItem({
@@ -78,6 +83,7 @@ test("Queue repository playback history uses insertion order for identical finis
       duration: "3:00",
       thumbnail: null,
       addedBy: "Người chọn",
+      addedByUserId: user.id,
     });
     queueRepo.updateStatus(item.id, "playing", { startedAt: 3000 });
     queueRepo.updateStatus(item.id, "played", {
@@ -87,11 +93,43 @@ test("Queue repository playback history uses insertion order for identical finis
     });
   }
 
-  const history = queueRepo.getPlaybackHistory("default_event", { limit: 3 });
+  const history = queueRepo.getPlaybackHistory("default_event", user.id, { limit: 3 });
   assert.deepEqual(
     history.items.map((item) => item.video_id),
     ["same_time_3", "same_time_2", "same_time_1"]
   );
+});
+
+test("Queue repository playback history only returns songs added by the requested user", () => {
+  const db = initDb({ dbPath: ":memory:" });
+  const queueRepo = new QueueRepository(db);
+  const userRepo = new UserRepository(db);
+  const currentUser = userRepo.create({ username: "history-owner", passwordHash: "p" });
+  const otherUser = userRepo.create({ username: "history-other", passwordHash: "p" });
+
+  const addPlayedItem = ({ videoId, addedByUserId, finishedAt }) => {
+    const item = queueRepo.createItem({
+      videoId,
+      title: videoId,
+      channel: "Ca si",
+      duration: "3:00",
+      thumbnail: null,
+      addedBy: "Nguoi chon",
+      addedByUserId,
+    });
+    queueRepo.updateStatus(item.id, "playing", { startedAt: finishedAt - 180 });
+    queueRepo.updateStatus(item.id, "played", { finishedAt, finishReason: "ended", playedSeconds: 180 });
+  };
+
+  addPlayedItem({ videoId: "mine_old", addedByUserId: currentUser.id, finishedAt: 1000 });
+  addPlayedItem({ videoId: "other", addedByUserId: otherUser.id, finishedAt: 2000 });
+  addPlayedItem({ videoId: "anonymous", addedByUserId: null, finishedAt: 3000 });
+  addPlayedItem({ videoId: "mine_new", addedByUserId: currentUser.id, finishedAt: 4000 });
+
+  const history = queueRepo.getPlaybackHistory("default_event", currentUser.id, { limit: 10 });
+
+  assert.equal(history.total, 2);
+  assert.deepEqual(history.items.map((item) => item.video_id), ["mine_new", "mine_old"]);
 });
 
 test("History controller defers a reset requested during an in-flight page load", () => {
@@ -112,13 +150,41 @@ test("History controller defers a reset requested during an in-flight page load"
   assert.equal(controller.refreshPending, true);
 });
 
-test("GET /api/history returns sanitized paginated history over HTTP", async () => {
+test("History controller invalidates loaded data when the signed-in user changes", () => {
+  const source = readFileSync(path.join(ROOT, "public/history-controller.js"), "utf8");
+  const context = { window: {} };
+  vm.runInNewContext(source, context);
+
+  const controller = context.window.JukeboxHistoryController.create();
+  assert.equal(controller.emptyReason, "authentication-required");
+  assert.equal(controller.setIdentity("user-a"), true);
+  assert.equal(controller.refreshPending, true);
+  assert.equal(controller.emptyReason, "no-history");
+  assert.equal(controller.isIdentityCurrent("user-a"), true);
+
+  assert.equal(controller.begin(true), true);
+  assert.equal(controller.finish(), false);
+  assert.equal(controller.setIdentity("user-a"), false);
+  assert.equal(controller.setIdentity("user-b"), true);
+  assert.equal(controller.isIdentityCurrent("user-a"), false);
+  assert.equal(controller.isIdentityCurrent("user-b"), true);
+
+  assert.equal(controller.setIdentity(null), true);
+  assert.equal(controller.emptyReason, "authentication-required");
+});
+
+test("GET /api/history requires authentication and returns only the current user's songs", async () => {
   const dataDir = mkdtempSync(path.join(os.tmpdir(), "jukebox-history-test-"));
   const dbPath = path.join(dataDir, "jukebox.db");
 
   // Pre-populate db with history items
   const db = initDb({ dbPath });
   const queueRepo = new QueueRepository(db);
+  const userRepo = new UserRepository(db);
+  const sessionRepo = new SessionRepository(db);
+  const currentUser = userRepo.create({ username: "history-http", passwordHash: "p" });
+  const otherUser = userRepo.create({ username: "history-http-other", passwordHash: "p" });
+  const session = sessionRepo.create(currentUser.id, "history-http-session");
   for (let i = 1; i <= 15; i++) {
     const item = queueRepo.createItem({
       videoId: `yt_${i}`,
@@ -127,6 +193,7 @@ test("GET /api/history returns sanitized paginated history over HTTP", async () 
       duration: "4:00",
       thumbnail: `https://i.ytimg.com/vi/yt_${i}/hqdefault.jpg`,
       addedBy: `User ${i}`,
+      addedByUserId: currentUser.id,
     });
     queueRepo.updateStatus(item.id, "playing", { startedAt: 2000 + i * 100 });
     queueRepo.updateStatus(item.id, "played", {
@@ -135,6 +202,17 @@ test("GET /api/history returns sanitized paginated history over HTTP", async () 
       playedSeconds: 240,
     });
   }
+  const otherItem = queueRepo.createItem({
+    videoId: "yt_other",
+    title: "Other user's song",
+    channel: "Other artist",
+    duration: "4:00",
+    thumbnail: null,
+    addedBy: "Other user",
+    addedByUserId: otherUser.id,
+  });
+  queueRepo.updateStatus(otherItem.id, "playing", { startedAt: 5000 });
+  queueRepo.updateStatus(otherItem.id, "played", { finishedAt: 6000, finishReason: "ended", playedSeconds: 240 });
   closeDb();
 
   const port = 47000 + Math.floor(Math.random() * 1000);
@@ -177,8 +255,13 @@ test("GET /api/history returns sanitized paginated history over HTTP", async () 
       assert.equal(pointsRes.status, 404);
     }
 
+    const anonymousHistory = await fetch(`${baseUrl}/api/history?page=1&limit=10`);
+    assert.equal(anonymousHistory.status, 401);
+
+    const historyHeaders = { cookie: `jukebox_session=${session.token}` };
+
     // Fetch page 1
-    const res1 = await fetch(`${baseUrl}/api/history?page=1&limit=10`);
+    const res1 = await fetch(`${baseUrl}/api/history?page=1&limit=10`, { headers: historyHeaders });
     assert.equal(res1.status, 200);
     const data1 = await res1.json();
     assert.equal(data1.ok, true);
@@ -191,7 +274,7 @@ test("GET /api/history returns sanitized paginated history over HTTP", async () 
     assert.equal(data1.items[0].thumbnail, "https://i.ytimg.com/vi/yt_15/hqdefault.jpg");
 
     // Fetch page 2
-    const res2 = await fetch(`${baseUrl}/api/history?page=2&limit=10`);
+    const res2 = await fetch(`${baseUrl}/api/history?page=2&limit=10`, { headers: historyHeaders });
     assert.equal(res2.status, 200);
     const data2 = await res2.json();
     assert.equal(data2.ok, true);

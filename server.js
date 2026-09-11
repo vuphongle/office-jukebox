@@ -851,9 +851,9 @@ app.get("/api/browse", publicReadLimit, async (req, res) => {
   }
 });
 
-app.get("/api/history", publicReadLimit, (req, res) => {
+app.get("/api/history", requireAuth, publicReadLimit, (req, res) => {
   const { page, limit, offset } = parsePagination(req.query, { defaultLimit: 10, maxLimit: 50 });
-  const result = queueRepo.getPlaybackHistory("default_event", { limit, offset });
+  const result = queueRepo.getPlaybackHistory("default_event", req.user.id, { limit, offset });
   const items = result.items.map((item) => ({
     id: item.id,
     videoId: item.video_id,

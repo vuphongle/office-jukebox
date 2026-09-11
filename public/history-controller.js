@@ -2,6 +2,7 @@
   function createHistoryController() {
     let loading = false;
     let refreshPending = false;
+    let identity = null;
 
     return {
       begin(reset = false) {
@@ -19,6 +20,19 @@
         refreshPending = true;
       },
 
+      setIdentity(userId) {
+        const nextIdentity = typeof userId === "string" && userId ? userId : null;
+        if (identity === nextIdentity) return false;
+        identity = nextIdentity;
+        refreshPending = true;
+        return true;
+      },
+
+      isIdentityCurrent(userId) {
+        const expectedIdentity = typeof userId === "string" && userId ? userId : null;
+        return identity === expectedIdentity;
+      },
+
       finish() {
         loading = false;
         return refreshPending;
@@ -30,6 +44,10 @@
 
       get refreshPending() {
         return refreshPending;
+      },
+
+      get emptyReason() {
+        return identity ? "no-history" : "authentication-required";
       },
     };
   }
