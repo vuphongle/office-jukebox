@@ -71,6 +71,7 @@ async function fetchMe() {
     renderUserAuthBar();
     if (lastQueueState) renderQueue(lastQueueState);
   }
+  syncHistoryIdentity();
 }
 
 function renderUserAuthBar() {
@@ -261,6 +262,7 @@ async function handleLogout() {
     await fetch("/api/auth/logout", { method: "POST" });
   } catch {}
   currentUser = null;
+  syncHistoryIdentity();
   hidePointDropBanner();
   renderUserAuthBar();
   if (lastQueueState) renderQueue(lastQueueState);
@@ -1415,6 +1417,7 @@ function connectWs() {
       }
     } else if (msg.type === "sessionRevoked") {
       currentUser = null;
+      syncHistoryIdentity();
       hidePointDropBanner();
       renderUserAuthBar();
       if (lastQueueState) renderQueue(lastQueueState);
@@ -1484,14 +1487,12 @@ function renderQueue(state) {
 
   const queue = state.queue || [];
   document.getElementById("queue-count").textContent = queue.length;
-  if (typeof state.historyCount === "number") {
-    updateHistoryBadgeCount(state.historyCount);
-  }
   if (previousHistoryCount !== null && typeof state.historyCount === "number" && state.historyCount > previousHistoryCount) {
     if (activeQueueTab === "history") {
       void loadHistory({ reset: true });
     } else {
       historyController.requestReset();
+      void refreshHistoryCount();
     }
   }
   if (typeof state.historyCount === "number") {
@@ -1635,6 +1636,61 @@ function updateHistoryBadgeCount(count) {
   badgeEl.classList.toggle("hidden", num <= 0);
 }
 
+function updateHistoryEmptyCopy() {
+  const titleEl = document.getElementById("history-empty-title");
+  const descriptionEl = document.getElementById("history-empty-description");
+  if (!titleEl || !descriptionEl) return;
+
+  const requiresAuthentication = historyController.emptyReason === "authentication-required";
+  titleEl.textContent = requiresAuthentication ? "Đăng nhập để xem lịch sử" : "Chưa có lịch sử phát";
+  descriptionEl.textContent = requiresAuthentication
+    ? "Lịch sử chỉ hiển thị các bài hát do chính tài khoản của bạn đã chọn."
+    : "Các bài hát bạn chọn sẽ xuất hiện tại đây sau khi phát xong.";
+}
+
+function clearHistoryView() {
+  historyItems = [];
+  historyPage = 1;
+  historyHasMore = true;
+  historyLoadedOnce = false;
+  document.getElementById("history-list")?.replaceChildren();
+  document.getElementById("history-end")?.classList.add("hidden");
+  document.getElementById("history-empty")?.classList.add("hidden");
+  updateHistoryBadgeCount(0);
+  updateHistoryEmptyCopy();
+}
+
+function syncHistoryIdentity() {
+  if (!historyController.setIdentity(currentUser?.id || null)) return;
+  clearHistoryView();
+  if (activeQueueTab === "history") {
+    void loadHistory({ reset: true });
+  } else {
+    void refreshHistoryCount();
+  }
+}
+
+async function refreshHistoryCount() {
+  const requestedUserId = currentUser?.id || null;
+  if (!requestedUserId) {
+    updateHistoryBadgeCount(0);
+    return;
+  }
+
+  try {
+    const res = await fetch("/api/history?page=1&limit=1");
+    if (!historyController.isIdentityCurrent(requestedUserId)) return;
+    if (res.status === 401) {
+      currentUser = null;
+      renderUserAuthBar();
+      syncHistoryIdentity();
+      return;
+    }
+    const data = await res.json();
+    if (data.ok && typeof data.total === "number") updateHistoryBadgeCount(data.total);
+  } catch {}
+}
+
 function switchQueueTab(tabName) {
   if (tabName !== "queue" && tabName !== "history") return;
   activeQueueTab = tabName;
@@ -1679,11 +1735,12 @@ async function loadHistory({ reset = false } = {}) {
   if (!reset && !historyHasMore) return;
   if (!historyController.begin(reset)) return;
 
+  const requestedUserId = currentUser?.id || null;
+
   const loadingEl = document.getElementById("history-loading");
   const emptyEl = document.getElementById("history-empty");
   const endEl = document.getElementById("history-end");
   const listEl = document.getElementById("history-list");
-  const badgeEl = document.getElementById("history-count-badge");
 
   loadingEl?.classList.remove("hidden");
 
@@ -1697,7 +1754,22 @@ async function loadHistory({ reset = false } = {}) {
   }
 
   try {
+    if (!requestedUserId) {
+      historyLoadedOnce = true;
+      updateHistoryBadgeCount(0);
+      updateHistoryEmptyCopy();
+      emptyEl?.classList.remove("hidden");
+      return;
+    }
+
     const res = await fetch(`/api/history?page=${historyPage}&limit=10`);
+    if (!historyController.isIdentityCurrent(requestedUserId)) return;
+    if (res.status === 401) {
+      currentUser = null;
+      renderUserAuthBar();
+      syncHistoryIdentity();
+      return;
+    }
     const data = await res.json();
     if (data.ok) {
       historyLoadedOnce = true;
@@ -1711,6 +1783,7 @@ async function loadHistory({ reset = false } = {}) {
       }
 
       if (historyItems.length === 0) {
+        updateHistoryEmptyCopy();
         emptyEl?.classList.remove("hidden");
       } else {
         emptyEl?.classList.add("hidden");
@@ -1823,16 +1896,6 @@ function setupHistoryInfiniteScroll() {
 
   document.getElementById("tab-btn-queue")?.addEventListener("click", () => switchQueueTab("queue"));
   document.getElementById("tab-btn-history")?.addEventListener("click", () => switchQueueTab("history"));
-
-  // Fetch initial total count so badge displays immediately on page load
-  fetch("/api/history?page=1&limit=1")
-    .then((res) => res.json())
-    .then((data) => {
-      if (data.ok && typeof data.total === "number") {
-        updateHistoryBadgeCount(data.total);
-      }
-    })
-    .catch(() => {});
 }
 
 renderSingers();

@@ -82,22 +82,22 @@ export class QueueRepository {
       .all(eventId, boundedLimit);
   }
 
-  getPlaybackHistory(eventId = "default_event", { limit = 10, offset = 0 } = {}) {
+  getPlaybackHistory(eventId = "default_event", userId, { limit = 10, offset = 0 } = {}) {
     const boundedLimit = Math.min(100, Math.max(1, Number(limit) || 10));
     const boundedOffset = Math.max(0, Number(offset) || 0);
     const countRow = this.db
-      .query("SELECT COUNT(*) AS total FROM queue_items WHERE event_id = ? AND status = 'played'")
-      .get(eventId);
+      .query("SELECT COUNT(*) AS total FROM queue_items WHERE event_id = ? AND added_by_user_id = ? AND status = 'played'")
+      .get(eventId, userId);
     const total = countRow?.total || 0;
     const items = this.db
       .query(
         `SELECT id, video_id, title, channel, duration, thumbnail, added_by, added_by_user_id,
                 vote_score, finished_at, finish_reason, played_seconds
          FROM queue_items
-         WHERE event_id = ? AND status = 'played'
+         WHERE event_id = ? AND added_by_user_id = ? AND status = 'played'
          ORDER BY finished_at DESC, rowid DESC LIMIT ? OFFSET ?`
       )
-      .all(eventId, boundedLimit, boundedOffset);
+      .all(eventId, userId, boundedLimit, boundedOffset);
     return { total, limit: boundedLimit, offset: boundedOffset, items };
   }
 
