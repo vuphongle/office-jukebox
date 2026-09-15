@@ -21,6 +21,7 @@ import QRCode from "qrcode";
 
 import {
   searchYouTube,
+  searchYouTubeByMode,
   fetchVietnamChartHits,
   checkPlayable,
   fetchVideoDetails,
@@ -29,6 +30,7 @@ import {
   sanitizeThumbnail,
   isValidYouTubeVideoId,
 } from "./src/youtube.js";
+import { avatarPublicUrl, validateAvatarUpload } from "./src/avatar.js";
 import { prepareRequestSong } from "./src/requestPipeline.js";
 import { moderate, moderationConfigured } from "./src/moderation.js";
 import { JukeboxState } from "./src/state.js";
@@ -187,6 +189,7 @@ function publicUser(user) {
     id: user.id,
     username: user.username,
     displayName: user.display_name ?? user.displayName,
+    avatarUrl: avatarPublicUrl(user.avatar_file ?? user.avatarFile),
     role: user.role,
     status: user.status,
     pointsBalance: user.points_balance ?? user.pointsBalance,
@@ -202,9 +205,12 @@ function publicStateSnapshot() {
     if (!item) return null;
     const source = byId.get(item.id);
     const rank = source?.addedByUserId ? publicRank(source.addedByUserId) : null;
+    const avatarUrl = source?.addedByUserId
+      ? avatarPublicUrl(userRepo.findById(source.addedByUserId)?.avatar_file)
+      : null;
     const thumbnail = sanitizeThumbnail(item.thumbnail);
     const safeItem = thumbnail === item.thumbnail ? item : { ...item, thumbnail };
-    return rank ? { ...safeItem, rank } : safeItem;
+    return { ...safeItem, ...(rank ? { rank } : {}), avatarUrl };
   };
   return { ...snapshot, nowPlaying: decorate(snapshot.nowPlaying), queue: snapshot.queue.map(decorate) };
 }
@@ -213,6 +219,7 @@ function publicStateSnapshot() {
 const DATA_DIR = process.env.JUKEBOX_DATA_DIR || path.join(__dirname, "data");
 const SETTINGS_PATH = path.join(DATA_DIR, "settings.json");
 const FEEDBACK_PATH = path.join(DATA_DIR, "feedback.json");
+const AVATAR_DIR = path.join(DATA_DIR, "avatars");
 let savedSettings = {};
 try {
   savedSettings = JSON.parse(readFileSync(SETTINGS_PATH, "utf8"));
@@ -236,6 +243,8 @@ let chatOn = savedSettings.chatOn ?? true;
 rewardNotificationsOn = savedSettings.rewardNotificationsOn ?? true;
 milestoneAnnouncementsOn = savedSettings.milestoneAnnouncementsOn ?? true;
 let voteSortOn = savedSettings.voteSortOn ?? true;
+const SEARCH_MODES = new Set(["youtube-music", "youtube-web"]);
+let searchMode = SEARCH_MODES.has(savedSettings.searchMode) ? savedSettings.searchMode : "youtube-web";
 let chatAiSettings = normalizeChatAiSettings(savedSettings.chatAi || {});
 state.setVoteSort(voteSortOn);
 
@@ -283,6 +292,7 @@ function saveSettings() {
     rewardNotificationsOn,
     milestoneAnnouncementsOn,
     voteSortOn,
+    searchMode,
     chatAi: chatAiSettings,
     feedbackDigest,
   });
@@ -307,6 +317,7 @@ function settingsSnapshot() {
     rewardNotificationsOn,
     milestoneAnnouncementsOn,
     voteSortOn,
+    searchMode,
     chatAi: chatAiSettings,
     feedbackDigest,
   };
@@ -326,6 +337,7 @@ function restoreSettings(snapshot) {
     rewardNotificationsOn,
     milestoneAnnouncementsOn,
     voteSortOn,
+    searchMode,
     chatAi: chatAiSettings,
     feedbackDigest,
   } = snapshot);
@@ -352,6 +364,13 @@ const TRUST_PROXY = parseTrustProxy(process.env.TRUST_PROXY || "false");
 app.set("trust proxy", TRUST_PROXY);
 app.use(express.json({ limit: "32kb" }));
 app.use(createAuthMiddleware(db));
+app.use(
+  "/avatars",
+  express.static(AVATAR_DIR, {
+    fallthrough: true,
+    setHeaders: (res) => res.setHeader("Cache-Control", "public, max-age=31536000, immutable"),
+  })
+);
 
 // --- Host authentication (Basic Auth or admin session) ---------------------
 const HOST_PASSWORD = process.env.HOST_PASSWORD || "";
@@ -492,6 +511,7 @@ app.post("/api/auth/register", registerIpLimit, registerGlobalLimit, async (req,
         id: user.id,
         username: user.username,
         displayName: user.display_name,
+        avatarUrl: avatarPublicUrl(user.avatar_file),
         role: user.role,
         pointsBalance: user.points_balance,
         currentStreak: user.current_streak,
@@ -534,6 +554,7 @@ app.post("/api/auth/login", loginIpLimit, loginUsernameLimit, async (req, res) =
         id: user.id,
         username: user.username,
         displayName: user.display_name,
+        avatarUrl: avatarPublicUrl(user.avatar_file),
         role: user.role,
         pointsBalance: user.points_balance,
         currentStreak: user.current_streak,
@@ -564,7 +585,8 @@ app.get("/api/engagement/rules", publicReadLimit, (_req, res) => {
 });
 
 app.get("/api/rank/leaderboard", publicReadLimit, (_req, res) => {
-  res.json({ ok: true, leaderboard: rankRepo.listPublicLeaderboard({ limit: 10 }) });
+  const leaderboard = rankRepo.listPublicLeaderboard({ limit: 10 });
+  res.json({ ok: true, leaderboard });
 });
 
 app.get("/api/me", (req, res) => {
@@ -584,6 +606,7 @@ app.get("/api/me", (req, res) => {
       id: req.user.id,
       username: req.user.username,
       displayName: req.user.displayName,
+      avatarUrl: avatarPublicUrl(req.user.avatarFile),
       role: req.user.role,
       status: req.user.status,
       pointsBalance: req.user.pointsBalance,
@@ -656,9 +679,56 @@ app.patch("/api/me/profile", requireAuth, (req, res) => {
       id: user.id,
       username: user.username,
       displayName: user.display_name,
+      avatarUrl: avatarPublicUrl(user.avatar_file),
     },
   });
 });
+
+app.put(
+  "/api/me/avatar",
+  requireAuth,
+  express.raw({ type: "image/*", limit: "5mb" }),
+  (req, res) => {
+    let uploadedPath = "";
+    let tempPath = "";
+    try {
+      const { extension } = validateAvatarUpload(req.body, req.headers["content-type"]);
+      mkdirSync(AVATAR_DIR, { recursive: true });
+      const filename = `${randomUUID()}.${extension}`;
+      uploadedPath = path.join(AVATAR_DIR, filename);
+      tempPath = `${uploadedPath}.${process.pid}.tmp`;
+      writeFileSync(tempPath, req.body, { flag: "wx" });
+      renameSync(tempPath, uploadedPath);
+      tempPath = "";
+
+      const previousFile = userRepo.findById(req.user.id)?.avatar_file;
+      const user = userRepo.updateAvatarFile(req.user.id, filename);
+      if (previousFile && avatarPublicUrl(previousFile)) {
+        try { unlinkSync(path.join(AVATAR_DIR, previousFile)); } catch (err) {
+          if (err?.code !== "ENOENT") console.warn(`[avatar] unable to remove replaced file: ${err.message}`);
+        }
+      }
+
+      const avatarUrl = avatarPublicUrl(user.avatar_file);
+      notifyUserProfile(user.id, user.display_name, avatarUrl);
+      broadcastState();
+      broadcastChatHistory();
+      res.json({ ok: true, user: { id: user.id, username: user.username, displayName: user.display_name, avatarUrl } });
+    } catch (err) {
+      if (tempPath) {
+        try { unlinkSync(tempPath); } catch {}
+      }
+      if (uploadedPath) {
+        try { unlinkSync(uploadedPath); } catch {}
+      }
+      const validationError = /Ảnh|JPEG|PNG|WebP|Định dạng/.test(String(err.message));
+      res.status(validationError ? 400 : 500).json({
+        ok: false,
+        reason: validationError ? err.message : "Không thể lưu ảnh đại diện lúc này.",
+      });
+    }
+  }
+);
 
 app.post(
   "/api/me/password",
@@ -893,7 +963,7 @@ app.get("/api/search", publicReadLimit, async (req, res) => {
   const q = (req.query.q || "").toString().trim().slice(0, 100);
   if (!q) return res.json({ results: [] });
   try {
-    const results = await searchYouTube(q);
+    const results = await searchYouTubeByMode(q, { mode: searchMode });
     res.json({ results });
   } catch (err) {
     console.error("[search]", err.message);
@@ -1031,7 +1101,37 @@ app.get("/api/admin/users", requireAdmin, (req, res) => {
   const { page, limit, offset } = parsePagination(req.query);
 
   const result = userRepo.listUsers({ search, status, limit, offset });
-  res.json({ ok: true, page, limit, ...result, users: result.users.map((user) => ({ ...user, rank: publicRank(user.id) })) });
+  res.json({
+    ok: true,
+    page,
+    limit,
+    ...result,
+    users: result.users.map(({ avatar_file: avatarFile, ...user }) => ({
+      ...user,
+      avatarUrl: avatarPublicUrl(avatarFile),
+      rank: publicRank(user.id),
+    })),
+  });
+});
+
+app.get("/api/admin/search-settings", requireAdmin, (_req, res) => {
+  res.json({ ok: true, searchMode });
+});
+
+app.patch("/api/admin/search-settings", requireAdmin, (req, res) => {
+  if (!SEARCH_MODES.has(req.body?.searchMode)) {
+    return res.status(400).json({ ok: false, reason: "Chế độ tìm kiếm không hợp lệ." });
+  }
+  const previous = settingsSnapshot();
+  searchMode = req.body.searchMode;
+  try {
+    saveSettings();
+  } catch (err) {
+    restoreSettings(previous);
+    console.error(`[settings] unable to save: ${err.message}`);
+    return res.status(500).json({ ok: false, reason: "Không thể lưu cài đặt lúc này. Vui lòng thử lại." });
+  }
+  res.json({ ok: true, searchMode });
 });
 
 app.get("/api/admin/rank/leaderboard", requireAdmin, (req, res) => {
@@ -1444,7 +1544,7 @@ function versionedPage(name) {
   const filePath = path.join(__dirname, "public", name);
   if (!existsSync(filePath)) return `<!DOCTYPE html><html><body><h1>${name} not found</h1></body></html>`;
   return readFileSync(filePath, "utf8").replace(
-    /(href|src)="\/((?:guest|host|admin|account|leaderboard|rules|auth-utils|history-controller)\.(?:css|js))"/g,
+    /(href|src)="\/((?:guest|host|admin|account|leaderboard|rules|auth-utils|avatar|avatar-crop|history-controller)\.(?:css|js))"/g,
     `$1="/$2?v=${BOOT_ID}"`
   );
 }
@@ -1658,12 +1758,35 @@ function rotateUserSockets(userId, previousToken, nextToken) {
   }
 }
 
-function notifyUserProfile(userId, displayName) {
-  const msg = JSON.stringify({ type: "profileUpdated", displayName });
+function notifyUserProfile(userId, displayName, avatarUrl = undefined) {
+  const msg = JSON.stringify({ type: "profileUpdated", displayName, avatarUrl });
   for (const client of wss.clients) {
     if (client.readyState !== 1) continue;
     const session = refreshSocketIdentity(client, sessionRepo);
     if (session?.user_id === userId) client.send(msg);
+  }
+}
+
+function publicChatMessage(message, linkedUserId = undefined) {
+  if (!message) return message;
+  const { userId: embeddedUserId, ...safeMessage } = message;
+  const userId = linkedUserId === undefined
+    ? embeddedUserId || chatRepo.findUserId(message.id)
+    : linkedUserId;
+  if (!userId) return safeMessage;
+  const user = userRepo.findById(userId);
+  return {
+    ...safeMessage,
+    rank: publicRank(userId),
+    avatarUrl: avatarPublicUrl(user?.avatar_file),
+  };
+}
+
+function broadcastChatHistory() {
+  if (!chatOn || !chatMessages.length) return;
+  const message = JSON.stringify({ type: "chatHistory", messages: chatMessages.map((item) => publicChatMessage(item)) });
+  for (const client of wss.clients) {
+    if (client.readyState === 1) client.send(message);
   }
 }
 
@@ -1890,7 +2013,7 @@ wss.on("connection", (ws, request) => {
 
   ws.send(stateMessage());
   if (chatOn && chatMessages.length) {
-    ws.send(JSON.stringify({ type: "chatHistory", messages: chatMessages }));
+    ws.send(JSON.stringify({ type: "chatHistory", messages: chatMessages.map((item) => publicChatMessage(item)) }));
   }
 
   ws.on("error", (err) => {
@@ -1956,10 +2079,8 @@ wss.on("connection", (ws, request) => {
           isAI: false,
           createdAt: new Date().toISOString(),
         });
-        const publicMessage = currentSession?.user_id
-          ? { ...message, rank: publicRank(currentSession.user_id) }
-          : message;
-        pushRecentChat(chatMessages, publicMessage);
+        const publicMessage = publicChatMessage(message, currentSession?.user_id || null);
+        pushRecentChat(chatMessages, message);
         recordRankChatActivity(message, currentSession?.user_id);
         chatLastSentAt.set(ws, now);
         broadcastChatMessage(publicMessage);

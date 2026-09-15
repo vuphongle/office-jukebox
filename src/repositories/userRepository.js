@@ -97,6 +97,15 @@ export class UserRepository {
     return this.findById(userId);
   }
 
+  updateAvatarFile(userId, avatarFile) {
+    const now = new Date().toISOString();
+    this.db.run(
+      "UPDATE users SET avatar_file = ?, updated_at = ? WHERE id = ?",
+      [avatarFile || null, now, userId]
+    );
+    return this.findById(userId);
+  }
+
   updatePasswordHash(userId, passwordHash) {
     const now = new Date().toISOString();
     this.db.run(
@@ -123,7 +132,7 @@ export class UserRepository {
     const total = countRow ? countRow.total : 0;
 
     const rows = this.db.query(
-      `SELECT id, username, display_name, role, status, points_balance, current_streak, last_checkin_date, created_at, updated_at
+      `SELECT id, username, display_name, avatar_file, role, status, points_balance, current_streak, last_checkin_date, created_at, updated_at
        FROM users ${where}
        ORDER BY created_at DESC
        LIMIT ? OFFSET ?`

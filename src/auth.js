@@ -114,6 +114,7 @@ export function createAuthMiddleware(db) {
           id: session.user_id,
           username: session.username,
           displayName: session.display_name,
+          avatarFile: session.avatar_file,
           role: session.role,
           status: session.status,
           pointsBalance: session.points_balance,

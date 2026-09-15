@@ -140,6 +140,7 @@ function selectTab(tabId) {
   else if (currentTab === "tab-notifications") loadNotifications();
   else if (currentTab === "tab-feedback") {
     loadFeedback();
+    loadSearchSettings();
     loadChatAiSettings();
   }
 }
@@ -239,7 +240,7 @@ async function loadUsers() {
 
         return `
           <tr>
-            <td><strong>${escapeHtml(u.username)}</strong></td>
+            <td><span class="user-cell"><span class="table-avatar" data-avatar-url="${escapeHtml(u.avatarUrl || "")}" data-avatar-name="${escapeHtml(u.display_name || u.username)}"></span><strong>${escapeHtml(u.username)}</strong></span></td>
             <td>${escapeHtml(u.display_name)}</td>
             <td>${roleBadge}</td>
             <td>${statusBadge}</td>
@@ -256,6 +257,12 @@ async function loadUsers() {
         `;
       })
       .join("");
+    tbody.querySelectorAll("[data-avatar-url]").forEach((element) => {
+      window.JukeboxAvatars?.apply(element, {
+        avatarUrl: element.dataset.avatarUrl,
+        name: element.dataset.avatarName,
+      });
+    });
   } catch (err) {
     tbody.innerHTML = `<tr><td colspan="9" class="text-center">Lỗi mạng: ${escapeHtml(err.message)}</td></tr>`;
   }
@@ -656,6 +663,43 @@ function initFeedbackTab() {
   document.getElementById("chat-ai-feedback-digest")?.addEventListener("click", createFeedbackDigest);
   document.getElementById("chat-ai-memory-reset")?.addEventListener("click", resetChatAiMemory);
   document.getElementById("chat-ai-memory-list")?.addEventListener("click", handleChatAiMemoryAction);
+  document.getElementById("search-mode-form")?.addEventListener("submit", saveSearchSettings);
+}
+
+async function loadSearchSettings() {
+  const status = document.getElementById("search-mode-status");
+  try {
+    const res = await fetch("/api/admin/search-settings");
+    const data = await res.json();
+    if (!res.ok || !data.ok) throw new Error(data.reason || "Không thể tải chế độ tìm kiếm.");
+    document.getElementById("search-mode").value = data.searchMode;
+    status.textContent = data.searchMode === "youtube-web" ? "Đang dùng YouTube Web" : "Đang dùng chế độ cũ";
+    status.className = "badge badge-active";
+  } catch (error) {
+    status.textContent = error.message || "Không thể tải";
+    status.className = "badge badge-blocked";
+  }
+}
+
+async function saveSearchSettings(event) {
+  event.preventDefault();
+  const button = event.submitter || event.currentTarget.querySelector("button[type=submit]");
+  button.disabled = true;
+  try {
+    const res = await fetch("/api/admin/search-settings", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ searchMode: document.getElementById("search-mode").value }),
+    });
+    const data = await res.json();
+    if (!res.ok || !data.ok) throw new Error(data.reason || "Không thể lưu chế độ tìm kiếm.");
+    await loadSearchSettings();
+    showStatus("Đã cập nhật chế độ tìm kiếm.");
+  } catch (error) {
+    showStatus(error.message || "Không thể lưu chế độ tìm kiếm.", true);
+  } finally {
+    button.disabled = false;
+  }
 }
 
 async function loadFeedback() {

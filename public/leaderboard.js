@@ -41,7 +41,7 @@ function renderLeaderboard(items) {
     const icon = rankBadgeIcons[entry.rank?.badge] || "🎧";
     return `<article class="leaderboard-podium-card place-${position}">
       <span class="leaderboard-place">#${position}</span>
-      <span class="leaderboard-avatar" aria-hidden="true">${icon}</span>
+      <span class="leaderboard-avatar" data-avatar-url="${escapeHtml(entry.avatarUrl || "")}" data-avatar-name="${escapeHtml(icon)}" aria-hidden="true">${icon}</span>
       <strong>${escapeHtml(entry.displayName || "Thành viên")}</strong>
       <small>Hạng ${level} · ${Number(entry.xpTotal || 0).toLocaleString("vi-VN")} XP</small>
     </article>`;
@@ -51,11 +51,17 @@ function renderLeaderboard(items) {
     const icon = rankBadgeIcons[entry.rank?.badge] || "🎧";
     return `<div class="leaderboard-row">
       <span class="leaderboard-number">#${Number(entry.position) || 0}</span>
-      <span class="leaderboard-row-icon" aria-hidden="true">${icon}</span>
+      <span class="leaderboard-row-icon" data-avatar-url="${escapeHtml(entry.avatarUrl || "")}" data-avatar-name="${escapeHtml(icon)}" aria-hidden="true">${icon}</span>
       <span class="leaderboard-row-copy"><strong>${escapeHtml(entry.displayName || "Thành viên")}</strong><small>${escapeHtml(entry.rank?.name || "Người mới bắt nhịp")}</small></span>
       <span class="leaderboard-xp">${Number(entry.xpTotal || 0).toLocaleString("vi-VN")} XP</span>
     </div>`;
   }).join("");
+  document.querySelectorAll("[data-avatar-url]").forEach((element) => {
+    window.JukeboxAvatars?.apply(element, {
+      avatarUrl: element.dataset.avatarUrl,
+      name: element.dataset.avatarName,
+    });
+  });
 }
 
 async function loadLeaderboard() {

@@ -150,6 +150,100 @@ export function mergeSearchResults(primary, fallback, limit = 12) {
   return merged;
 }
 
+function parseInitialData(html) {
+  const marker = "ytInitialData";
+  const markerIndex = html.indexOf(marker);
+  if (markerIndex < 0) throw new Error("YouTube Web không trả về dữ liệu tìm kiếm.");
+  const start = html.indexOf("{", markerIndex + marker.length);
+  if (start < 0) throw new Error("YouTube Web trả về dữ liệu không hợp lệ.");
+
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+  for (let index = start; index < html.length; index += 1) {
+    const char = html[index];
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (char === "\\") escaped = true;
+      else if (char === '"') inString = false;
+      continue;
+    }
+    if (char === '"') inString = true;
+    else if (char === "{") depth += 1;
+    else if (char === "}" && --depth === 0) return JSON.parse(html.slice(start, index + 1));
+  }
+  throw new Error("YouTube Web trả về dữ liệu chưa hoàn chỉnh.");
+}
+
+function textValue(value) {
+  return value?.runs?.map((run) => run.text || "").join("") || value?.simpleText || "";
+}
+
+export function parseYouTubeWebResults(data, { limit = 12 } = {}) {
+  const sections = data?.contents?.twoColumnSearchResultsRenderer?.primaryContents
+    ?.sectionListRenderer?.contents || [];
+  const results = [];
+  const seen = new Set();
+
+  for (const section of sections) {
+    for (const item of section?.itemSectionRenderer?.contents || []) {
+      const renderer = item?.videoRenderer || item?.richItemRenderer?.content?.videoRenderer;
+      const videoId = renderer?.videoId;
+      if (!isValidYouTubeVideoId(videoId) || seen.has(videoId)) continue;
+      seen.add(videoId);
+      results.push({
+        videoId,
+        title: textValue(renderer.title) || "(không có tiêu đề)",
+        channel: textValue(renderer.ownerText) || textValue(renderer.longBylineText) || "Không rõ",
+        duration: textValue(renderer.lengthText),
+        thumbnail: sanitizeThumbnail(renderer.thumbnail?.thumbnails?.at(-1)?.url),
+      });
+      if (results.length >= limit) return results;
+    }
+  }
+  return results;
+}
+
+export async function searchYouTubeWeb(
+  query,
+  { limit = 12, timeoutMs = 8000, fetchImpl = globalThis.fetch } = {}
+) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const params = new URLSearchParams({ search_query: query, hl: "vi", gl: "VN" });
+    const res = await fetchImpl(`https://www.youtube.com/results?${params}`, {
+      headers: {
+        ...COMMON_HEADERS,
+        "Accept-Language": "vi-VN,vi;q=0.9,en-US;q=0.8,en;q=0.7",
+      },
+      signal: controller.signal,
+    });
+    if (!res.ok) throw new Error(`YouTube Web phản hồi ${res.status}`);
+    return parseYouTubeWebResults(parseInitialData(await res.text()), { limit });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+export async function searchYouTubeByMode(
+  query,
+  {
+    mode = "youtube-web",
+    limit = 12,
+    timeoutMs = 8000,
+    webSearch = searchYouTubeWeb,
+    legacySearch = searchYouTube,
+  } = {}
+) {
+  if (mode === "youtube-music") return legacySearch(query, { limit, timeoutMs });
+  try {
+    const results = await webSearch(query, { limit, timeoutMs });
+    if (results.length) return results;
+  } catch {}
+  return legacySearch(query, { limit, timeoutMs });
+}
+
 // Accept only common YouTube video-link formats. Search, channel, and playlist
 // URLs are not song links because the queue requires one specific video.
 const YOUTUBE_VIDEO_ID = /^[A-Za-z0-9_-]{11}$/;
