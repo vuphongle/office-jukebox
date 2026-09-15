@@ -140,6 +140,20 @@ export function initDb({ dbPath = DEFAULT_DB_PATH, adminUser = process.env.ADMIN
     CREATE INDEX IF NOT EXISTS idx_queue_items_added_user_history ON queue_items(added_by_user_id, status, finished_at DESC);
     CREATE UNIQUE INDEX IF NOT EXISTS idx_queue_items_one_playing ON queue_items(event_id) WHERE status = 'playing';
 
+    CREATE TABLE IF NOT EXISTS song_favorites (
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      video_id TEXT NOT NULL,
+      title TEXT NOT NULL,
+      channel TEXT NOT NULL DEFAULT '',
+      duration TEXT NOT NULL DEFAULT '',
+      thumbnail TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      PRIMARY KEY(user_id, video_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_song_favorites_user_created
+      ON song_favorites(user_id, created_at DESC);
+
     -- Rank XP is a separate, append-only activity economy. It must never be
     -- mixed with point_ledger, which is the spendable wallet for voting.
     CREATE TABLE IF NOT EXISTS user_rank_profiles (

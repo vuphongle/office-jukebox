@@ -2,6 +2,8 @@ let currentUser = null;
 let currentActiveDrop = null;
 let rankBenefits = [];
 let rankBenefitsPromise = null;
+const favoritesController = window.JukeboxFavoritesController.create();
+let favoritesViewActive = false;
 
 async function loadRankBenefits() {
   if (rankBenefitsPromise) return rankBenefitsPromise;
@@ -53,6 +55,8 @@ async function fetchMe() {
     const data = await res.json();
     if (data.ok && data.authenticated && data.user) {
       currentUser = data.user;
+      syncFavoritesIdentity();
+      await loadFavorites();
       renderUserAuthBar();
       if (lastQueueState) renderQueue(lastQueueState);
       if (currentUser.displayName && !nameEl.value.trim()) {
@@ -63,11 +67,13 @@ async function fetchMe() {
       checkActivePointDrop();
     } else {
       currentUser = null;
+      syncFavoritesIdentity();
       renderUserAuthBar();
       if (lastQueueState) renderQueue(lastQueueState);
     }
   } catch {
     currentUser = null;
+    syncFavoritesIdentity();
     renderUserAuthBar();
     if (lastQueueState) renderQueue(lastQueueState);
   }
@@ -266,6 +272,7 @@ async function handleLogout() {
     await fetch("/api/auth/logout", { method: "POST" });
   } catch {}
   currentUser = null;
+  syncFavoritesIdentity();
   syncHistoryIdentity();
   hidePointDropBanner();
   renderUserAuthBar();
@@ -474,6 +481,9 @@ const toastsEl = document.getElementById("toasts");
 const qEl = document.getElementById("q");
 const nameEl = document.getElementById("name");
 const sugSection = document.getElementById("suggestions-section");
+const discoveryTitle = document.getElementById("discovery-title");
+const favoritesToggle = document.getElementById("favorites-toggle");
+const favoritesCount = document.getElementById("favorites-count");
 const backToExploreBtn = document.getElementById("back-to-explore");
 const youtubeLinkPanel = document.getElementById("youtube-link-panel");
 const youtubeLinkForm = document.getElementById("youtube-link-form");
@@ -521,6 +531,162 @@ const CHAT_BOTTOM_LOCK_PX = 64;
 const pendingRemovals = new Set();
 const pendingOwnSkips = new Set();
 const pendingVotes = new Set();
+
+function renderFavoritesCount() {
+  const count = favoritesController.all().length;
+  favoritesCount.textContent = count > 99 ? "99+" : String(count);
+}
+
+function setFavoritesView(active) {
+  favoritesViewActive = active;
+  favoritesToggle.classList.toggle("active", active);
+  favoritesToggle.setAttribute("aria-pressed", String(active));
+  discoveryTitle.innerHTML = active ? "Bài yêu thích <small>Của bạn</small>" : "Khám phá <small>Gợi ý</small>";
+  document.getElementById("singers").classList.toggle("hidden", active);
+  document.getElementById("genre-tabs").classList.toggle("hidden", active);
+  document.getElementById("shuffle").classList.toggle("hidden", active);
+}
+
+function syncFavoritesIdentity() {
+  if (!favoritesController.setIdentity(currentUser?.id || null)) return;
+  renderFavoritesCount();
+  refreshFavoriteButtons();
+  if (!currentUser && favoritesViewActive) backToExplore();
+}
+
+async function loadFavorites({ showError = false } = {}) {
+  const requestedIdentity = favoritesController.captureIdentity();
+  if (!requestedIdentity) return false;
+  try {
+    const res = await fetch("/api/me/favorites");
+    if (!favoritesController.isIdentityCurrent(requestedIdentity)) return false;
+    if (res.status === 401) {
+      currentUser = null;
+      syncFavoritesIdentity();
+      syncHistoryIdentity();
+      renderUserAuthBar();
+      if (lastQueueState) renderQueue(lastQueueState);
+      if (showError) openAuthModal("login");
+      return false;
+    }
+    const data = await res.json();
+    if (!res.ok || !data.ok) throw new Error(data.reason || "Không thể tải bài hát yêu thích.");
+    if (!favoritesController.replace(requestedIdentity, data.items)) return false;
+    renderFavoritesCount();
+    refreshFavoriteButtons();
+    return true;
+  } catch (err) {
+    if (showError && favoritesController.isIdentityCurrent(requestedIdentity)) {
+      toast("bad", "!", err.message || "Không thể tải bài hát yêu thích.");
+    }
+    return false;
+  }
+}
+
+function syncFavoriteButton(button) {
+  const videoId = button.dataset.favoriteVideoId;
+  const isFavorite = favoritesController.isFavorite(videoId);
+  const pending = favoritesController.isPending(videoId);
+  const label = isFavorite ? "Bỏ khỏi danh sách yêu thích" : "Thêm vào danh sách yêu thích";
+  button.classList.toggle("is-favorite", isFavorite);
+  button.classList.toggle("is-pending", pending);
+  button.disabled = pending;
+  button.title = label;
+  button.setAttribute("aria-label", label);
+  button.setAttribute("aria-pressed", String(isFavorite));
+}
+
+function refreshFavoriteButtons() {
+  document.querySelectorAll("[data-favorite-video-id]").forEach(syncFavoriteButton);
+}
+
+function createFavoriteButton(song, extraClass = "") {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = `favorite-btn${extraClass ? ` ${extraClass}` : ""}`;
+  button.dataset.favoriteVideoId = song.videoId;
+  button.innerHTML = '<svg aria-hidden="true" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20.8 4.6a5.5 5.5 0 0 0-7.8 0L12 5.6l-1-1a5.5 5.5 0 0 0-7.8 7.8l1 1L12 21l7.8-7.6 1-1a5.5 5.5 0 0 0 0-7.8Z"/></svg>';
+  button.addEventListener("click", () => toggleFavorite(song));
+  syncFavoriteButton(button);
+  return button;
+}
+
+async function toggleFavorite(song) {
+  if (!currentUser) {
+    openAuthModal("login");
+    return;
+  }
+  const requestedIdentity = favoritesController.captureIdentity();
+  if (!requestedIdentity || !favoritesController.begin(song.videoId)) return;
+  const removing = favoritesController.isFavorite(song.videoId);
+  refreshFavoriteButtons();
+  try {
+    const res = await fetch(`/api/me/favorites${removing ? `/${encodeURIComponent(song.videoId)}` : ""}`, {
+      method: removing ? "DELETE" : "POST",
+      headers: removing ? undefined : { "Content-Type": "application/json" },
+      body: removing ? undefined : JSON.stringify(song),
+    });
+    const data = await res.json();
+    if (!favoritesController.isIdentityCurrent(requestedIdentity)) return;
+    if (res.status === 401) {
+      currentUser = null;
+      syncFavoritesIdentity();
+      syncHistoryIdentity();
+      renderUserAuthBar();
+      openAuthModal("login");
+      return;
+    }
+    if (!res.ok || !data.ok) throw new Error(data.reason || "Không thể cập nhật bài hát yêu thích.");
+    if (removing) {
+      favoritesController.remove(requestedIdentity, song.videoId);
+      toast("info", "♡", "Đã bỏ khỏi danh sách yêu thích.", { sub: song.title });
+    } else {
+      favoritesController.upsert(requestedIdentity, data.favorite);
+      toast("ok", "♥", "Đã thêm vào danh sách yêu thích!", { sub: song.title });
+    }
+    renderFavoritesCount();
+    if (favoritesViewActive) renderFavoriteResults();
+  } catch (err) {
+    if (favoritesController.isIdentityCurrent(requestedIdentity)) {
+      toast("bad", "!", err.message || "Không thể cập nhật bài hát yêu thích.");
+    }
+  } finally {
+    if (favoritesController.finish(requestedIdentity, song.videoId)) refreshFavoriteButtons();
+  }
+}
+
+function renderFavoriteResults() {
+  const items = favoritesController.all();
+  resultsEl.innerHTML = "";
+  if (!items.length) {
+    setStatus("Bạn chưa có bài hát yêu thích. Hãy bấm biểu tượng trái tim ở bài đang phát, hàng đợi hoặc kết quả tìm kiếm.");
+    return;
+  }
+  setStatus("");
+  appendResults(items);
+}
+
+async function showFavorites() {
+  if (!currentUser) {
+    openAuthModal("login");
+    return;
+  }
+  browse.gen++;
+  qEl.value = "";
+  sugSection.classList.remove("hidden");
+  backToExploreBtn.classList.add("hidden");
+  moreBtn.classList.add("hidden");
+  setFavoritesView(true);
+  resultsEl.innerHTML = "";
+  setLoading(true, "Đang tải bài hát yêu thích…");
+  const loaded = await loadFavorites({ showError: true });
+  if (!favoritesViewActive || !loaded) {
+    setLoading(false);
+    return;
+  }
+  setLoading(false);
+  renderFavoriteResults();
+}
 
 function setChatStatus(message, kind = "") {
   chatStatus.textContent = message;
@@ -864,6 +1030,11 @@ let activeGenre = "All"; // selected tab; also filters the singer row
 let activeKey = "genre:All"; // "genre:<name>" or "singer:<name>" (selection key)
 const browse = { queries: [], idx: 0, seen: new Set(), gen: 0 };
 
+favoritesToggle.addEventListener("click", () => {
+  if (favoritesViewActive) backToExplore();
+  else void showFavorites();
+});
+
 // Fisher-Yates shuffle — reorders query variants for the random button and
 // shuffles results client-side because the server cache returns the same array
 // for a given query.
@@ -909,6 +1080,7 @@ function renderSingers() {
 }
 
 function selectGenre(g) {
+  setFavoritesView(false);
   activeGenre = g;
   activeKey = `genre:${g}`;
   renderGenreTabs();
@@ -991,6 +1163,7 @@ async function doSearch(q) {
   if (!q) return backToExplore(); // an empty form restores discovery
 
   const gen = ++browse.gen; // prevent older requests from overwriting the newest search
+  setFavoritesView(false);
   qEl.blur();
   resultsEl.innerHTML = "";
   sugSection.classList.add("hidden"); // hide discovery while searching
@@ -1015,6 +1188,7 @@ async function doSearch(q) {
 
 // Restore discovery after a search by re-running the selected genre or singer.
 function backToExplore() {
+  setFavoritesView(false);
   qEl.value = "";
   resultsEl.innerHTML = "";
   setStatus("");
@@ -1071,10 +1245,14 @@ function resultCard(r) {
       <div class="r-title"></div>
       <div class="r-sub"></div>
     </div>
-    <button class="add-btn" title="Thêm bài hát" aria-label="Thêm bài hát">+</button>`;
+    <div class="r-actions">
+      <span class="r-favorite-slot"></span>
+      <button class="add-btn" title="Thêm bài hát" aria-label="Thêm bài hát">+</button>
+    </div>`;
   li.querySelector(".r-title").textContent = r.title;
   updateMarqueeTitle(li.querySelector(".r-title"));
   li.querySelector(".r-sub").textContent = r.channel + (r.duration ? ` · ${r.duration}` : "");
+  li.querySelector(".r-favorite-slot").replaceWith(createFavoriteButton(r, "result-favorite-btn"));
   const btn = li.querySelector(".add-btn");
   btn.onclick = () => requestSong(r, btn);
   return li;
@@ -1429,6 +1607,7 @@ function connectWs() {
       }
     } else if (msg.type === "sessionRevoked") {
       currentUser = null;
+      syncFavoritesIdentity();
       syncHistoryIdentity();
       hidePointDropBanner();
       renderUserAuthBar();
@@ -1485,6 +1664,7 @@ function renderQueue(state) {
         <div class="np-sub"></div>
       </div>
       <div class="np-actions">
+        <span class="np-favorite-slot"></span>
         <button class="np-skip-own${myIds.has(np.id) ? "" : " hidden"}" type="button" title="Bỏ qua bài hát của bạn" aria-label="Bỏ qua bài hát của bạn"${pendingOwnSkips.has(np.id) ? " disabled" : ""}>Bỏ qua</button>
       </div>`;
     npEl.querySelector(".np-title").textContent = np.title;
@@ -1493,6 +1673,7 @@ function renderQueue(state) {
       (np.channel || "") + (np.addedBy ? ` · Người chọn: ${np.addedBy}` : "");
     const skipButton = npEl.querySelector(".np-skip-own");
     skipButton.onclick = () => requestOwnSkip(np.id, skipButton);
+    npEl.querySelector(".np-favorite-slot").replaceWith(createFavoriteButton(np, "np-favorite-btn"));
   } else {
     npEl.classList.add("hidden");
   }
@@ -1560,6 +1741,7 @@ function renderQueue(state) {
         <div class="t-row">
           <span class="t"></span>
           ${isPinned ? '<span class="q-pinned-badge">Ghim</span>' : ""}
+          <span class="q-favorite-slot"></span>
         </div>
         <div class="q-byline">
           <span class="s"></span>
@@ -1576,6 +1758,7 @@ function renderQueue(state) {
       </div>`;
     li.querySelector(".t").textContent = item.title;
     updateMarqueeTitle(li.querySelector(".t"));
+    li.querySelector(".q-favorite-slot").replaceWith(createFavoriteButton(item, "q-favorite-btn"));
     li.querySelector(".s").textContent = item.channel;
     li.querySelector(".q-requester").textContent = item.addedBy
       ? `Người chọn: ${item.addedBy}`

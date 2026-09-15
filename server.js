@@ -48,6 +48,7 @@ import { UserRepository } from "./src/repositories/userRepository.js";
 import { SessionRepository } from "./src/repositories/sessionRepository.js";
 import { LedgerRepository } from "./src/repositories/ledgerRepository.js";
 import { QueueRepository } from "./src/repositories/queueRepository.js";
+import { FavoriteRepository } from "./src/repositories/favoriteRepository.js";
 import { DropRepository } from "./src/repositories/dropRepository.js";
 import { ChatRepository } from "./src/repositories/chatRepository.js";
 import { ChatAiMemoryRepository } from "./src/repositories/chatAiMemoryRepository.js";
@@ -117,6 +118,7 @@ const userRepo = new UserRepository(db, {
 });
 const sessionRepo = new SessionRepository(db);
 const ledgerRepo = new LedgerRepository(db);
+const favoriteRepo = new FavoriteRepository(db);
 const queueRepo = new QueueRepository(db, {
   notificationRepo,
   getNotificationsEnabled: () => rewardNotificationsOn,
@@ -624,6 +626,25 @@ app.get("/api/me", (req, res) => {
 
 app.get("/api/me/rank", requireAuth, (req, res) => {
   res.json({ ok: true, rank: publicRank(req.user.id) });
+});
+
+app.get("/api/me/favorites", requireAuth, (req, res) => {
+  const items = favoriteRepo.list(req.user.id);
+  res.json({ ok: true, items });
+});
+
+app.post("/api/me/favorites", requireAuth, (req, res) => {
+  try {
+    const favorite = favoriteRepo.save(req.user.id, req.body);
+    res.json({ ok: true, favorite });
+  } catch (err) {
+    res.status(400).json({ ok: false, reason: err.message || "Không thể lưu bài hát yêu thích." });
+  }
+});
+
+app.delete("/api/me/favorites/:videoId", requireAuth, (req, res) => {
+  const removed = favoriteRepo.remove(req.user.id, req.params.videoId);
+  res.json({ ok: true, removed });
 });
 
 app.get("/api/me/rank/activity", requireAuth, (req, res) => {
@@ -1544,7 +1565,7 @@ function versionedPage(name) {
   const filePath = path.join(__dirname, "public", name);
   if (!existsSync(filePath)) return `<!DOCTYPE html><html><body><h1>${name} not found</h1></body></html>`;
   return readFileSync(filePath, "utf8").replace(
-    /(href|src)="\/((?:guest|host|admin|account|leaderboard|rules|auth-utils|avatar|avatar-crop|history-controller)\.(?:css|js))"/g,
+    /(href|src)="\/((?:guest|host|admin|account|leaderboard|rules|auth-utils|avatar|avatar-crop|history-controller|favorites-controller)\.(?:css|js))"/g,
     `$1="/$2?v=${BOOT_ID}"`
   );
 }
