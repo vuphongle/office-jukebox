@@ -336,6 +336,27 @@
         </div>
       </div>
 
+      <div class="panel-card search-settings-card mt-24">
+        <div class="panel-header">
+          <div>
+            <p class="eyebrow">Nguồn kết quả</p>
+            <h2>Chế độ tìm kiếm bài hát</h2>
+            <p class="card-desc">YouTube Web ưu tiên thứ tự gần trang youtube.com; chế độ cũ giữ kết quả YouTube Music hiện tại.</p>
+          </div>
+          <span id="search-mode-status" class="badge">Đang tải…</span>
+        </div>
+        <form id="search-mode-form" class="admin-form search-mode-form">
+          <div class="form-group">
+            <label for="search-mode">Cách tìm kiếm</label>
+            <select id="search-mode">
+              <option value="youtube-web">Mới · YouTube Web</option>
+              <option value="youtube-music">Cũ · YouTube Music</option>
+            </select>
+          </div>
+          <button type="submit" class="submit-btn gold">Lưu chế độ</button>
+        </form>
+      </div>
+
       <div class="panel-card ai-settings-card mt-24">
         <div class="panel-header">
           <div>
@@ -507,6 +528,7 @@
     </div>
   </div>
 
+  <script src="/avatar.js"></script>
   <script src="/admin.js"></script>
 </body>
 </html>

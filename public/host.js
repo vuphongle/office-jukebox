@@ -415,6 +415,7 @@ function render() {
           ${voteScore > 0 ? `<span class="q-vote-badge" title="${voteScore} lượt vote">❤️ ${voteScore}</span>` : ''}
         </div>
         <div class="q-sub">
+          <span class="q-requester-avatar"></span>
           <span class="q-sub-label"></span>
         </div>
       </div>
@@ -423,6 +424,11 @@ function render() {
     li.querySelector(".q-title").textContent = item.title;
     updateMarqueeTitle(li.querySelector(".q-title"));
     li.querySelector(".q-sub-label").textContent = item.addedBy ? `Yêu cầu: ${item.addedBy}` : item.channel;
+    window.JukeboxAvatars?.apply(li.querySelector(".q-requester-avatar"), {
+      avatarUrl: item.avatarUrl,
+      name: item.addedBy,
+      fallback: false,
+    });
     if (item.rank?.badge) {
       const rank = document.createElement("span");
       rank.className = "q-rank-badge";

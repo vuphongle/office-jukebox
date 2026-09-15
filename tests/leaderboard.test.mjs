@@ -32,6 +32,9 @@ test("public leaderboard returns the top ten active regular users without privat
       passwordHash: "p",
       displayName,
     });
+    if (displayName === "Top User") {
+      userRepo.updateAvatarFile(user.id, "4df0d608-0131-4b94-aa39-d9a824e6a7c2.jpg");
+    }
     db.run(
       `INSERT INTO user_rank_profiles (user_id, xp_total, rank_level, created_at, updated_at)
        VALUES (?, ?, 1, ?, ?)`,
@@ -54,6 +57,7 @@ test("public leaderboard returns the top ten active regular users without privat
   assert.deepEqual(rows[0], {
     position: 1,
     displayName: "Top User",
+    avatarUrl: "/avatars/4df0d608-0131-4b94-aa39-d9a824e6a7c2.jpg",
     xpTotal: 900,
     rank: { level: 4, name: "DJ cộng đồng", badge: "turntable" },
   });
@@ -61,5 +65,5 @@ test("public leaderboard returns the top ten active regular users without privat
   assert.equal(rows[2].displayName, "Beta Tie");
   assert.equal(rows.some((row) => row.displayName === "Blocked User"), false);
   assert.equal(rows.some((row) => row.displayName === "Admin User"), false);
-  assert.deepEqual(Object.keys(rows[0]).sort(), ["displayName", "position", "rank", "xpTotal"]);
+  assert.deepEqual(Object.keys(rows[0]).sort(), ["avatarUrl", "displayName", "position", "rank", "xpTotal"]);
 });

@@ -61,6 +61,11 @@ export class ChatRepository {
     return rows.reverse().map(mapMessage);
   }
 
+  findUserId(messageId) {
+    if (!messageId) return null;
+    return this.db.query("SELECT user_id FROM chat_messages WHERE id = ?").get(messageId)?.user_id || null;
+  }
+
   listRecentCandidates(eventId = DEFAULT_EVENT_ID, limit = 1000) {
     const boundedLimit = Math.min(2000, Math.max(1, Number(limit) || 1000));
     return this.db

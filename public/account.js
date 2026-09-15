@@ -29,6 +29,21 @@ let socketReconnectTimer = null;
 let queueRefreshTimer = null;
 let statusTimer = null;
 let profileDisplayName = "";
+const avatarCropState = {
+  file: null,
+  image: null,
+  objectUrl: "",
+  zoom: 1,
+  offsetX: 0,
+  offsetY: 0,
+  dragging: false,
+  pointerId: null,
+  dragX: 0,
+  dragY: 0,
+  startOffsetX: 0,
+  startOffsetY: 0,
+  saving: false,
+};
 
 function escapeHtml(value) {
   return String(value ?? "")
@@ -296,7 +311,8 @@ function renderAccount() {
     && profileInput.value.trim() !== profileDisplayName;
   $("#account-title").textContent = displayName;
   $("#account-username").textContent = `@${currentUser.username}`;
-  $("#account-avatar").textContent = displayName.trim().charAt(0).toUpperCase() || "U";
+  window.JukeboxAvatars?.apply($("#account-avatar"), { avatarUrl: currentUser.avatarUrl, name: displayName });
+  window.JukeboxAvatars?.apply($("#profile-avatar-preview"), { avatarUrl: currentUser.avatarUrl, name: displayName });
   const rank = currentUser.rank || {};
   $("#account-rank-badge").textContent = rank.badge || "🎧";
   $("#account-rank-name").textContent = rank.name || "Người mới bắt nhịp";
@@ -550,6 +566,166 @@ async function submitProfile(event) {
   }
 }
 
+function avatarCropGeometry() {
+  const frame = $("#avatar-crop-frame");
+  if (!avatarCropState.image || !frame?.clientWidth) return null;
+  return window.JukeboxAvatarCrop.geometry({
+    imageWidth: avatarCropState.image.naturalWidth,
+    imageHeight: avatarCropState.image.naturalHeight,
+    frameSize: frame.clientWidth,
+    zoom: avatarCropState.zoom,
+    offsetX: avatarCropState.offsetX,
+    offsetY: avatarCropState.offsetY,
+  });
+}
+
+function renderAvatarCrop() {
+  const geometry = avatarCropGeometry();
+  if (!geometry) return;
+  avatarCropState.offsetX = geometry.offsetX;
+  avatarCropState.offsetY = geometry.offsetY;
+  const image = $("#avatar-crop-image");
+  image.style.width = `${geometry.renderedWidth}px`;
+  image.style.height = `${geometry.renderedHeight}px`;
+  image.style.left = `${geometry.left}px`;
+  image.style.top = `${geometry.top}px`;
+}
+
+function closeAvatarCrop() {
+  if (avatarCropState.saving) return;
+  $("#avatar-crop-modal").classList.add("hidden");
+  $("#avatar-crop-frame").classList.remove("is-dragging");
+  if (avatarCropState.objectUrl) URL.revokeObjectURL(avatarCropState.objectUrl);
+  Object.assign(avatarCropState, {
+    file: null,
+    image: null,
+    objectUrl: "",
+    zoom: 1,
+    offsetX: 0,
+    offsetY: 0,
+    dragging: false,
+    pointerId: null,
+  });
+  $("#avatar-upload").value = "";
+  $("#avatar-crop-image").removeAttribute("src");
+}
+
+function openAvatarCrop(event) {
+  const input = event.currentTarget;
+  const file = input.files?.[0];
+  if (!file) return;
+  const status = $("#avatar-upload-status");
+  if (!["image/jpeg", "image/png", "image/webp"].includes(file.type) || file.size > 5 * 1024 * 1024) {
+    status.textContent = "Chỉ hỗ trợ JPEG, PNG hoặc WebP tối đa 5 MB.";
+    input.value = "";
+    return;
+  }
+  if (avatarCropState.objectUrl) URL.revokeObjectURL(avatarCropState.objectUrl);
+  const objectUrl = URL.createObjectURL(file);
+  const image = new Image();
+  avatarCropState.objectUrl = objectUrl;
+  avatarCropState.image = null;
+  status.textContent = "Đang chuẩn bị ảnh để căn chỉnh…";
+  image.onload = () => {
+    if (avatarCropState.objectUrl !== objectUrl) return;
+    Object.assign(avatarCropState, {
+      file,
+      image,
+      objectUrl,
+      zoom: 1,
+      offsetX: 0,
+      offsetY: 0,
+    });
+    $("#avatar-crop-image").src = objectUrl;
+    $("#avatar-crop-zoom").value = "1";
+    $("#avatar-crop-status").textContent = "Ảnh chỉ được cập nhật sau khi bạn bấm Lưu ảnh.";
+    $("#avatar-crop-modal").classList.remove("hidden");
+    status.textContent = "Hãy căn chỉnh ảnh trước khi lưu.";
+    requestAnimationFrame(() => {
+      renderAvatarCrop();
+      $("#avatar-crop-save").focus();
+    });
+  };
+  image.onerror = () => {
+    if (avatarCropState.objectUrl !== objectUrl) return;
+    URL.revokeObjectURL(objectUrl);
+    avatarCropState.objectUrl = "";
+    input.value = "";
+    status.textContent = "Không thể đọc tệp ảnh này. Vui lòng chọn ảnh khác.";
+  };
+  image.src = objectUrl;
+}
+
+function startAvatarCropDrag(event) {
+  if (!avatarCropState.image || avatarCropState.saving || (event.button !== undefined && event.button !== 0)) return;
+  avatarCropState.dragging = true;
+  avatarCropState.pointerId = event.pointerId;
+  avatarCropState.dragX = event.clientX;
+  avatarCropState.dragY = event.clientY;
+  avatarCropState.startOffsetX = avatarCropState.offsetX;
+  avatarCropState.startOffsetY = avatarCropState.offsetY;
+  event.currentTarget.setPointerCapture?.(event.pointerId);
+  event.currentTarget.classList.add("is-dragging");
+}
+
+function moveAvatarCrop(event) {
+  if (!avatarCropState.dragging || event.pointerId !== avatarCropState.pointerId) return;
+  avatarCropState.offsetX = avatarCropState.startOffsetX + event.clientX - avatarCropState.dragX;
+  avatarCropState.offsetY = avatarCropState.startOffsetY + event.clientY - avatarCropState.dragY;
+  renderAvatarCrop();
+  event.preventDefault();
+}
+
+function stopAvatarCropDrag(event) {
+  if (!avatarCropState.dragging || event.pointerId !== avatarCropState.pointerId) return;
+  avatarCropState.dragging = false;
+  avatarCropState.pointerId = null;
+  event.currentTarget.releasePointerCapture?.(event.pointerId);
+  event.currentTarget.classList.remove("is-dragging");
+}
+
+async function saveAvatarCrop() {
+  const geometry = avatarCropGeometry();
+  if (!geometry || avatarCropState.saving) return;
+  const frameSize = $("#avatar-crop-frame").clientWidth;
+  const outputSize = 512;
+  const canvas = document.createElement("canvas");
+  window.JukeboxAvatarCrop.drawToCanvas(canvas, avatarCropState.image, geometry, frameSize, outputSize);
+
+  const blob = await new Promise((resolve) => canvas.toBlob(resolve, "image/webp", 0.9));
+  if (!blob) {
+    $("#avatar-crop-status").textContent = "Không thể xử lý ảnh này. Vui lòng thử ảnh khác.";
+    return;
+  }
+
+  const saveButton = $("#avatar-crop-save");
+  avatarCropState.saving = true;
+  setButtonLoading(saveButton, true);
+  $("#avatar-crop-cancel").disabled = true;
+  $("#avatar-upload").disabled = true;
+  $("#avatar-crop-status").textContent = "Đang lưu ảnh đại diện…";
+  try {
+    const { data } = await requestJson("/api/me/avatar", {
+      method: "PUT",
+      headers: { "Content-Type": "image/webp" },
+      body: blob,
+    });
+    if (!data.ok) throw new Error(data.reason || "Không thể cập nhật ảnh đại diện.");
+    currentUser.avatarUrl = data.user.avatarUrl;
+    avatarCropState.saving = false;
+    closeAvatarCrop();
+    renderAccount();
+    $("#avatar-upload-status").textContent = "Đã cập nhật ảnh đại diện.";
+  } catch (error) {
+    $("#avatar-crop-status").textContent = error.message;
+  } finally {
+    avatarCropState.saving = false;
+    setButtonLoading(saveButton, false);
+    $("#avatar-crop-cancel").disabled = false;
+    $("#avatar-upload").disabled = false;
+  }
+}
+
 function setPasswordFieldError(inputId, errorId, message) {
   const input = document.getElementById(inputId);
   const error = document.getElementById(errorId);
@@ -669,6 +845,7 @@ function connectSocket() {
       loadLedger({ reset: true });
     } else if (message.type === "profileUpdated" && currentUser && message.displayName) {
       currentUser.displayName = message.displayName;
+      if (message.avatarUrl !== undefined) currentUser.avatarUrl = message.avatarUrl;
       profileDisplayName = message.displayName;
       renderAccount();
     } else if (message.type === "rankUpdated" && currentUser && message.rank) {
@@ -731,6 +908,27 @@ $("#claim-drop").addEventListener("click", claimPointDrop);
 $("#profile-display-name").addEventListener("input", () => updateDisplayNameForm());
 $("#profile-display-name").addEventListener("blur", () => updateDisplayNameForm({ validate: true }));
 $("#profile-form").addEventListener("submit", submitProfile);
+$("#avatar-upload").addEventListener("change", openAvatarCrop);
+$("#avatar-crop-zoom").addEventListener("input", (event) => {
+  avatarCropState.zoom = Number(event.currentTarget.value) || 1;
+  renderAvatarCrop();
+});
+$("#avatar-crop-frame").addEventListener("pointerdown", startAvatarCropDrag);
+$("#avatar-crop-frame").addEventListener("pointermove", moveAvatarCrop);
+$("#avatar-crop-frame").addEventListener("pointerup", stopAvatarCropDrag);
+$("#avatar-crop-frame").addEventListener("pointercancel", stopAvatarCropDrag);
+$$('[data-avatar-crop-close]').forEach((button) => button.addEventListener("click", closeAvatarCrop));
+$("#avatar-crop-save").addEventListener("click", saveAvatarCrop);
+$("#avatar-reselect").addEventListener("click", () => $("#avatar-upload").click());
+$("#avatar-crop-modal").addEventListener("click", (event) => {
+  if (event.target === event.currentTarget) closeAvatarCrop();
+});
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape" && !$("#avatar-crop-modal").classList.contains("hidden")) closeAvatarCrop();
+});
+window.addEventListener("resize", () => {
+  if (!$("#avatar-crop-modal").classList.contains("hidden")) renderAvatarCrop();
+});
 $("#password-expand").addEventListener("click", () => setPasswordExpanded($("#password-expand").getAttribute("aria-expanded") !== "true"));
 $("#password-cancel").addEventListener("click", resetPasswordForm);
 $("#password-form").addEventListener("submit", submitPassword);

@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { mkdtempSync, mkdirSync, existsSync, rmSync, unlinkSync, chmodSync } from "node:fs";
+import { mkdtempSync, mkdirSync, existsSync, readFileSync, rmSync, unlinkSync, chmodSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -174,6 +174,133 @@ test("feedback submission reports a rename failure instead of claiming success",
     assert.equal(existsSync(path.join(dataDir, "feedback.json")), true);
   } finally {
     await stopServer(child);
+    rmSync(dataDir, { recursive: true, force: true });
+  }
+});
+
+test("authenticated members can replace an avatar stored in the server data directory", async () => {
+  const dataDir = mkdtempSync(path.join(os.tmpdir(), "office-jukebox-avatar-"));
+  const { child, baseUrl } = await startServer(dataDir);
+  try {
+    const cookie = await register(baseUrl, "avatar_member");
+    const png = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+    const uploaded = await fetch(`${baseUrl}/api/me/avatar`, {
+      method: "PUT",
+      headers: { "Content-Type": "image/png", Cookie: cookie },
+      body: png,
+    });
+    assert.equal(uploaded.status, 200);
+    const first = await uploaded.json();
+    assert.match(first.user.avatarUrl, /^\/avatars\/[0-9a-f-]+\.png$/);
+    assert.deepEqual(Buffer.from(await (await fetch(`${baseUrl}${first.user.avatarUrl}`)).arrayBuffer()), png);
+
+    const me = await (await fetch(`${baseUrl}/api/me`, { headers: { Cookie: cookie } })).json();
+    assert.equal(me.user.avatarUrl, first.user.avatarUrl);
+
+    const jpeg = Buffer.from([0xff, 0xd8, 0xff, 0x00]);
+    const replaced = await fetch(`${baseUrl}/api/me/avatar`, {
+      method: "PUT",
+      headers: { "Content-Type": "image/jpeg", Cookie: cookie },
+      body: jpeg,
+    });
+    assert.equal(replaced.status, 200);
+    const second = await replaced.json();
+    assert.notEqual(second.user.avatarUrl, first.user.avatarUrl);
+    assert.equal((await fetch(`${baseUrl}${first.user.avatarUrl}`)).status, 404);
+
+    const avatarFiles = readFileSync(path.join(dataDir, "avatars", path.basename(second.user.avatarUrl)));
+    assert.deepEqual(avatarFiles, jpeg);
+
+    const rejected = await fetch(`${baseUrl}/api/me/avatar`, {
+      method: "PUT",
+      headers: { "Content-Type": "image/svg+xml", Cookie: cookie },
+      body: "<svg></svg>",
+    });
+    assert.equal(rejected.status, 400);
+  } finally {
+    await stopServer(child);
+    rmSync(dataDir, { recursive: true, force: true });
+  }
+});
+
+test("member chat exposes avatar URLs without leaking internal user IDs", async () => {
+  const dataDir = mkdtempSync(path.join(os.tmpdir(), "office-jukebox-chat-avatar-"));
+  const { child, baseUrl } = await startServer(dataDir);
+  let socket;
+  try {
+    const cookie = await register(baseUrl, "chat_avatar_member");
+    const png = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+    const uploaded = await fetch(`${baseUrl}/api/me/avatar`, {
+      method: "PUT",
+      headers: { "Content-Type": "image/png", Cookie: cookie },
+      body: png,
+    });
+    const avatarUrl = (await uploaded.json()).user.avatarUrl;
+
+    socket = await openSocket(baseUrl, cookie);
+    const liveMessage = waitForMessage(socket, (message) => message.type === "chatMessage");
+    socket.send(JSON.stringify({
+      type: "chatSend",
+      name: "Chat Avatar Member",
+      text: "Avatar payload check",
+      clientId: "chat-avatar-client",
+    }));
+    const livePayload = (await liveMessage).message;
+    assert.equal(livePayload.avatarUrl, avatarUrl);
+    assert.equal("userId" in livePayload, false);
+    assert.equal("avatar_file" in livePayload, false);
+
+    const historyMessage = waitForMessage(socket, (message) => message.type === "chatHistory");
+    const jpeg = Buffer.from([0xff, 0xd8, 0xff, 0x00]);
+    const replaced = await fetch(`${baseUrl}/api/me/avatar`, {
+      method: "PUT",
+      headers: { "Content-Type": "image/jpeg", Cookie: cookie },
+      body: jpeg,
+    });
+    const replacementUrl = (await replaced.json()).user.avatarUrl;
+    const historyPayload = (await historyMessage).messages.find((message) => message.text === "Avatar payload check");
+    assert.equal(historyPayload.avatarUrl, replacementUrl);
+    assert.equal("userId" in historyPayload, false);
+    assert.equal("avatar_file" in historyPayload, false);
+  } finally {
+    socket?.close();
+    await stopServer(child);
+    rmSync(dataDir, { recursive: true, force: true });
+  }
+});
+
+test("admin search mode is validated and persists across server restarts", async () => {
+  const dataDir = mkdtempSync(path.join(os.tmpdir(), "office-jukebox-search-mode-"));
+  let running = await startServer(dataDir);
+  try {
+    const cookie = await login(running.baseUrl);
+    const initial = await (await fetch(`${running.baseUrl}/api/admin/search-settings`, { headers: { Cookie: cookie } })).json();
+    assert.equal(initial.searchMode, "youtube-web");
+
+    const invalid = await fetch(`${running.baseUrl}/api/admin/search-settings`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json", Cookie: cookie },
+      body: JSON.stringify({ searchMode: "unknown" }),
+    });
+    assert.equal(invalid.status, 400);
+
+    const updated = await fetch(`${running.baseUrl}/api/admin/search-settings`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json", Cookie: cookie },
+      body: JSON.stringify({ searchMode: "youtube-music" }),
+    });
+    assert.equal(updated.status, 200);
+  } finally {
+    await stopServer(running.child);
+  }
+
+  running = await startServer(dataDir);
+  try {
+    const cookie = await login(running.baseUrl);
+    const persisted = await (await fetch(`${running.baseUrl}/api/admin/search-settings`, { headers: { Cookie: cookie } })).json();
+    assert.equal(persisted.searchMode, "youtube-music");
+  } finally {
+    await stopServer(running.child);
     rmSync(dataDir, { recursive: true, force: true });
   }
 });

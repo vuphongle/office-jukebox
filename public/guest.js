@@ -94,6 +94,10 @@ function renderUserAuthBar() {
         <button id="user-logout-btn" class="user-logout-btn" type="button">Thoát</button>
       </div>
     `;
+    window.JukeboxAvatars?.apply(bar.querySelector(".user-avatar"), {
+      avatarUrl: currentUser.avatarUrl,
+      name: currentUser.displayName || currentUser.username,
+    });
     document.getElementById("user-points-pill")?.addEventListener("click", openCheckinModal);
     document.getElementById("user-streak-pill")?.addEventListener("click", openCheckinModal);
     document.getElementById("user-logout-btn")?.addEventListener("click", handleLogout);
@@ -558,6 +562,11 @@ function renderChatMessages({ scrollToLatest = false } = {}) {
     const name = document.createElement("strong");
     name.className = "chat-message-name";
     name.textContent = message.name;
+    const header = document.createElement("div");
+    header.className = "chat-message-head";
+    const avatar = document.createElement("span");
+    avatar.className = "chat-message-avatar";
+    window.JukeboxAvatars?.apply(avatar, { avatarUrl: message.avatarUrl, name: message.name, fallback: false });
     if (message.rank?.badge) {
       const rankBadge = document.createElement("span");
       rankBadge.className = "chat-message-rank";
@@ -584,7 +593,8 @@ function renderChatMessages({ scrollToLatest = false } = {}) {
     } else {
       meta.textContent = "";
     }
-    item.append(name, text, meta);
+    header.append(avatar, name);
+    item.append(header, text, meta);
     chatMessagesEl.appendChild(item);
   }
   if (shouldScroll) scheduleChatScrollToLatest();
@@ -600,6 +610,7 @@ function appendChatMessage(message, { notify = true, render = true } = {}) {
     isAI: message.isAI === true,
     isSystem: message.isSystem === true,
     createdAt: typeof message.createdAt === "string" ? message.createdAt : "",
+    avatarUrl: window.JukeboxAvatars?.safeUrl(message.avatarUrl) || "",
     rank: message.rank && typeof message.rank === "object"
       ? { name: String(message.rank.name || "").slice(0, 40), badge: String(message.rank.badge || "").slice(0, 8) }
       : null,
@@ -1402,6 +1413,7 @@ function connectWs() {
     } else if (msg.type === "profileUpdated") {
       if (currentUser && msg.displayName) {
         currentUser.displayName = msg.displayName;
+        if (msg.avatarUrl !== undefined) currentUser.avatarUrl = msg.avatarUrl;
         renderUserAuthBar();
       }
     } else if (msg.type === "rankUpdated") {
@@ -1551,7 +1563,7 @@ function renderQueue(state) {
         </div>
         <div class="q-byline">
           <span class="s"></span>
-          <span class="q-requester"></span>
+          <span class="q-requester-row"><span class="q-requester-avatar"></span><span class="q-requester"></span></span>
         </div>
         <div class="q-eta"></div>
       </div>
@@ -1568,6 +1580,11 @@ function renderQueue(state) {
     li.querySelector(".q-requester").textContent = item.addedBy
       ? `Người chọn: ${item.addedBy}`
       : "Người chọn: Khách ẩn danh";
+    window.JukeboxAvatars?.apply(li.querySelector(".q-requester-avatar"), {
+      avatarUrl: item.avatarUrl,
+      name: item.addedBy,
+      fallback: false,
+    });
     if (item.rank?.badge) {
       const rank = document.createElement("span");
       rank.className = "q-rank-badge";

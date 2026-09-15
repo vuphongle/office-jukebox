@@ -74,6 +74,32 @@ function searchResponse(items) {
   };
 }
 
+function webSearchResponse(items) {
+  return {
+    contents: {
+      twoColumnSearchResultsRenderer: {
+        primaryContents: {
+          sectionListRenderer: {
+            contents: [{ itemSectionRenderer: { contents: items } }],
+          },
+        },
+      },
+    },
+  };
+}
+
+function webVideo({ videoId, title, channel, duration = "3:45" }) {
+  return {
+    videoRenderer: {
+      videoId,
+      title: { runs: [{ text: title }] },
+      ownerText: { runs: [{ text: channel }] },
+      lengthText: { simpleText: duration },
+      thumbnail: { thumbnails: [{ url: `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg` }] },
+    },
+  };
+}
+
 test("buildSearchBody mirrors Vietnamese YouTube Music context without auth", () => {
   assert.equal(typeof youtube.buildSearchBody, "function");
   const body = youtube.buildSearchBody("2h", { mode: "web" });
@@ -282,4 +308,63 @@ test("web search falls back to Songs results without copying browser credentials
   assert.equal(requests[0].headers.Authorization, undefined);
   assert.equal(requests[0].headers.authorization, undefined);
   assert.equal(requests[0].headers.Cookie, "SOCS=CAI;CONSENT=YES+1");
+});
+
+test("YouTube Web parsing preserves the visible video order and removes duplicates", () => {
+  const results = youtube.parseYouTubeWebResults(
+    webSearchResponse([
+      webVideo({ videoId: "firstVideo1", title: "Kết quả đầu", channel: "Ca sĩ A" }),
+      { channelRenderer: { channelId: "channel-only" } },
+      webVideo({ videoId: "secondVideo", title: "Kết quả hai", channel: "Ca sĩ B", duration: "4:02" }),
+      webVideo({ videoId: "firstVideo1", title: "Bị trùng", channel: "Ca sĩ A" }),
+    ]),
+    { limit: 10 }
+  );
+
+  assert.deepEqual(results.map(({ videoId, title, channel, duration }) => ({ videoId, title, channel, duration })), [
+    { videoId: "firstVideo1", title: "Kết quả đầu", channel: "Ca sĩ A", duration: "3:45" },
+    { videoId: "secondVideo", title: "Kết quả hai", channel: "Ca sĩ B", duration: "4:02" },
+  ]);
+});
+
+test("YouTube Web search extracts ytInitialData without an API key", async () => {
+  const data = webSearchResponse([webVideo({ videoId: "webResult01", title: "Bài từ YouTube", channel: "Official" })]);
+  const results = await youtube.searchYouTubeWeb("bài hát", {
+    fetchImpl: async (url, options) => {
+      assert.match(url, /^https:\/\/www\.youtube\.com\/results\?/);
+      assert.equal(options.headers.Authorization, undefined);
+      return new Response(`<html><script>var ytInitialData = ${JSON.stringify(data)};</script></html>`, { status: 200 });
+    },
+  });
+
+  assert.equal(results[0].videoId, "webResult01");
+});
+
+test("configured search mode uses YouTube Web and falls back to the legacy search", async () => {
+  let webCalls = 0;
+  let legacyCalls = 0;
+  const legacySearch = async () => {
+    legacyCalls += 1;
+    return [{ videoId: "legacyVideo" }];
+  };
+  const webSearch = async () => {
+    webCalls += 1;
+    throw new Error("schema changed");
+  };
+
+  const fallback = await youtube.searchYouTubeByMode("query", {
+    mode: "youtube-web",
+    webSearch,
+    legacySearch,
+  });
+  const legacy = await youtube.searchYouTubeByMode("query", {
+    mode: "youtube-music",
+    webSearch,
+    legacySearch,
+  });
+
+  assert.deepEqual(fallback, [{ videoId: "legacyVideo" }]);
+  assert.deepEqual(legacy, [{ videoId: "legacyVideo" }]);
+  assert.equal(webCalls, 1);
+  assert.equal(legacyCalls, 2);
 });

@@ -23,6 +23,20 @@ test("Account profile repository updates display name without changing identity"
   closeDb();
 });
 
+test("Account profile stores an avatar filename and exposes it through active sessions", () => {
+  const db = initDb({ dbPath: ":memory:" });
+  const users = new UserRepository(db);
+  const sessions = new SessionRepository(db);
+  const user = users.create({ username: "avatar_user", passwordHash: "hash" });
+
+  const updated = users.updateAvatarFile(user.id, "4df0d608-0131-4b94-aa39-d9a824e6a7c2.jpg");
+  const session = sessions.create(user.id, "avatar-session");
+
+  assert.equal(updated.avatar_file, "4df0d608-0131-4b94-aa39-d9a824e6a7c2.jpg");
+  assert.equal(sessions.findValid(session.token).avatar_file, updated.avatar_file);
+  closeDb();
+});
+
 test("Password update supports rotating every previous session", async () => {
   const db = initDb({ dbPath: ":memory:" });
   const users = new UserRepository(db);

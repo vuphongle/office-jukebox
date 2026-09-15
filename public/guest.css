@@ -634,6 +634,10 @@ header .desktop-intro { display: none; }
   margin-top: 1px;
   overflow-wrap: anywhere;
 }
+.q-requester-row { display: inline-flex; align-items: center; gap: 5px; max-width: 100%; }
+.q-requester-avatar, .chat-message-avatar { display: inline-grid; place-items: center; flex: 0 0 auto; overflow: hidden; border-radius: 50%; background: oklch(80% .14 85 / .14); color: var(--gold); font-weight: 800; }
+.q-requester-avatar { width: 18px; height: 18px; font-size: 8px; }
+.q-requester-avatar img, .chat-message-avatar img, .user-avatar img { width: 100%; height: 100%; object-fit: cover; }
 .q-eta { font: 500 11px/1.3 var(--sans); color: var(--warm); margin-top: 3px; }
 .q-you {
   flex-shrink: 0;
@@ -1005,6 +1009,9 @@ header .desktop-intro { display: none; }
 .chat-message-rank { display: inline-block; margin-left: 4px; padding: 2px 6px; border: 1px solid oklch(80% .14 85 / .28); border-radius: 999px; color: var(--gold); background: oklch(80% .14 85 / .08); font: 700 8px/1 var(--sans); vertical-align: 1px; }
 @keyframes chat-message-in { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
 .chat-message-name { display: block; margin-bottom: 3px; color: var(--gold); font: 700 11px/1.2 var(--sans); }
+.chat-message-head { display: flex; align-items: center; gap: 6px; margin-bottom: 3px; }
+.chat-message-head .chat-message-name { margin-bottom: 0; }
+.chat-message-avatar { width: 20px; height: 20px; font-size: 9px; }
 .chat-message-text { color: var(--text); font: 400 13px/1.42 var(--sans); overflow-wrap: anywhere; }
 .chat-message-time { display: block; margin-top: 6px; color: var(--faint); font: 400 10px/1 var(--sans); }
 .chat-message.is-own .chat-message-time { text-align: right; }
@@ -1260,6 +1267,7 @@ header .desktop-intro { display: none; }
   border: 1px solid oklch(80% 0.14 85 / 0.35);
   color: var(--gold);
   font-weight: 800;
+  overflow: hidden;
 }
 .user-name { min-width: 0; overflow-wrap: anywhere; }
 .user-points-pill {

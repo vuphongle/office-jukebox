@@ -30,6 +30,7 @@ export function initDb({ dbPath = DEFAULT_DB_PATH, adminUser = process.env.ADMIN
       username TEXT UNIQUE NOT NULL COLLATE NOCASE,
       password_hash TEXT NOT NULL,
       display_name TEXT NOT NULL,
+      avatar_file TEXT,
       role TEXT NOT NULL DEFAULT 'user' CHECK(role IN ('user', 'admin')),
       status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active', 'blocked')),
       points_balance INTEGER NOT NULL DEFAULT 0 CHECK(points_balance >= 0),
@@ -262,6 +263,11 @@ export function initDb({ dbPath = DEFAULT_DB_PATH, adminUser = process.env.ADMIN
     CREATE INDEX IF NOT EXISTS idx_chat_ai_memories_event_status
       ON chat_ai_memories(event_id, status, pinned DESC, updated_at DESC);
   `);
+
+  const userColumns = db.query("PRAGMA table_info(users)").all();
+  if (!userColumns.some((column) => column.name === "avatar_file")) {
+    db.run("ALTER TABLE users ADD COLUMN avatar_file TEXT");
+  }
 
   // Existing databases created before repeat voting need a persistent
   // tie-breaker for the moment each song reaches its current score.

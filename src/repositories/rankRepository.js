@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { rankForXp, RANK_XP_DEFAULTS } from "../rank.js";
 import { EngagementRepository } from "./engagementRepository.js";
+import { avatarPublicUrl } from "../avatar.js";
 
 function parseMetadata(raw) {
   try {
@@ -305,7 +306,7 @@ export class RankRepository {
     const boundedOffset = Math.max(0, Number(offset) || 0);
     const rows = this.db
       .query(
-        `SELECT u.display_name, COALESCE(urp.xp_total, 0) AS xp_total
+        `SELECT u.display_name, u.avatar_file, COALESCE(urp.xp_total, 0) AS xp_total
          FROM users u
          LEFT JOIN user_rank_profiles urp ON urp.user_id = u.id
          WHERE u.status = 'active' AND u.role = 'user'
@@ -319,6 +320,7 @@ export class RankRepository {
       return {
         position: boundedOffset + index + 1,
         displayName: row.display_name,
+        avatarUrl: avatarPublicUrl(row.avatar_file),
         xpTotal: rank.xp,
         rank: {
           level: rank.level,
@@ -338,7 +340,7 @@ export class RankRepository {
         .query(
           `SELECT u.id AS user_id, COALESCE(urp.xp_total, 0) AS xp_total,
                   urp.rank_level, urp.created_at, urp.updated_at,
-                  u.username, u.display_name,
+                  u.username, u.display_name, u.avatar_file,
                   COALESCE(SUM(CASE WHEN ral.event_id = ? THEN ral.delta_xp ELSE 0 END), 0) AS event_xp
            FROM users u
            LEFT JOIN user_rank_profiles urp ON urp.user_id = u.id
@@ -353,7 +355,7 @@ export class RankRepository {
         .query(
           `SELECT u.id AS user_id, COALESCE(urp.xp_total, 0) AS xp_total,
                   urp.rank_level, urp.created_at, urp.updated_at,
-                  u.username, u.display_name
+                  u.username, u.display_name, u.avatar_file
            FROM users u
            LEFT JOIN user_rank_profiles urp ON urp.user_id = u.id
            ORDER BY COALESCE(urp.xp_total, 0) DESC, u.display_name COLLATE NOCASE ASC
@@ -366,6 +368,7 @@ export class RankRepository {
       userId: row.user_id,
       username: row.username,
       displayName: row.display_name,
+      avatarUrl: avatarPublicUrl(row.avatar_file),
       xpTotal: row.xp_total,
       eventXp: eventId ? row.event_xp : null,
       ...mapProfile(row),

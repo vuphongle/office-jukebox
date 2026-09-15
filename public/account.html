@@ -196,6 +196,14 @@
 
           <section class="surface-card profile-card" aria-labelledby="profile-title">
             <div class="section-heading compact-heading"><div><p class="eyebrow">Hồ sơ</p><h2 id="profile-title">Thông tin cá nhân</h2></div></div>
+            <div class="avatar-editor">
+              <div id="profile-avatar-preview" class="profile-avatar-preview" aria-hidden="true">U</div>
+              <div>
+                <label class="avatar-upload-button" for="avatar-upload">Đổi ảnh đại diện</label>
+                <input id="avatar-upload" type="file" accept="image/jpeg,image/png,image/webp" />
+                <p id="avatar-upload-status" class="field-help" role="status">JPEG, PNG hoặc WebP · tối đa 5 MB.</p>
+              </div>
+            </div>
             <form id="profile-form" novalidate>
               <div class="field read-only-field">
                 <label for="profile-username">Tên đăng nhập</label>
@@ -255,6 +263,38 @@
     </div>
   </main>
 
+  <!-- MODAL: Avatar crop -->
+  <div id="avatar-crop-modal" class="avatar-crop-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="avatar-crop-title">
+    <div class="avatar-crop-dialog">
+      <div class="avatar-crop-head">
+        <div>
+          <p class="eyebrow">Ảnh đại diện</p>
+          <h2 id="avatar-crop-title">Căn chỉnh ảnh</h2>
+          <p>Kéo ảnh để chọn vị trí. Vòng tròn là vùng an toàn trên các giao diện avatar tròn.</p>
+        </div>
+        <button class="avatar-crop-close" type="button" data-avatar-crop-close aria-label="Đóng trình chỉnh ảnh">&times;</button>
+      </div>
+      <div id="avatar-crop-frame" class="avatar-crop-frame" aria-label="Kéo để căn chỉnh ảnh đại diện">
+        <img id="avatar-crop-image" class="avatar-crop-image" alt="Ảnh đang căn chỉnh" draggable="false" />
+        <span class="avatar-crop-guide" aria-hidden="true"></span>
+      </div>
+      <div class="avatar-crop-controls">
+        <div class="avatar-zoom-row">
+          <label for="avatar-crop-zoom">Thu phóng</label>
+          <input id="avatar-crop-zoom" type="range" min="1" max="3" step="0.01" value="1" />
+        </div>
+        <p id="avatar-crop-status" class="field-help" role="status">Ảnh chỉ được cập nhật sau khi bạn bấm Lưu ảnh.</p>
+        <div class="avatar-crop-actions">
+          <button id="avatar-reselect" class="ghost-button avatar-reselect-button" type="button">Chọn ảnh khác</button>
+          <button id="avatar-crop-cancel" class="ghost-button" type="button" data-avatar-crop-close>Hủy</button>
+          <button id="avatar-crop-save" class="primary-button stable-button" type="button">
+            <span class="button-spinner" aria-hidden="true"></span><span class="button-label">Lưu ảnh</span>
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <!-- MODAL: In-app notifications -->
   <div id="notification-modal" class="notification-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="notification-modal-title">
     <div class="notification-dialog">
@@ -273,6 +313,8 @@
     </div>
   </div>
 
+  <script src="/avatar.js"></script>
+  <script src="/avatar-crop.js"></script>
   <script src="/auth-utils.js"></script>
   <script src="/notifications.js"></script>
   <script src="/account.js"></script>

@@ -89,6 +89,12 @@ body::after { width: 40vw; height: 40vw; max-width: 550px; max-height: 550px; ri
 .back-link:hover { color: var(--text-hi); transform: translateX(-2px); }
 .admin-user-info { font-size: 13px; color: var(--gold); font-weight: 600; }
 .admin-session { display: flex; align-items: center; gap: 12px; }
+.user-cell { display: inline-flex; align-items: center; gap: 8px; }
+.table-avatar { width: 28px; height: 28px; display: inline-grid; place-items: center; overflow: hidden; flex: 0 0 auto; border: 1px solid var(--line); border-radius: 50%; background: oklch(80% .14 85 / .12); color: var(--gold); font-size: 11px; font-weight: 800; }
+.table-avatar img { width: 100%; height: 100%; object-fit: cover; }
+.search-mode-form { display: flex; align-items: end; gap: 12px; }
+.search-mode-form .form-group { flex: 1; margin: 0; }
+.search-mode-form .submit-btn { width: auto; white-space: nowrap; }
 
 .page-head {
   display: flex;
