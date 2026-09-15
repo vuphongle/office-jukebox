@@ -71,11 +71,18 @@
 
   <section id="suggestions-section">
     <div class="sug-head">
-      <span class="sec-title">Khám phá <small>Gợi ý</small></span>
-      <button id="shuffle" class="shuffle">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3.5 7h3.8L16 17.2h4.5"></path><path d="M3.5 17h3.8L10 13"></path><path d="M15.5 7h5"></path><path d="M18.2 4.3L20.5 7l-2.3 2.7"></path><path d="M18.2 14.5l2.3 2.5-2.3 2.7"></path></svg>
-        Ngẫu nhiên
-      </button>
+      <span id="discovery-title" class="sec-title">Khám phá <small>Gợi ý</small></span>
+      <div class="sug-actions">
+        <button id="favorites-toggle" class="favorites-toggle" type="button" aria-pressed="false">
+          <svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20.8 4.6a5.5 5.5 0 0 0-7.8 0L12 5.6l-1-1a5.5 5.5 0 0 0-7.8 7.8l1 1L12 21l7.8-7.6 1-1a5.5 5.5 0 0 0 0-7.8Z"/></svg>
+          <span>Yêu thích</span>
+          <span id="favorites-count" class="favorites-count">0</span>
+        </button>
+        <button id="shuffle" class="shuffle">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3.5 7h3.8L16 17.2h4.5"></path><path d="M3.5 17h3.8L10 13"></path><path d="M15.5 7h5"></path><path d="M18.2 4.3L20.5 7l-2.3 2.7"></path><path d="M18.2 14.5l2.3 2.5-2.3 2.7"></path></svg>
+          Ngẫu nhiên
+        </button>
+      </div>
     </div>
     <div id="singers" class="singers"></div>
     <div id="genre-tabs" class="genre-tabs"></div>
@@ -367,6 +374,7 @@
   <script src="/auth-utils.js"></script>
   <script src="/notifications.js"></script>
   <script src="/history-controller.js"></script>
+  <script src="/favorites-controller.js"></script>
   <script src="/guest.js"></script>
 </body>
 </html>
