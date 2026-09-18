@@ -662,6 +662,20 @@ h1 {
 .points-modal-card .admin-form .form-group { margin-bottom: 15px; }
 .points-modal-card .modal-actions { padding-top: 2px; border-top: 0; }
 .points-modal-card .modal-actions .submit-btn { min-width: 168px; }
+.reset-password-modal-card { border-color: oklch(80% 0.14 85 / 0.22); }
+.reset-password-note { margin: 0 0 14px; color: var(--muted); font-size: 13px; line-height: 1.5; }
+.reset-password-value {
+  width: 100%;
+  height: 52px;
+  padding: 0 16px;
+  border: 1px solid oklch(80% 0.14 85 / 0.45);
+  border-radius: 12px;
+  background: oklch(10% 0.02 325 / 0.6);
+  color: var(--gold);
+  font: 800 20px/1 var(--sans);
+  letter-spacing: 0.08em;
+  text-align: center;
+}
 
 @media (max-width: 768px) {
   .admin-app { width: min(100% - 24px, 1240px); padding-top: 16px; }

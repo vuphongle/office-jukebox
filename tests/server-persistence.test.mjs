@@ -599,3 +599,59 @@ test("admin notifications fan out to active users with unread/read controls", as
     rmSync(dataDir, { recursive: true, force: true });
   }
 });
+
+test("admin password reset replaces member credentials and revokes existing sessions", async () => {
+  const dataDir = mkdtempSync(path.join(os.tmpdir(), "office-jukebox-password-reset-"));
+  const { child, baseUrl } = await startServer(dataDir);
+  try {
+    const memberCookie = await register(baseUrl, "reset_member");
+    const adminCookie = await login(baseUrl);
+    const usersResponse = await fetch(`${baseUrl}/api/admin/users?search=reset_member`, {
+      headers: { Cookie: adminCookie },
+    });
+    const usersPayload = await usersResponse.json();
+    const member = usersPayload.users.find((user) => user.username === "reset_member");
+    assert.ok(member);
+
+    const forbidden = await fetch(`${baseUrl}/api/admin/users/${member.id}/reset-password`, {
+      method: "POST",
+      headers: { Cookie: memberCookie },
+    });
+    assert.equal(forbidden.status, 403);
+
+    const reset = await fetch(`${baseUrl}/api/admin/users/${member.id}/reset-password`, {
+      method: "POST",
+      headers: { Cookie: adminCookie },
+    });
+    assert.equal(reset.status, 200);
+    assert.match(reset.headers.get("cache-control") || "", /\bno-store\b/);
+    const resetPayload = await reset.json();
+    assert.equal(resetPayload.ok, true);
+    assert.equal(resetPayload.user.id, member.id);
+    assert.equal(resetPayload.user.username, "reset_member");
+    assert.match(resetPayload.password, /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)[A-Za-z\d]{12}$/);
+    assert.equal(Object.hasOwn(resetPayload.user, "password_hash"), false);
+
+    const oldSession = await (await fetch(`${baseUrl}/api/me`, {
+      headers: { Cookie: memberCookie },
+    })).json();
+    assert.equal(oldSession.authenticated, false);
+
+    const oldPassword = await fetch(`${baseUrl}/api/auth/login`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username: "reset_member", password: "member-password-123" }),
+    });
+    assert.equal(oldPassword.status, 401);
+
+    const newPassword = await fetch(`${baseUrl}/api/auth/login`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username: "reset_member", password: resetPayload.password }),
+    });
+    assert.equal(newPassword.status, 200);
+  } finally {
+    await stopServer(child);
+    rmSync(dataDir, { recursive: true, force: true });
+  }
+});

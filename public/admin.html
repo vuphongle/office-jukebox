@@ -503,6 +503,26 @@
     </div>
   </div>
 
+  <!-- MODAL: Password Reset Result -->
+  <div id="reset-password-modal" class="modal-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="reset-password-title">
+    <div class="modal-card reset-password-modal-card">
+      <div class="modal-head">
+        <div class="modal-title-group">
+          <p class="eyebrow">Mật khẩu tạm thời</p>
+          <h3 id="reset-password-title">Reset mật khẩu thành công</h3>
+          <p id="reset-password-target" class="modal-target-username"></p>
+        </div>
+        <button id="reset-password-close-btn" class="close-btn" type="button" aria-label="Đóng kết quả reset mật khẩu">&times;</button>
+      </div>
+      <p class="reset-password-note">Mật khẩu này chỉ hiển thị một lần. Hãy sao chép và gửi riêng cho người dùng.</p>
+      <input id="reset-password-value" class="reset-password-value" type="text" readonly aria-label="Mật khẩu mới" />
+      <div class="modal-actions">
+        <button id="reset-password-done-btn" type="button" class="cancel-btn">Đóng</button>
+        <button id="reset-password-copy-btn" type="button" class="submit-btn gold">Sao chép mật khẩu</button>
+      </div>
+    </div>
+  </div>
+
   <!-- MODAL: User Ledger Drawer -->
   <div id="user-ledger-modal" class="modal-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="user-ledger-title">
     <div class="modal-card wide">
