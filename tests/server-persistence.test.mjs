@@ -438,8 +438,10 @@ test("authenticated owner can skip the exact current song without refund or XP",
   let socket;
   let child;
   let baseUrl;
+  let seedDb;
+  let verifyDb;
   try {
-    const seedDb = initDb({ dbPath, adminUser: "review-admin", adminPass: "review-password-123" });
+    seedDb = initDb({ dbPath, adminUser: "review-admin", adminPass: "review-password-123" });
     const userRepo = new UserRepository(seedDb);
     const owner = userRepo.create({
       username: "skip_owner",
@@ -466,7 +468,8 @@ test("authenticated owner can skip the exact current song without refund or XP",
     });
     queueRepo.addVote(ownerSong.id, voter.id);
     queueRepo.updateStatus(ownerSong.id, "playing", { startedAt: Date.now() - 1000 });
-    closeDb();
+    closeDb(seedDb);
+    seedDb = null;
 
     ({ child, baseUrl } = await startServer(dataDir));
     const ownerCookie = await loginAs(baseUrl, "skip_owner", "owner-password-123");
@@ -494,18 +497,20 @@ test("authenticated owner can skip the exact current song without refund or XP",
     await stopServer(child);
     child = null;
 
-    const verifyDb = initDb({ dbPath });
+    verifyDb = initDb({ dbPath });
     const finished = verifyDb.query("SELECT status, finish_reason FROM queue_items WHERE id = ?").get(ownerSong.id);
     assert.equal(finished.status, "played");
     assert.equal(finished.finish_reason, "owner_skipped");
     assert.equal(verifyDb.query("SELECT points_balance FROM users WHERE id = ?").get(voter.id).points_balance, 0);
     assert.equal(verifyDb.query("SELECT COUNT(*) AS count FROM point_ledger WHERE type = 'vote_refund'").get().count, 0);
     assert.equal(verifyDb.query("SELECT COALESCE(SUM(delta_xp), 0) AS total FROM rank_activity_ledger WHERE user_id = ?").get(owner.id).total, 0);
-    closeDb();
+    closeDb(verifyDb);
+    verifyDb = null;
   } finally {
     socket?.close();
     if (child) await stopServer(child);
-    try { closeDb(); } catch {}
+    try { closeDb(seedDb); } catch {}
+    try { closeDb(verifyDb); } catch {}
     rmSync(dataDir, { recursive: true, force: true });
   }
 });

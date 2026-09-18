@@ -424,9 +424,8 @@ export function getDb() {
   return globalDb;
 }
 
-export function closeDb() {
-  if (globalDb) {
-    globalDb.close();
-    globalDb = null;
-  }
+export function closeDb(db = globalDb) {
+  if (!db) return;
+  db.close();
+  if (globalDb === db) globalDb = null;
 }
