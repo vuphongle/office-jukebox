@@ -357,6 +357,25 @@
         </form>
       </div>
 
+      <div class="panel-card search-settings-card mt-24">
+        <div class="panel-header">
+          <div>
+            <p class="eyebrow">Chống spam ngoài văn phòng</p>
+            <h2>Khóa order theo mạng Internet</h2>
+            <p class="card-desc">Khi bật, chỉ người dùng có cùng IP Internet công cộng với máy đang phát nhạc mới có thể order. IP được máy host cập nhật riêng.</p>
+          </div>
+          <span id="order-network-lock-status" class="badge">Đang tải…</span>
+        </div>
+        <form id="order-network-lock-form" class="admin-form search-mode-form">
+          <label class="check-row" for="order-network-lock-enabled">
+            <input id="order-network-lock-enabled" type="checkbox" />
+            <span>Chỉ cho phép order từ mạng host</span>
+          </label>
+          <p id="order-network-lock-detail" class="card-desc">Đang kiểm tra mạng host…</p>
+          <button type="submit" class="submit-btn gold">Lưu trạng thái khóa</button>
+        </form>
+      </div>
+
       <div class="panel-card ai-settings-card mt-24">
         <div class="panel-header">
           <div>

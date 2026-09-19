@@ -191,8 +191,14 @@ The container joins the external reverseproxy Docker network and exposes port
 domain, set `TRUST_PROXY=1` when exactly one trusted proxy sits in front of the
 app, and ensure the proxy forwards WebSocket upgrades. Projector settings are
 stored in ./data. The default `TRUST_PROXY=false` is safer for direct/LAN access;
-existing deployments should add the setting explicitly so IP-based limits are
-applied to the original client address instead of the proxy.
+existing deployments should add the setting explicitly so IP-based limits and
+the host-network order lock use the original client address instead of the proxy.
+
+To limit song requests to the office network, open the Host page on the laptop
+that is playing music and choose **Cập nhật mạng host**. Then, in Admin, enable
+**Khóa order theo mạng Internet**. The app stores the Host page's public IP and
+allows requests only from that same IP. Set `HOST_PASSWORD` (or use an admin
+session on the Host page) before registering the host network.
 
 The reverseproxy network must already exist. If it does not:
 docker network create reverseproxy.
