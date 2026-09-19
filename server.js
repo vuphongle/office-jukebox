@@ -81,6 +81,7 @@ import { parsePagination } from "./src/pagination.js";
 import { getClientIp, parseTrustProxy } from "./src/clientIp.js";
 import { WebSocketRateLimiter } from "./src/websocketRateLimit.js";
 import { parseDurationSeconds } from "./src/duration.js";
+import { generateRandomPassword } from "./src/password.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -1230,6 +1231,30 @@ app.post("/api/admin/users/:id/points", requireAdmin, (req, res) => {
     res.json({ ok: true, pointsBalance: result.points_balance, ledgerId: result.ledgerId });
   } catch (err) {
     res.status(400).json({ ok: false, reason: err.message });
+  }
+});
+
+app.post("/api/admin/users/:id/reset-password", requireAdmin, async (req, res) => {
+  const user = userRepo.findById(req.params.id);
+  if (!user) return res.status(404).json({ ok: false, reason: "Không tìm thấy người dùng." });
+  if (user.role !== "user") {
+    return res.status(400).json({ ok: false, reason: "Chỉ có thể reset mật khẩu tài khoản người dùng." });
+  }
+
+  res.set("Cache-Control", "no-store");
+  try {
+    const password = generateRandomPassword();
+    const passwordHash = await hashPasswordAsync(password);
+    const resetPassword = db.transaction(() => {
+      userRepo.updatePasswordHash(user.id, passwordHash);
+      sessionRepo.deleteByUserId(user.id);
+    });
+    resetPassword.immediate();
+    revokeUserSockets(user.id, "Mật khẩu của bạn đã được quản trị viên đặt lại.");
+    res.json({ ok: true, user: publicUser(userRepo.findById(user.id)), password });
+  } catch (err) {
+    console.error(`[admin] unable to reset password for user ${user.id}: ${err.message}`);
+    res.status(500).json({ ok: false, reason: "Không thể reset mật khẩu lúc này." });
   }
 });
 

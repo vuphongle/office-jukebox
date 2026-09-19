@@ -438,8 +438,10 @@ test("authenticated owner can skip the exact current song without refund or XP",
   let socket;
   let child;
   let baseUrl;
+  let seedDb;
+  let verifyDb;
   try {
-    const seedDb = initDb({ dbPath, adminUser: "review-admin", adminPass: "review-password-123" });
+    seedDb = initDb({ dbPath, adminUser: "review-admin", adminPass: "review-password-123" });
     const userRepo = new UserRepository(seedDb);
     const owner = userRepo.create({
       username: "skip_owner",
@@ -466,7 +468,8 @@ test("authenticated owner can skip the exact current song without refund or XP",
     });
     queueRepo.addVote(ownerSong.id, voter.id);
     queueRepo.updateStatus(ownerSong.id, "playing", { startedAt: Date.now() - 1000 });
-    closeDb();
+    closeDb(seedDb);
+    seedDb = null;
 
     ({ child, baseUrl } = await startServer(dataDir));
     const ownerCookie = await loginAs(baseUrl, "skip_owner", "owner-password-123");
@@ -494,18 +497,20 @@ test("authenticated owner can skip the exact current song without refund or XP",
     await stopServer(child);
     child = null;
 
-    const verifyDb = initDb({ dbPath });
+    verifyDb = initDb({ dbPath });
     const finished = verifyDb.query("SELECT status, finish_reason FROM queue_items WHERE id = ?").get(ownerSong.id);
     assert.equal(finished.status, "played");
     assert.equal(finished.finish_reason, "owner_skipped");
     assert.equal(verifyDb.query("SELECT points_balance FROM users WHERE id = ?").get(voter.id).points_balance, 0);
     assert.equal(verifyDb.query("SELECT COUNT(*) AS count FROM point_ledger WHERE type = 'vote_refund'").get().count, 0);
     assert.equal(verifyDb.query("SELECT COALESCE(SUM(delta_xp), 0) AS total FROM rank_activity_ledger WHERE user_id = ?").get(owner.id).total, 0);
-    closeDb();
+    closeDb(verifyDb);
+    verifyDb = null;
   } finally {
     socket?.close();
     if (child) await stopServer(child);
-    try { closeDb(); } catch {}
+    try { closeDb(seedDb); } catch {}
+    try { closeDb(verifyDb); } catch {}
     rmSync(dataDir, { recursive: true, force: true });
   }
 });
@@ -595,6 +600,62 @@ test("admin notifications fan out to active users with unread/read controls", as
     assert.equal(adminHistory.items[1].readCount, 1);
   } finally {
     memberSocket?.close();
+    await stopServer(child);
+    rmSync(dataDir, { recursive: true, force: true });
+  }
+});
+
+test("admin password reset replaces member credentials and revokes existing sessions", async () => {
+  const dataDir = mkdtempSync(path.join(os.tmpdir(), "office-jukebox-password-reset-"));
+  const { child, baseUrl } = await startServer(dataDir);
+  try {
+    const memberCookie = await register(baseUrl, "reset_member");
+    const adminCookie = await login(baseUrl);
+    const usersResponse = await fetch(`${baseUrl}/api/admin/users?search=reset_member`, {
+      headers: { Cookie: adminCookie },
+    });
+    const usersPayload = await usersResponse.json();
+    const member = usersPayload.users.find((user) => user.username === "reset_member");
+    assert.ok(member);
+
+    const forbidden = await fetch(`${baseUrl}/api/admin/users/${member.id}/reset-password`, {
+      method: "POST",
+      headers: { Cookie: memberCookie },
+    });
+    assert.equal(forbidden.status, 403);
+
+    const reset = await fetch(`${baseUrl}/api/admin/users/${member.id}/reset-password`, {
+      method: "POST",
+      headers: { Cookie: adminCookie },
+    });
+    assert.equal(reset.status, 200);
+    assert.match(reset.headers.get("cache-control") || "", /\bno-store\b/);
+    const resetPayload = await reset.json();
+    assert.equal(resetPayload.ok, true);
+    assert.equal(resetPayload.user.id, member.id);
+    assert.equal(resetPayload.user.username, "reset_member");
+    assert.match(resetPayload.password, /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)[A-Za-z\d]{12}$/);
+    assert.equal(Object.hasOwn(resetPayload.user, "password_hash"), false);
+
+    const oldSession = await (await fetch(`${baseUrl}/api/me`, {
+      headers: { Cookie: memberCookie },
+    })).json();
+    assert.equal(oldSession.authenticated, false);
+
+    const oldPassword = await fetch(`${baseUrl}/api/auth/login`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username: "reset_member", password: "member-password-123" }),
+    });
+    assert.equal(oldPassword.status, 401);
+
+    const newPassword = await fetch(`${baseUrl}/api/auth/login`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username: "reset_member", password: resetPayload.password }),
+    });
+    assert.equal(newPassword.status, 200);
+  } finally {
     await stopServer(child);
     rmSync(dataDir, { recursive: true, force: true });
   }

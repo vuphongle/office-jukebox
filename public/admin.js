@@ -202,6 +202,11 @@ function initUsersTab() {
   // Modal User Ledger
   document.getElementById("user-ledger-close-btn")?.addEventListener("click", closeUserLedgerModal);
 
+  // Modal Password Reset
+  document.getElementById("reset-password-close-btn")?.addEventListener("click", closeResetPasswordModal);
+  document.getElementById("reset-password-done-btn")?.addEventListener("click", closeResetPasswordModal);
+  document.getElementById("reset-password-copy-btn")?.addEventListener("click", () => window.copyResetPassword());
+
 }
 
 async function loadUsers() {
@@ -235,6 +240,9 @@ async function loadUsers() {
         const statusBadge = u.status === "active" ? '<span class="badge badge-active">Hoạt động</span>' : '<span class="badge badge-blocked">Bị khóa</span>';
         const blockBtnText = u.status === "active" ? "Khóa" : "Mở khóa";
         const blockBtnClass = u.status === "active" ? "action-btn btn-sm btn-warn" : "action-btn btn-sm";
+        const resetPasswordButton = u.role === "user"
+          ? `<button class="action-btn btn-sm" onclick="resetUserPassword('${u.id}', '${escapeHtml(u.username)}', this)">Reset mật khẩu</button>`
+          : "";
         const rank = u.rank || {};
         const rankCell = `<span class="rank-cell-badge">${escapeHtml(rank.badge || "🎧")}</span> ${escapeHtml(rank.name || "Người mới bắt nhịp")}<small>${Number(rank.xp || 0).toLocaleString("vi-VN")} XP</small>`;
 
@@ -251,6 +259,7 @@ async function loadUsers() {
             <td>
               <button class="action-btn btn-sm" onclick="openPointsModal('${u.id}', '${escapeHtml(u.username)}', ${u.points_balance})">Điểm ±</button>
               <button class="action-btn btn-sm" onclick="openUserLedger('${u.id}', '${escapeHtml(u.username)}')">Ledger</button>
+              ${resetPasswordButton}
               <button class="${blockBtnClass}" onclick="toggleUserStatus('${u.id}', '${u.status}')">${blockBtnText}</button>
             </td>
           </tr>
@@ -372,6 +381,61 @@ window.openUserLedger = async function (userId, username) {
 function closeUserLedgerModal() {
   document.getElementById("user-ledger-modal").classList.add("hidden");
 }
+
+window.resetUserPassword = async function (userId, username, button) {
+  if (!confirm(`Reset mật khẩu cho tài khoản @${username}? Người dùng sẽ bị đăng xuất khỏi các thiết bị hiện tại.`)) return;
+
+  const previousLabel = button?.textContent;
+  if (button) {
+    button.disabled = true;
+    button.textContent = "Đang reset…";
+  }
+
+  try {
+    const res = await fetch(`/api/admin/users/${userId}/reset-password`, { method: "POST" });
+    const data = await res.json();
+    if (!data.ok) throw new Error(data.reason || "Không thể reset mật khẩu.");
+
+    document.getElementById("reset-password-target").textContent = `Tài khoản @${data.user.username}`;
+    document.getElementById("reset-password-value").value = data.password;
+    document.getElementById("reset-password-copy-btn").textContent = "Sao chép mật khẩu";
+    document.getElementById("reset-password-modal").classList.remove("hidden");
+    document.getElementById("reset-password-copy-btn").focus();
+  } catch (err) {
+    alert(err.message || "Không thể reset mật khẩu.");
+  } finally {
+    if (button) {
+      button.disabled = false;
+      button.textContent = previousLabel;
+    }
+  }
+};
+
+function closeResetPasswordModal() {
+  document.getElementById("reset-password-value").value = "";
+  document.getElementById("reset-password-modal").classList.add("hidden");
+}
+
+window.copyResetPassword = async function () {
+  const passwordInput = document.getElementById("reset-password-value");
+  const copyButton = document.getElementById("reset-password-copy-btn");
+  if (!passwordInput?.value) return;
+
+  try {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(passwordInput.value);
+    } else {
+      passwordInput.select();
+      document.execCommand("copy");
+    }
+    copyButton.textContent = "Đã sao chép";
+    setTimeout(() => {
+      if (copyButton.textContent === "Đã sao chép") copyButton.textContent = "Sao chép mật khẩu";
+    }, 2000);
+  } catch {
+    alert("Không thể tự động sao chép. Vui lòng chọn và sao chép mật khẩu thủ công.");
+  }
+};
 
 // --- TAB 2: AIRDROPS & POINT DROPS ----------------------------------------
 
