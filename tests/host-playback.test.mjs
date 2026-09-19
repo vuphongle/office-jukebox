@@ -87,7 +87,7 @@ function createHostContext() {
     requestAnimationFrame: (callback) => callback(),
   });
   context.globalThis = context;
-  return { context, elements, player, sent, sockets, getPlayerEvents: () => playerEvents };
+  return { context, elements, player, sent, sockets, getElementById, getPlayerEvents: () => playerEvents };
 }
 
 test("host offers a user-gesture recovery when YouTube blocks the first autoplay", () => {
@@ -164,8 +164,38 @@ test("host retries an ended report after reconnecting with the same playback tok
   ]);
 });
 
+test("host shows the network registration authentication error", () => {
+  const { context, elements, sent, sockets } = createHostContext();
+  const source = readFileSync(new URL("../public/host.js", import.meta.url), "utf8");
+  vm.runInContext(source, context);
+  context.clearTimeout = () => {};
+  context.setTimeout = () => 0;
+  context.connectWs();
+
+  elements.get("order-network-host").onclick();
+  assert.deepEqual(sent, [{ type: "registerOrderNetworkHost" }]);
+  sockets.at(-1).onmessage({ data: JSON.stringify({ type: "orderNetworkHostError", reason: "Hãy xác thực trang Host trước khi cập nhật mạng." }) });
+
+  const status = elements.get("order-network-host-status");
+  assert.equal(status.textContent, "Hãy xác thực trang Host trước khi cập nhật mạng.");
+  assert.equal(status.classList.contains("hidden"), false);
+});
+
+test("host ignores generic WebSocket errors for the network registration status", () => {
+  const { context, sockets, getElementById } = createHostContext();
+  const source = readFileSync(new URL("../public/host.js", import.meta.url), "utf8");
+  vm.runInContext(source, context);
+  const status = getElementById("order-network-host-status");
+
+  sockets.at(-1).onmessage({ data: JSON.stringify({ type: "error", reason: "Không thể lưu cài đặt lúc này." }) });
+
+  assert.equal(status.textContent, "");
+  assert.equal(status.classList.contains("hidden"), true);
+});
+
 test("host registers the YouTube callback before loading the iframe API", () => {
   const html = readFileSync(new URL("../public/host.html", import.meta.url), "utf8");
+  assert.match(html, /id="order-network-host-status"/);
   const hostScript = html.indexOf('src="/host.js"');
   const iframeApiScript = html.indexOf('src="https://www.youtube.com/iframe_api"');
   assert.ok(hostScript >= 0);

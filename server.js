@@ -2323,7 +2323,7 @@ wss.on("connection", (ws, request) => {
         case "registerOrderNetworkHost":
           if (!(HOST_PASSWORD && ws.hostAuthenticated) && currentSession?.role !== "admin") {
             if (ws.readyState === 1) {
-              ws.send(JSON.stringify({ type: "error", reason: "Hãy xác thực trang Host trước khi cập nhật mạng." }));
+              ws.send(JSON.stringify({ type: "orderNetworkHostError", reason: "Hãy xác thực trang Host trước khi cập nhật mạng." }));
             }
             break;
           }
@@ -2334,7 +2334,10 @@ wss.on("connection", (ws, request) => {
               saveSettings();
             } catch (err) {
               restoreSettings(previous);
-              reportSettingsPersistenceFailure(ws, err);
+              console.error(`[settings] unable to save: ${err.message}`);
+              if (ws.readyState === 1) {
+                ws.send(JSON.stringify({ type: "orderNetworkHostError", reason: "Không thể lưu cài đặt lúc này. Vui lòng thử lại." }));
+              }
               break;
             }
           }

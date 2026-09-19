@@ -314,7 +314,7 @@ test("admin can lock orders to the network registered by the authenticated host"
   try {
     const headers = { "X-Forwarded-For": hostIp };
     anonymousSocket = await openSocket(running.baseUrl, "", headers);
-    const denied = waitForMessage(anonymousSocket, (message) => message.type === "error");
+    const denied = waitForMessage(anonymousSocket, (message) => message.type === "orderNetworkHostError");
     anonymousSocket.send(JSON.stringify({ type: "registerOrderNetworkHost" }));
     assert.match((await denied).reason, /xác thực trang Host/);
 

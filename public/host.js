@@ -21,6 +21,7 @@ let voteSortOn = true;
 let hostToken = null; // WebSocket control token (only issued to authenticated hosts)
 let ws = null;
 let draggedQueueId = null;
+let orderNetworkHostStatusTimer = null;
 const NO_THUMB = 'data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22/%3E';
 
 function safeImageUrl(value) {
@@ -36,6 +37,14 @@ function safeImageUrl(value) {
 // ---- WebSocket connection --------------------------------------------------
 function sendAuth() {
   if (hostToken && ws && ws.readyState === 1) ws.send(JSON.stringify({ type: "auth", token: hostToken }));
+}
+
+function setOrderNetworkHostStatus(message) {
+  const status = document.getElementById("order-network-host-status");
+  status.textContent = message;
+  status.classList.remove("hidden");
+  clearTimeout(orderNetworkHostStatusTimer);
+  orderNetworkHostStatusTimer = setTimeout(() => status.classList.add("hidden"), 5000);
 }
 
 // If a song ends while the WebSocket is disconnected, the "ended" message may
@@ -84,10 +93,15 @@ function connectWs() {
       const button = document.getElementById("order-network-host");
       button.textContent = "Mạng host đã cập nhật";
       button.classList.add("on");
+      setOrderNetworkHostStatus("Đã lưu mạng Internet của máy đang phát.");
       setTimeout(() => {
         button.textContent = "Cập nhật mạng host";
         button.classList.remove("on");
       }, 2500);
+      return;
+    }
+    if (msg.type === "orderNetworkHostError") {
+      setOrderNetworkHostStatus(msg.reason || "Không thể cập nhật mạng host.");
       return;
     }
     if (msg.type === "state" && msg.state && typeof msg.state === "object") {
@@ -562,7 +576,11 @@ function wireControls() {
     send({ type: "setRequireName", on: !requireName });
   };
   document.getElementById("order-network-host").onclick = () => {
-    send({ type: "registerOrderNetworkHost" });
+    if (!send({ type: "registerOrderNetworkHost" })) {
+      setOrderNetworkHostStatus("Mất kết nối Host. Vui lòng thử lại.");
+      return;
+    }
+    setOrderNetworkHostStatus("Đang cập nhật mạng host…");
   };
   document.getElementById("vote-sort-toggle").onclick = () => {
     send({ type: "setVoteSort", on: !voteSortOn });
