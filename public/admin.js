@@ -141,6 +141,7 @@ function selectTab(tabId) {
   else if (currentTab === "tab-feedback") {
     loadFeedback();
     loadSearchSettings();
+    loadOrderNetworkLock();
     loadChatAiSettings();
   }
 }
@@ -728,6 +729,7 @@ function initFeedbackTab() {
   document.getElementById("chat-ai-memory-reset")?.addEventListener("click", resetChatAiMemory);
   document.getElementById("chat-ai-memory-list")?.addEventListener("click", handleChatAiMemoryAction);
   document.getElementById("search-mode-form")?.addEventListener("submit", saveSearchSettings);
+  document.getElementById("order-network-lock-form")?.addEventListener("submit", saveOrderNetworkLock);
 }
 
 async function loadSearchSettings() {
@@ -761,6 +763,49 @@ async function saveSearchSettings(event) {
     showStatus("Đã cập nhật chế độ tìm kiếm.");
   } catch (error) {
     showStatus(error.message || "Không thể lưu chế độ tìm kiếm.", true);
+  } finally {
+    button.disabled = false;
+  }
+}
+
+async function loadOrderNetworkLock() {
+  const status = document.getElementById("order-network-lock-status");
+  const checkbox = document.getElementById("order-network-lock-enabled");
+  const detail = document.getElementById("order-network-lock-detail");
+  try {
+    const res = await fetch("/api/admin/order-network-lock");
+    const data = await res.json();
+    if (!res.ok || !data.ok) throw new Error(data.reason || "Không thể tải khóa mạng.");
+    checkbox.checked = data.enabled;
+    status.textContent = data.enabled ? "Đang khóa" : "Đang tắt";
+    status.className = data.enabled ? "badge badge-active" : "badge badge-blocked";
+    detail.textContent = data.hostIp
+      ? `Mạng host đã đăng ký: ${data.hostIp}. Khi bật, chỉ IP này được order.`
+      : "Chưa có mạng host. Mở trang Host trên máy đang phát và bấm Cập nhật mạng host.";
+  } catch (error) {
+    status.textContent = error.message || "Không thể tải";
+    status.className = "badge badge-blocked";
+    detail.textContent = "Không thể xác định trạng thái khóa mạng.";
+  }
+}
+
+async function saveOrderNetworkLock(event) {
+  event.preventDefault();
+  const button = event.submitter || event.currentTarget.querySelector("button[type=submit]");
+  button.disabled = true;
+  try {
+    const enabled = document.getElementById("order-network-lock-enabled").checked;
+    const res = await fetch("/api/admin/order-network-lock", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ enabled }),
+    });
+    const data = await res.json();
+    if (!res.ok || !data.ok) throw new Error(data.reason || "Không thể lưu khóa mạng.");
+    await loadOrderNetworkLock();
+    showStatus(enabled ? "Đã khóa order theo mạng Internet của máy host." : "Đã cho phép order từ mọi mạng.");
+  } catch (error) {
+    showStatus(error.message || "Không thể lưu khóa mạng.", true);
   } finally {
     button.disabled = false;
   }

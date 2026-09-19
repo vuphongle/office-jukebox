@@ -80,6 +80,16 @@ function connectWs() {
       return;
     }
     if (!msg || typeof msg !== "object" || Array.isArray(msg)) return;
+    if (msg.type === "orderNetworkHostUpdated") {
+      const button = document.getElementById("order-network-host");
+      button.textContent = "Mạng host đã cập nhật";
+      button.classList.add("on");
+      setTimeout(() => {
+        button.textContent = "Cập nhật mạng host";
+        button.classList.remove("on");
+      }, 2500);
+      return;
+    }
     if (msg.type === "state" && msg.state && typeof msg.state === "object") {
       latestState = msg.state;
       if (typeof msg.filterOn === "boolean") filterOn = msg.filterOn;
@@ -550,6 +560,9 @@ function wireControls() {
   };
   document.getElementById("require-name-toggle").onclick = () => {
     send({ type: "setRequireName", on: !requireName });
+  };
+  document.getElementById("order-network-host").onclick = () => {
+    send({ type: "registerOrderNetworkHost" });
   };
   document.getElementById("vote-sort-toggle").onclick = () => {
     send({ type: "setVoteSort", on: !voteSortOn });

@@ -13,7 +13,7 @@ import { UserRepository } from "../src/repositories/userRepository.js";
 
 const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 
-async function startServer(dataDir) {
+async function startServer(dataDir, options = {}) {
   const port = 46000 + Math.floor(Math.random() * 1000);
   const dbPath = path.join(dataDir, "jukebox.db");
   const child = spawn("bun", ["server.js"], {
@@ -26,7 +26,7 @@ async function startServer(dataDir) {
       ADMIN_USERNAME: "review-admin",
       ADMIN_PASSWORD: "review-password-123",
       HOST_PASSWORD: "",
-      TRUST_PROXY: "false",
+      TRUST_PROXY: options.trustProxy || "false",
       LLM_API_KEY: "",
       CHAT_AI_API_KEY: "",
     },
@@ -80,9 +80,9 @@ async function register(baseUrl, username) {
   return cookie;
 }
 
-function openSocket(baseUrl, cookie) {
+function openSocket(baseUrl, cookie, headers = {}) {
   return new Promise((resolve, reject) => {
-    const socket = new WebSocket(baseUrl.replace(/^http/, "ws"), { headers: { Cookie: cookie } });
+    const socket = new WebSocket(baseUrl.replace(/^http/, "ws"), { headers: { Cookie: cookie, ...headers } });
     socket.once("open", () => resolve(socket));
     socket.once("error", reject);
   });
@@ -299,6 +299,84 @@ test("admin search mode is validated and persists across server restarts", async
     const cookie = await login(running.baseUrl);
     const persisted = await (await fetch(`${running.baseUrl}/api/admin/search-settings`, { headers: { Cookie: cookie } })).json();
     assert.equal(persisted.searchMode, "youtube-music");
+  } finally {
+    await stopServer(running.child);
+    rmSync(dataDir, { recursive: true, force: true });
+  }
+});
+
+test("admin can lock orders to the network registered by the authenticated host", async () => {
+  const dataDir = mkdtempSync(path.join(os.tmpdir(), "office-jukebox-order-network-lock-"));
+  const hostIp = "203.0.113.10";
+  let running = await startServer(dataDir, { trustProxy: "1" });
+  let hostSocket;
+  let anonymousSocket;
+  try {
+    const headers = { "X-Forwarded-For": hostIp };
+    anonymousSocket = await openSocket(running.baseUrl, "", headers);
+    const denied = waitForMessage(anonymousSocket, (message) => message.type === "error");
+    anonymousSocket.send(JSON.stringify({ type: "registerOrderNetworkHost" }));
+    assert.match((await denied).reason, /xác thực trang Host/);
+
+    const cookie = await login(running.baseUrl);
+    hostSocket = await openSocket(running.baseUrl, cookie, headers);
+    const hostUpdated = waitForMessage(hostSocket, (message) => message.type === "orderNetworkHostUpdated");
+    hostSocket.send(JSON.stringify({ type: "registerOrderNetworkHost" }));
+    await hostUpdated;
+
+    const initial = await (await fetch(`${running.baseUrl}/api/admin/order-network-lock`, { headers: { Cookie: cookie, ...headers } })).json();
+    assert.equal(initial.enabled, false);
+    assert.equal(initial.hostIp, hostIp);
+
+    const enabled = await fetch(`${running.baseUrl}/api/admin/order-network-lock`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json", Cookie: cookie, ...headers },
+      body: JSON.stringify({ enabled: true }),
+    });
+    assert.equal(enabled.status, 200);
+
+    const blocked = await fetch(`${running.baseUrl}/api/request`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-Forwarded-For": "198.51.100.20" },
+      body: JSON.stringify({ videoId: "not-video" }),
+    });
+    assert.equal(blocked.status, 403);
+    assert.equal((await blocked.json()).code, "ORDER_NETWORK_LOCKED");
+
+    const allowedNetwork = await fetch(`${running.baseUrl}/api/request`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...headers },
+      body: JSON.stringify({ videoId: "not-video" }),
+    });
+    assert.equal(allowedNetwork.status, 400);
+  } finally {
+    anonymousSocket?.close();
+    hostSocket?.close();
+    await stopServer(running.child);
+  }
+
+  running = await startServer(dataDir, { trustProxy: "1" });
+  try {
+    const cookie = await login(running.baseUrl);
+    const persisted = await (await fetch(`${running.baseUrl}/api/admin/order-network-lock`, {
+      headers: { Cookie: cookie, "X-Forwarded-For": hostIp },
+    })).json();
+    assert.equal(persisted.enabled, true);
+    assert.equal(persisted.hostIp, hostIp);
+
+    const disabled = await fetch(`${running.baseUrl}/api/admin/order-network-lock`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json", Cookie: cookie, "X-Forwarded-For": hostIp },
+      body: JSON.stringify({ enabled: false }),
+    });
+    assert.equal(disabled.status, 200);
+
+    const reopened = await fetch(`${running.baseUrl}/api/request`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-Forwarded-For": "198.51.100.20" },
+      body: JSON.stringify({ videoId: "not-video" }),
+    });
+    assert.equal(reopened.status, 400);
   } finally {
     await stopServer(running.child);
     rmSync(dataDir, { recursive: true, force: true });

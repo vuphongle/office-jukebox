@@ -248,6 +248,8 @@ milestoneAnnouncementsOn = savedSettings.milestoneAnnouncementsOn ?? true;
 let voteSortOn = savedSettings.voteSortOn ?? true;
 const SEARCH_MODES = new Set(["youtube-music", "youtube-web"]);
 let searchMode = SEARCH_MODES.has(savedSettings.searchMode) ? savedSettings.searchMode : "youtube-web";
+let orderNetworkLockOn = savedSettings.orderNetworkLockOn ?? false;
+let orderNetworkLockIp = typeof savedSettings.orderNetworkLockIp === "string" ? savedSettings.orderNetworkLockIp : "";
 let chatAiSettings = normalizeChatAiSettings(savedSettings.chatAi || {});
 state.setVoteSort(voteSortOn);
 
@@ -296,6 +298,8 @@ function saveSettings() {
     milestoneAnnouncementsOn,
     voteSortOn,
     searchMode,
+    orderNetworkLockOn,
+    orderNetworkLockIp,
     chatAi: chatAiSettings,
     feedbackDigest,
   });
@@ -321,6 +325,8 @@ function settingsSnapshot() {
     milestoneAnnouncementsOn,
     voteSortOn,
     searchMode,
+    orderNetworkLockOn,
+    orderNetworkLockIp,
     chatAi: chatAiSettings,
     feedbackDigest,
   };
@@ -341,6 +347,8 @@ function restoreSettings(snapshot) {
     milestoneAnnouncementsOn,
     voteSortOn,
     searchMode,
+    orderNetworkLockOn,
+    orderNetworkLockIp,
     chatAi: chatAiSettings,
     feedbackDigest,
   } = snapshot);
@@ -1021,6 +1029,14 @@ app.get("/api/host-token", requireHostAuth, (req, res) => {
 });
 
 app.post("/api/request", songRequestIpLimit, async (req, res) => {
+  const requesterIp = getClientIp(req, TRUST_PROXY);
+  if (orderNetworkLockOn && requesterIp !== orderNetworkLockIp) {
+    return res.status(403).json({
+      ok: false,
+      code: "ORDER_NETWORK_LOCKED",
+      reason: "Order chỉ khả dụng khi bạn dùng cùng mạng Internet với máy host.",
+    });
+  }
   const { videoId, title, channel, duration, thumbnail, name, clientId } = req.body || {};
   if (!isValidYouTubeVideoId(videoId)) {
     return res.status(400).json({ ok: false, reason: "Mã video YouTube không hợp lệ." });
@@ -1053,7 +1069,7 @@ app.post("/api/request", songRequestIpLimit, async (req, res) => {
   if (requireName && !requesterName) {
     return res.json({ ok: false, reason: "Vui lòng nhập tên để thêm bài hát." });
   }
-  const floodKey = `${getClientIp(req, TRUST_PROXY)}|${requesterId}`;
+  const floodKey = `${requesterIp}|${requesterId}`;
   const last = lastRequestAt.get(floodKey);
   if (cooldownSeconds > 0 && last) {
     const waitMs = cooldownSeconds * 1000 - (Date.now() - last);
@@ -1154,6 +1170,36 @@ app.patch("/api/admin/search-settings", requireAdmin, (req, res) => {
     return res.status(500).json({ ok: false, reason: "Không thể lưu cài đặt lúc này. Vui lòng thử lại." });
   }
   res.json({ ok: true, searchMode });
+});
+
+app.get("/api/admin/order-network-lock", requireAdmin, (req, res) => {
+  res.json({
+    ok: true,
+    enabled: orderNetworkLockOn,
+    hostIp: orderNetworkLockIp || null,
+  });
+});
+
+app.patch("/api/admin/order-network-lock", requireAdmin, (req, res) => {
+  if (typeof req.body?.enabled !== "boolean") {
+    return res.status(400).json({ ok: false, reason: "Giá trị khóa mạng không hợp lệ." });
+  }
+
+  if (req.body.enabled && !orderNetworkLockIp) {
+    return res.status(409).json({ ok: false, reason: "Máy host chưa cập nhật mạng hiện tại." });
+  }
+
+  const previous = settingsSnapshot();
+  orderNetworkLockOn = req.body.enabled;
+  try {
+    saveSettings();
+  } catch (err) {
+    restoreSettings(previous);
+    console.error(`[settings] unable to save: ${err.message}`);
+    return res.status(500).json({ ok: false, reason: "Không thể lưu cài đặt lúc này. Vui lòng thử lại." });
+  }
+
+  res.json({ ok: true, enabled: orderNetworkLockOn, hostIp: orderNetworkLockIp || null });
 });
 
 app.get("/api/admin/rank/leaderboard", requireAdmin, (req, res) => {
@@ -2273,6 +2319,26 @@ wss.on("connection", (ws, request) => {
             }
           }
           broadcastState();
+          break;
+        case "registerOrderNetworkHost":
+          if (!(HOST_PASSWORD && ws.hostAuthenticated) && currentSession?.role !== "admin") {
+            if (ws.readyState === 1) {
+              ws.send(JSON.stringify({ type: "error", reason: "Hãy xác thực trang Host trước khi cập nhật mạng." }));
+            }
+            break;
+          }
+          {
+            const previous = settingsSnapshot();
+            orderNetworkLockIp = ws.__jukeboxClientIp;
+            try {
+              saveSettings();
+            } catch (err) {
+              restoreSettings(previous);
+              reportSettingsPersistenceFailure(ws, err);
+              break;
+            }
+          }
+          ws.send(JSON.stringify({ type: "orderNetworkHostUpdated" }));
           break;
       }
     } catch (err) {
