@@ -28,6 +28,8 @@ test("engagement rules expose highest-tier streak bonuses and conservative rewar
   assert.equal(rules.policy.retroactive, false);
   assert.deepEqual(rules.claimableDrop.durationPresetsHours, [1, 4, 8, 24]);
   assert.equal(rules.streak.personalRewards.find((item) => item.day === 10).points, 3);
+  assert.deepEqual(rules.weeklyLeaderboard.includedActivityTypes, ["qualified_play", "vote_participation"]);
+  assert.equal(rules.weeklyLeaderboard.lifetimeXpReset, false);
 });
 
 test("streak awards are transactional, idempotent, and podium rewards stop at second place", () => {

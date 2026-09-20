@@ -13,6 +13,11 @@
   function render(rules) {
     const streak = rules.streak || {};
     const ranks = rules.ranks || {};
+    const weekly = rules.weeklyLeaderboard || {};
+    const activityLabels = {
+      qualified_play: "Bài hát được phát hợp lệ",
+      vote_participation: "Vote cho bài được phát hợp lệ",
+    };
     const tierItems = (streak.tiers || []).map((tier) => `
       <div class="rule-item"><strong>${tier.minStreak}+ ngày</strong><span>${tier.bonusPoints ? `${points(tier.bonusPoints)} mỗi lần điểm danh` : "Chưa có bonus tier"}</span></div>
     `).join("");
@@ -23,6 +28,7 @@
       .map((item) => `<tr><td>${item.label}</td><td>${(item.places || []).map((place) => `Top ${place.place}: ${points(place.points)}`).join(" · ")}</td><td>Theo sự kiện</td></tr>`).join("");
 
     content.innerHTML = `
+      <section class="rules-card"><h2>BXH DJ tuần</h2><p>Tuần tính từ 00:00 thứ Hai đến 00:00 thứ Hai kế tiếp theo giờ ${escapeHtml(weekly.timezone || "Asia/Ho_Chi_Minh")}. ${escapeHtml(weekly.scoreLabel || "Music XP")} chỉ tính từ ${(weekly.includedActivityTypes || []).map((type) => activityLabels[type] || type).join(" và ") || "hoạt động âm nhạc"}. Chat XP vẫn được cộng vào hạng Lifetime nhưng không tính đua hạng tuần; XP Lifetime không bị reset. Giai đoạn hiện tại chỉ vinh danh, không trao điểm vote.</p></section>
       <section class="rules-card"><h2>Điểm danh hằng ngày</h2><p>Điểm cơ bản phụ thuộc hạng hiện tại. Bonus tier chỉ lấy tier cao nhất, không cộng dồn; mốc 3/7/14/30 vẫn cộng thêm.</p><div class="rules-grid">${tierItems}</div></section>
       <section class="rules-card"><h2>Mốc streak lặp</h2><table><thead><tr><th>Mốc</th><th>Quy tắc</th><th>Thưởng</th></tr></thead><tbody>${legacyRows}</tbody></table></section>
       <section class="rules-card"><h2>Thưởng cá nhân</h2><table><thead><tr><th>Mốc</th><th>Phạm vi</th><th>Thưởng</th></tr></thead><tbody>${personalRows}${rankRows}</tbody></table></section>
