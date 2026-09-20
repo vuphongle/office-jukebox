@@ -63,6 +63,7 @@ import {
   NOTIFICATION_USER_LIMIT,
 } from "./src/repositories/notificationRepository.js";
 import { RANK_LEVELS, isQualifiedPlay } from "./src/rank.js";
+import { getWeeklyPeriod } from "./src/weeklyRank.js";
 import {
   createAuthMiddleware,
   hashPasswordAsync,
@@ -600,6 +601,12 @@ app.get("/api/rank/leaderboard", publicReadLimit, (_req, res) => {
   res.json({ ok: true, leaderboard });
 });
 
+app.get("/api/rank/weekly-leaderboard", publicReadLimit, (_req, res) => {
+  const period = getWeeklyPeriod();
+  const leaderboard = rankRepo.listWeeklyMusicLeaderboard({ period, limit: 10 });
+  res.json({ ok: true, period, leaderboard });
+});
+
 app.get("/api/me", (req, res) => {
   if (!req.user) {
     return res.json({ ok: true, authenticated: false, user: null });
@@ -629,12 +636,18 @@ app.get("/api/me", (req, res) => {
         : null,
       votedQueueItemIds: queueRepo.listActiveVoteItemIds(req.user.id),
       rank: publicRank(req.user.id),
+      weeklyRank: rankRepo.getWeeklyMusicSummary(req.user.id),
     },
   });
 });
 
 app.get("/api/me/rank", requireAuth, (req, res) => {
   res.json({ ok: true, rank: publicRank(req.user.id) });
+});
+
+app.get("/api/me/rank/weekly", requireAuth, (req, res) => {
+  const period = getWeeklyPeriod();
+  res.json({ ok: true, period, weeklyRank: rankRepo.getWeeklyMusicSummary(req.user.id, { period }) });
 });
 
 app.get("/api/me/favorites", requireAuth, (req, res) => {

@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { rankForXp, RANK_XP_DEFAULTS } from "../rank.js";
 import { EngagementRepository } from "./engagementRepository.js";
 import { avatarPublicUrl } from "../avatar.js";
+import { getWeeklyPeriod } from "../weeklyRank.js";
 
 function parseMetadata(raw) {
   try {
@@ -51,6 +52,23 @@ function mapActivity(row) {
     sourceId: row.source_id,
     metadata: parseMetadata(row.metadata_json),
     createdAt: row.created_at,
+  };
+}
+
+function mapWeeklyLeaderboardEntry(row, position) {
+  const rank = rankForXp(row.xp_total);
+  return {
+    position,
+    displayName: row.display_name,
+    avatarUrl: avatarPublicUrl(row.avatar_file),
+    weeklyMusicXp: Number(row.weekly_music_xp || 0),
+    qualifiedPlayCount: Number(row.qualified_play_count || 0),
+    voteParticipationCount: Number(row.vote_participation_count || 0),
+    rank: {
+      level: rank.level,
+      name: rank.name,
+      badge: rank.badge,
+    },
   };
 }
 
@@ -329,6 +347,76 @@ export class RankRepository {
         },
       };
     });
+  }
+
+  listWeeklyMusicLeaderboard({ period = getWeeklyPeriod(), limit = 10, offset = 0 } = {}) {
+    const boundedLimit = Math.min(10, Math.max(1, Number(limit) || 10));
+    const boundedOffset = Math.max(0, Number(offset) || 0);
+    const rows = this.db
+      .query(
+        `SELECT u.display_name, u.avatar_file, COALESCE(urp.xp_total, 0) AS xp_total,
+                SUM(ral.delta_xp) AS weekly_music_xp,
+                SUM(CASE WHEN ral.activity_type = 'qualified_play' THEN 1 ELSE 0 END) AS qualified_play_count,
+                SUM(CASE WHEN ral.activity_type = 'vote_participation' THEN 1 ELSE 0 END) AS vote_participation_count
+         FROM rank_activity_ledger ral
+         JOIN users u ON u.id = ral.user_id
+         LEFT JOIN user_rank_profiles urp ON urp.user_id = u.id
+         WHERE u.status = 'active'
+           AND u.role = 'user'
+           AND ral.created_at >= ?
+           AND ral.created_at < ?
+           AND ral.activity_type IN ('qualified_play', 'vote_participation')
+         GROUP BY u.id
+         ORDER BY weekly_music_xp DESC,
+                  qualified_play_count DESC,
+                  vote_participation_count DESC,
+                  u.display_name COLLATE NOCASE ASC,
+                  u.id ASC
+         LIMIT ? OFFSET ?`
+      )
+      .all(period.startAt, period.endAt, boundedLimit, boundedOffset);
+
+    return rows.map((row, index) => mapWeeklyLeaderboardEntry(row, boundedOffset + index + 1));
+  }
+
+  getWeeklyMusicSummary(userId, { period = getWeeklyPeriod() } = {}) {
+    if (!userId) return null;
+    const rows = this.db
+      .query(
+        `SELECT u.id AS user_id, u.display_name, u.avatar_file, COALESCE(urp.xp_total, 0) AS xp_total,
+                SUM(ral.delta_xp) AS weekly_music_xp,
+                SUM(CASE WHEN ral.activity_type = 'qualified_play' THEN 1 ELSE 0 END) AS qualified_play_count,
+                SUM(CASE WHEN ral.activity_type = 'vote_participation' THEN 1 ELSE 0 END) AS vote_participation_count
+         FROM rank_activity_ledger ral
+         JOIN users u ON u.id = ral.user_id
+         LEFT JOIN user_rank_profiles urp ON urp.user_id = u.id
+         WHERE u.status = 'active'
+           AND u.role = 'user'
+           AND ral.created_at >= ?
+           AND ral.created_at < ?
+           AND ral.activity_type IN ('qualified_play', 'vote_participation')
+         GROUP BY u.id
+         ORDER BY weekly_music_xp DESC,
+                  qualified_play_count DESC,
+                  vote_participation_count DESC,
+                  u.display_name COLLATE NOCASE ASC,
+                  u.id ASC`
+      )
+      .all(period.startAt, period.endAt);
+    const index = rows.findIndex((row) => row.user_id === userId);
+    if (index < 0) {
+      return {
+        position: null,
+        participantCount: rows.length,
+        weeklyMusicXp: 0,
+        qualifiedPlayCount: 0,
+        voteParticipationCount: 0,
+      };
+    }
+    return {
+      ...mapWeeklyLeaderboardEntry(rows[index], index + 1),
+      participantCount: rows.length,
+    };
   }
 
   listLeaderboard({ eventId = null, limit = 50, offset = 0 } = {}) {

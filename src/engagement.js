@@ -1,4 +1,5 @@
 import { RANK_LEVELS } from "./rank.js";
+import { DEFAULT_WEEKLY_TIMEZONE, WEEKLY_MUSIC_ACTIVITY_TYPES } from "./weeklyRank.js";
 
 export const DEFAULT_EVENT_ID = "default_event";
 export const PERSONAL_AWARD_SCOPE = "lifetime";
@@ -113,6 +114,15 @@ export function getEngagementRules() {
       defaultDurationHours: DEFAULT_CLAIMABLE_DROP_DURATION_HOURS,
       previousActiveDrop: "superseded",
       adminCancellation: true,
+    },
+    weeklyLeaderboard: {
+      timezone: DEFAULT_WEEKLY_TIMEZONE,
+      startsOn: "monday",
+      scoreLabel: "Music XP",
+      includedActivityTypes: [...WEEKLY_MUSIC_ACTIVITY_TYPES],
+      excludedActivityTypes: ["chat_window"],
+      lifetimeXpReset: false,
+      rewards: "recognition_only",
     },
     notifications: {
       inbox: {

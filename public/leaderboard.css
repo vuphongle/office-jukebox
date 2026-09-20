@@ -38,6 +38,7 @@ body {
 button, a { touch-action: manipulation; }
 button { color: inherit; font: inherit; }
 a { color: inherit; }
+.hidden { display: none !important; }
 button:focus-visible, a:focus-visible {
   outline: none;
   box-shadow: var(--focus);
@@ -116,6 +117,29 @@ button:focus-visible, a:focus-visible {
   background: linear-gradient(145deg, oklch(23% 0.04 325 / .96), oklch(18% 0.028 325 / .96));
   box-shadow: var(--shadow-card);
 }
+.leaderboard-tabs {
+  display: inline-flex;
+  gap: 4px;
+  margin: 0 0 20px;
+  padding: 4px;
+  border: 1px solid var(--border);
+  border-radius: 13px;
+  background: oklch(100% 0 0 / .045);
+}
+.leaderboard-tab {
+  min-height: 44px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 9px;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 800;
+  cursor: pointer;
+}
+.leaderboard-tab:hover { color: var(--text-high); }
+.leaderboard-tab.active { background: var(--gold); color: var(--gold-ink); }
+.leaderboard-tab:disabled { cursor: wait; opacity: .65; }
 .section-heading {
   display: flex;
   align-items: flex-start;
@@ -128,7 +152,7 @@ button:focus-visible, a:focus-visible {
   font: 700 24px/1.25 var(--serif);
 }
 .refresh-button {
-  min-height: 42px;
+  min-height: 44px;
   display: inline-flex;
   align-items: center;
   gap: 7px;
@@ -150,6 +174,33 @@ button:focus-visible, a:focus-visible {
   color: var(--text-faint);
   font-size: 12px;
 }
+.leaderboard-period {
+  min-height: 18px;
+  margin: 12px 0 0;
+  color: var(--gold);
+  font-size: 12px;
+  font-weight: 700;
+}
+.leaderboard-period:empty { display: none; }
+.weekly-standing {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-top: 18px;
+  padding: 14px 16px;
+  border: 1px solid oklch(80% .14 85 / .35);
+  border-radius: 15px;
+  background: linear-gradient(105deg, oklch(80% .14 85 / .16), oklch(100% 0 0 / .035));
+}
+.weekly-standing h3 {
+  margin: 3px 0 0;
+  color: var(--text-high);
+  font: 700 18px/1.25 var(--serif);
+}
+.weekly-standing-values { display: grid; justify-items: end; text-align: right; }
+.weekly-standing-values strong { color: var(--gold); font: 700 26px/1 var(--serif); }
+.weekly-standing-values span { max-width: 30ch; margin-top: 4px; color: var(--text-muted); font-size: 12px; }
 .leaderboard-status {
   min-height: 20px;
   margin: 20px 0 12px;
@@ -235,7 +286,13 @@ button:focus-visible, a:focus-visible {
   .leaderboard-hero > p:last-child { font-size: 14px; }
   .leaderboard-card { border-radius: 18px; }
   .section-heading h2 { font-size: 21px; }
-  .refresh-button { width: 42px; padding: 0; justify-content: center; }
+  .leaderboard-tabs { margin-bottom: 16px; }
+  .leaderboard-tab { padding: 0 10px; }
+  .weekly-standing { align-items: flex-start; padding: 13px; }
+  .weekly-standing h3 { font-size: 16px; }
+  .weekly-standing-values strong { font-size: 22px; }
+  .weekly-standing-values span { max-width: 15ch; }
+  .refresh-button { width: 44px; padding: 0; justify-content: center; }
   .refresh-button > span:last-child { display: none; }
   .leaderboard-podium { gap: 7px; }
   .leaderboard-podium-card { min-height: 132px; padding: 12px 5px; }

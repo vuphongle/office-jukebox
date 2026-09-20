@@ -475,6 +475,32 @@ test("public leaderboard is available without authentication and stays bounded",
   }
 });
 
+test("weekly music leaderboard is public while personal weekly standing requires authentication", async () => {
+  const dataDir = mkdtempSync(path.join(os.tmpdir(), "office-jukebox-weekly-leaderboard-"));
+  const { child, baseUrl } = await startServer(dataDir);
+  try {
+    const publicResponse = await fetch(`${baseUrl}/api/rank/weekly-leaderboard`);
+    assert.equal(publicResponse.status, 200);
+    const publicPayload = await publicResponse.json();
+    assert.equal(publicPayload.ok, true);
+    assert.equal(publicPayload.period.timezone, "Asia/Ho_Chi_Minh");
+    assert.match(publicPayload.period.startDate, /^\d{4}-\d{2}-\d{2}$/);
+    assert.deepEqual(publicPayload.leaderboard, []);
+
+    const cookie = await register(baseUrl, "weeklymember");
+    const personalResponse = await fetch(`${baseUrl}/api/me/rank/weekly`, {
+      headers: { Cookie: cookie },
+    });
+    assert.equal(personalResponse.status, 200);
+    const personalPayload = await personalResponse.json();
+    assert.equal(personalPayload.weeklyRank.position, null);
+    assert.equal(personalPayload.weeklyRank.weeklyMusicXp, 0);
+  } finally {
+    await stopServer(child);
+    rmSync(dataDir, { recursive: true, force: true });
+  }
+});
+
 test("public leaderboard page is available without authentication", async () => {
   const dataDir = mkdtempSync(path.join(os.tmpdir(), "office-jukebox-leaderboard-page-"));
   const { child, baseUrl } = await startServer(dataDir);
@@ -486,6 +512,8 @@ test("public leaderboard page is available without authentication", async () => 
     assert.match(html, /leaderboard\.css\?v=/);
     assert.match(html, /leaderboard\.js\?v=/);
     assert.match(html, /id="leaderboard-podium"/);
+    assert.match(html, /data-leaderboard-mode="weekly"/);
+    assert.match(html, /id="weekly-standing"/);
   } finally {
     await stopServer(child);
     rmSync(dataDir, { recursive: true, force: true });

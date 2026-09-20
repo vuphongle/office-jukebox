@@ -30,20 +30,35 @@
     <section class="leaderboard-hero" aria-labelledby="leaderboard-title">
       <p class="eyebrow">Vinh danh thành viên</p>
       <h1 id="leaderboard-title">Bảng xếp hạng</h1>
-      <p>Top 10 thành viên có XP nổi bật nhất từ những đóng góp tích cực cho sự kiện.</p>
+      <p id="leaderboard-description">Cơ hội mới mỗi tuần: đóng góp qua bài hát và vote để cùng tạo không khí.</p>
     </section>
 
-    <section class="leaderboard-card" aria-labelledby="leaderboard-card-title">
+    <section id="leaderboard-card" class="leaderboard-card" aria-labelledby="leaderboard-card-title" aria-busy="false">
+      <div class="leaderboard-tabs" role="group" aria-label="Chọn bảng xếp hạng">
+        <button class="leaderboard-tab active" type="button" aria-pressed="true" data-leaderboard-mode="weekly">DJ tuần này</button>
+        <button class="leaderboard-tab" type="button" aria-pressed="false" data-leaderboard-mode="lifetime">Hành trình</button>
+      </div>
       <div class="section-heading">
         <div>
-          <p class="eyebrow">XP tích lũy</p>
-          <h2 id="leaderboard-card-title">Top 10 nổi bật</h2>
+          <p id="leaderboard-kicker" class="eyebrow">Music XP tuần</p>
+          <h2 id="leaderboard-card-title">Top 10 DJ tuần này</h2>
         </div>
         <button id="leaderboard-refresh" class="refresh-button" type="button">
           <span aria-hidden="true">↻</span><span>Làm mới</span>
         </button>
       </div>
-      <p class="privacy-note">Chỉ hiển thị tên hiển thị, hạng và XP. Bảng xếp hạng được cập nhật khi bạn làm mới.</p>
+      <p id="leaderboard-period" class="leaderboard-period" aria-live="polite"></p>
+      <p id="leaderboard-note" class="privacy-note">Music XP tính từ bài hát được phát hợp lệ và lượt vote cho bài đó. Chat XP vẫn thuộc hạng Lifetime.</p>
+      <section id="weekly-standing" class="weekly-standing hidden" aria-labelledby="weekly-standing-title">
+        <div>
+          <p class="eyebrow">Vị trí của bạn</p>
+          <h3 id="weekly-standing-title">Bắt nhịp cùng tuần này</h3>
+        </div>
+        <div class="weekly-standing-values">
+          <strong id="weekly-standing-position">—</strong>
+          <span id="weekly-standing-copy">Đăng nhập để xem vị trí của bạn</span>
+        </div>
+      </section>
       <div id="leaderboard-status" class="leaderboard-status" role="status" aria-live="polite" aria-atomic="true">Đang tải bảng xếp hạng…</div>
       <div id="leaderboard-podium" class="leaderboard-podium" aria-label="Ba vị trí dẫn đầu"></div>
       <div id="leaderboard-list" class="leaderboard-list" aria-label="Các vị trí từ 4 đến 10"></div>
