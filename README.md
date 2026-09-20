@@ -195,10 +195,12 @@ existing deployments should add the setting explicitly so IP-based limits and
 the host-network order lock use the original client address instead of the proxy.
 
 To limit song requests to the office network, open the Host page on the laptop
-that is playing music and choose **Cập nhật mạng host**. Then, in Admin, enable
-**Khóa order theo mạng Internet**. The app stores the Host page's public IP and
-allows requests only from that same IP. Set `HOST_PASSWORD` (or use an admin
-session on the Host page) before registering the host network.
+that is playing music and start playback. The app automatically registers the
+Host page's public IP when playback starts, reconnects, and every 15 minutes;
+**Cập nhật ngay** is available as a manual fallback. Then, in Admin > **Vận hành**, enable **Khóa
+order theo mạng Internet**. The app allows requests only from that same IP. Set
+`HOST_PASSWORD` (or use an admin session on the Host page) before registering
+the host network.
 
 The reverseproxy network must already exist. If it does not:
 docker network create reverseproxy.

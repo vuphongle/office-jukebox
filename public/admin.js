@@ -1,4 +1,4 @@
-// Admin Dashboard Logic: Member management, Airdrops, Audit Ledger, Feedback & Chat
+// Admin Dashboard Logic: members, rewards, operations, and guest communication
 
 let ws = null;
 let wsReconnectTimer = null;
@@ -40,11 +40,11 @@ function startDashboard() {
   initNotificationsTab();
   initFeedbackTab();
   initWebSocket();
-  const requestedTab = location.hash === "#feedback"
-    ? "tab-feedback"
-    : location.hash === "#notifications"
-      ? "tab-notifications"
-      : "tab-users";
+  const requestedTab = {
+    "#feedback": "tab-feedback",
+    "#operations": "tab-operations",
+    "#notifications": "tab-notifications",
+  }[location.hash] || "tab-users";
   selectTab(requestedTab);
 }
 
@@ -132,16 +132,18 @@ function selectTab(tabId) {
   });
   document.querySelectorAll(".tab-pane").forEach((pane) => pane.classList.toggle("active", pane.id === tabId));
   currentTab = tabId;
-  history.replaceState(null, "", tabId === "tab-feedback" ? "#feedback" : "#" + tabId.replace("tab-", ""));
+  history.replaceState(null, "", "#" + tabId.replace("tab-", ""));
   if (!dashboardStarted) return;
   if (currentTab === "tab-users") loadUsers();
   else if (currentTab === "tab-drops") loadDrops();
   else if (currentTab === "tab-ledger") loadLedger();
   else if (currentTab === "tab-notifications") loadNotifications();
-  else if (currentTab === "tab-feedback") {
-    loadFeedback();
+  else if (currentTab === "tab-operations") {
     loadSearchSettings();
     loadOrderNetworkLock();
+  }
+  else if (currentTab === "tab-feedback") {
+    loadFeedback();
     loadChatAiSettings();
   }
 }
@@ -714,7 +716,7 @@ async function handleNotificationSubmit(event) {
   }
 }
 
-// --- TAB 5: FEEDBACK & CHAT -----------------------------------------------
+// --- TAB 5: OPERATIONS / TAB 6: FEEDBACK & CHAT ---------------------------
 
 function initFeedbackTab() {
   document.getElementById("feedback-toggle")?.addEventListener("click", toggleFeedbackSetting);

@@ -49,7 +49,7 @@
         <div>
           <p class="eyebrow">Hệ thống Jukebox Sự kiện</p>
           <h1>Bảng điều khiển Quản trị</h1>
-          <p class="intro">Quản lý thành viên, phát điểm airdrop, kiểm toán ledger và điều hành góp ý & chat.</p>
+          <p class="intro">Quản lý thành viên, điểm thưởng, vận hành Jukebox và trao đổi với khách.</p>
         </div>
       </div>
     </header>
@@ -67,6 +67,9 @@
       </button>
       <button id="tab-btn-notifications" class="tab-btn" role="tab" aria-selected="false" aria-controls="tab-notifications" data-tab="tab-notifications">
         Thông báo
+      </button>
+      <button id="tab-btn-operations" class="tab-btn" role="tab" aria-selected="false" aria-controls="tab-operations" data-tab="tab-operations">
+        Vận hành
       </button>
       <button id="tab-btn-feedback" class="tab-btn" role="tab" aria-selected="false" aria-controls="tab-feedback" data-tab="tab-feedback">
         Góp ý & Chat
@@ -291,7 +294,52 @@
       </div>
     </section>
 
-    <!-- TAB 5: FEEDBACK & CHAT -->
+    <!-- TAB 5: OPERATIONS -->
+    <section id="tab-operations" class="tab-pane" role="tabpanel" aria-labelledby="tab-btn-operations">
+      <div class="grid-2col">
+        <div class="panel-card search-settings-card">
+          <div class="panel-header">
+            <div>
+              <p class="eyebrow">Nguồn kết quả</p>
+              <h2>Chế độ tìm kiếm bài hát</h2>
+              <p class="card-desc">YouTube Web ưu tiên thứ tự gần trang youtube.com; chế độ cũ giữ kết quả YouTube Music hiện tại.</p>
+            </div>
+            <span id="search-mode-status" class="badge">Đang tải…</span>
+          </div>
+          <form id="search-mode-form" class="admin-form search-mode-form">
+            <div class="form-group">
+              <label for="search-mode">Cách tìm kiếm</label>
+              <select id="search-mode">
+                <option value="youtube-web">Mới · YouTube Web</option>
+                <option value="youtube-music">Cũ · YouTube Music</option>
+              </select>
+            </div>
+            <button type="submit" class="submit-btn gold">Lưu chế độ</button>
+          </form>
+        </div>
+
+        <div class="panel-card search-settings-card">
+          <div class="panel-header">
+            <div>
+              <p class="eyebrow">Chống spam ngoài văn phòng</p>
+              <h2>Khóa order theo mạng Internet</h2>
+              <p class="card-desc">Khi bật, chỉ người dùng có cùng IP Internet công cộng với máy đang phát mới có thể order. Host tự cập nhật IP khi bắt đầu phát, kết nối lại và mỗi 15 phút.</p>
+            </div>
+            <span id="order-network-lock-status" class="badge">Đang tải…</span>
+          </div>
+          <form id="order-network-lock-form" class="admin-form search-mode-form">
+            <label class="check-row" for="order-network-lock-enabled">
+              <input id="order-network-lock-enabled" type="checkbox" />
+              <span>Chỉ cho phép order từ mạng host</span>
+            </label>
+            <p id="order-network-lock-detail" class="card-desc">Đang kiểm tra mạng host…</p>
+            <button type="submit" class="submit-btn gold">Lưu trạng thái khóa</button>
+          </form>
+        </div>
+      </div>
+    </section>
+
+    <!-- TAB 6: FEEDBACK & CHAT -->
     <section id="tab-feedback" class="tab-pane" role="tabpanel" aria-labelledby="tab-btn-feedback">
       <div class="feedback-controls-bar">
         <div class="stats-grid">
@@ -309,7 +357,6 @@
       </div>
 
       <div class="grid-2col mt-24">
-        <!-- Live Admin Chat Card -->
         <div class="panel-card">
           <div class="chat-header">
             <h2>Chat với Khách</h2>
@@ -326,7 +373,6 @@
           </form>
         </div>
 
-        <!-- Feedback Cards List -->
         <div class="panel-card">
           <div class="panel-header">
             <h2>Ý kiến & Đóng góp từ Khách</h2>
@@ -334,46 +380,6 @@
           </div>
           <div id="feedback-list" class="feedback-items-scroll"></div>
         </div>
-      </div>
-
-      <div class="panel-card search-settings-card mt-24">
-        <div class="panel-header">
-          <div>
-            <p class="eyebrow">Nguồn kết quả</p>
-            <h2>Chế độ tìm kiếm bài hát</h2>
-            <p class="card-desc">YouTube Web ưu tiên thứ tự gần trang youtube.com; chế độ cũ giữ kết quả YouTube Music hiện tại.</p>
-          </div>
-          <span id="search-mode-status" class="badge">Đang tải…</span>
-        </div>
-        <form id="search-mode-form" class="admin-form search-mode-form">
-          <div class="form-group">
-            <label for="search-mode">Cách tìm kiếm</label>
-            <select id="search-mode">
-              <option value="youtube-web">Mới · YouTube Web</option>
-              <option value="youtube-music">Cũ · YouTube Music</option>
-            </select>
-          </div>
-          <button type="submit" class="submit-btn gold">Lưu chế độ</button>
-        </form>
-      </div>
-
-      <div class="panel-card search-settings-card mt-24">
-        <div class="panel-header">
-          <div>
-            <p class="eyebrow">Chống spam ngoài văn phòng</p>
-            <h2>Khóa order theo mạng Internet</h2>
-            <p class="card-desc">Khi bật, chỉ người dùng có cùng IP Internet công cộng với máy đang phát nhạc mới có thể order. IP được máy host cập nhật riêng.</p>
-          </div>
-          <span id="order-network-lock-status" class="badge">Đang tải…</span>
-        </div>
-        <form id="order-network-lock-form" class="admin-form search-mode-form">
-          <label class="check-row" for="order-network-lock-enabled">
-            <input id="order-network-lock-enabled" type="checkbox" />
-            <span>Chỉ cho phép order từ mạng host</span>
-          </label>
-          <p id="order-network-lock-detail" class="card-desc">Đang kiểm tra mạng host…</p>
-          <button type="submit" class="submit-btn gold">Lưu trạng thái khóa</button>
-        </form>
       </div>
 
       <div class="panel-card ai-settings-card mt-24">

@@ -26,10 +26,11 @@ class FakeElement {
   querySelectorAll() { return []; }
 }
 
-function createHostContext() {
+function createHostContext({ hostToken = null } = {}) {
   const elements = new Map();
   const sent = [];
   const sockets = [];
+  let intervalCallback = null;
   const getElementById = (id) => {
     if (!elements.has(id)) elements.set(id, new FakeElement());
     return elements.get(id);
@@ -79,15 +80,24 @@ function createHostContext() {
       },
     },
     location: { protocol: "http:", host: "localhost" },
-    fetch: async () => ({ json: async () => ({ guestUrl: "http://localhost/guest", qr: "qr" }) }),
+    fetch: async (url) => ({
+      json: async () => url === "/api/host-token"
+        ? { token: hostToken }
+        : { guestUrl: "http://localhost/guest", qr: "qr" },
+    }),
     crypto: { randomUUID: () => "test-id" },
     console,
     clearTimeout,
     setTimeout,
+    clearInterval() {},
+    setInterval: (callback) => {
+      intervalCallback = callback;
+      return 1;
+    },
     requestAnimationFrame: (callback) => callback(),
   });
   context.globalThis = context;
-  return { context, elements, player, sent, sockets, getElementById, getPlayerEvents: () => playerEvents };
+  return { context, elements, player, sent, sockets, getElementById, getIntervalCallback: () => intervalCallback, getPlayerEvents: () => playerEvents };
 }
 
 test("host offers a user-gesture recovery when YouTube blocks the first autoplay", () => {
@@ -179,6 +189,23 @@ test("host shows the network registration authentication error", () => {
   const status = elements.get("order-network-host-status");
   assert.equal(status.textContent, "Hãy xác thực trang Host trước khi cập nhật mạng.");
   assert.equal(status.classList.contains("hidden"), false);
+});
+
+test("host automatically registers its network only after playback starts and refreshes it", async () => {
+  const { context, elements, sent, getIntervalCallback } = createHostContext({ hostToken: "host-token" });
+  const source = readFileSync(new URL("../public/host.js", import.meta.url), "utf8");
+  vm.runInContext(source, context);
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  assert.deepEqual(sent, [{ type: "auth", token: "host-token" }]);
+  assert.equal(getIntervalCallback(), null);
+
+  elements.get("start-btn").onclick();
+  assert.deepEqual(sent.at(-1), { type: "registerOrderNetworkHost" });
+  assert.equal(typeof getIntervalCallback(), "function");
+
+  getIntervalCallback()();
+  assert.deepEqual(sent.at(-1), { type: "registerOrderNetworkHost" });
 });
 
 test("host ignores generic WebSocket errors for the network registration status", () => {
