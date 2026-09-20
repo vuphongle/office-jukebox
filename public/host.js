@@ -51,8 +51,8 @@ function setOrderNetworkHostStatus(message) {
 }
 
 function registerOrderNetworkHost({ manual = false } = {}) {
-  // Do not let an unauthenticated page overwrite the network chosen by Host.
-  if (hostToken === null && !manual) return false;
+  // Only the projector that has started playback can refresh automatically.
+  if (!manual && (hostToken === null || !started)) return false;
   if (!send({ type: "registerOrderNetworkHost" })) {
     if (manual) setOrderNetworkHostStatus("Mất kết nối Host. Vui lòng thử lại.");
     return false;
@@ -63,7 +63,7 @@ function registerOrderNetworkHost({ manual = false } = {}) {
 }
 
 function startOrderNetworkHostRefresh() {
-  if (orderNetworkHostRefreshTimer) return;
+  if (hostToken === null || !started || orderNetworkHostRefreshTimer) return;
   orderNetworkHostRefreshTimer = setInterval(() => registerOrderNetworkHost(), ORDER_NETWORK_HOST_REFRESH_MS);
 }
 
@@ -662,6 +662,8 @@ document.getElementById("start-btn").onclick = () => {
   started = true;
   document.getElementById("start-overlay").classList.add("hidden");
   document.getElementById("stage").classList.remove("hidden");
+  registerOrderNetworkHost();
+  startOrderNetworkHostRefresh();
   syncPlayer();
 };
 

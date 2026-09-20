@@ -191,16 +191,17 @@ test("host shows the network registration authentication error", () => {
   assert.equal(status.classList.contains("hidden"), false);
 });
 
-test("host automatically registers its network after authentication and refreshes it", async () => {
-  const { context, sent, getIntervalCallback } = createHostContext({ hostToken: "host-token" });
+test("host automatically registers its network only after playback starts and refreshes it", async () => {
+  const { context, elements, sent, getIntervalCallback } = createHostContext({ hostToken: "host-token" });
   const source = readFileSync(new URL("../public/host.js", import.meta.url), "utf8");
   vm.runInContext(source, context);
   await new Promise((resolve) => setTimeout(resolve, 0));
 
-  assert.deepEqual(sent, [
-    { type: "auth", token: "host-token" },
-    { type: "registerOrderNetworkHost" },
-  ]);
+  assert.deepEqual(sent, [{ type: "auth", token: "host-token" }]);
+  assert.equal(getIntervalCallback(), null);
+
+  elements.get("start-btn").onclick();
+  assert.deepEqual(sent.at(-1), { type: "registerOrderNetworkHost" });
   assert.equal(typeof getIntervalCallback(), "function");
 
   getIntervalCallback()();
