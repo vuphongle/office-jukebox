@@ -18,10 +18,13 @@ let queueLimitOn = false;
 let queueLimit = 10;
 let requireName = false;
 let voteSortOn = true;
-let hostToken = null; // WebSocket control token (only issued to authenticated hosts)
+let hostToken = null; // null until Host authentication has been verified
 let ws = null;
 let draggedQueueId = null;
 let orderNetworkHostStatusTimer = null;
+let orderNetworkHostRefreshTimer = null;
+let orderNetworkHostUpdateIsManual = false;
+const ORDER_NETWORK_HOST_REFRESH_MS = 15 * 60 * 1000;
 const NO_THUMB = 'data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22/%3E';
 
 function safeImageUrl(value) {
@@ -45,6 +48,23 @@ function setOrderNetworkHostStatus(message) {
   status.classList.remove("hidden");
   clearTimeout(orderNetworkHostStatusTimer);
   orderNetworkHostStatusTimer = setTimeout(() => status.classList.add("hidden"), 5000);
+}
+
+function registerOrderNetworkHost({ manual = false } = {}) {
+  // Do not let an unauthenticated page overwrite the network chosen by Host.
+  if (hostToken === null && !manual) return false;
+  if (!send({ type: "registerOrderNetworkHost" })) {
+    if (manual) setOrderNetworkHostStatus("Mất kết nối Host. Vui lòng thử lại.");
+    return false;
+  }
+  orderNetworkHostUpdateIsManual = manual;
+  if (manual) setOrderNetworkHostStatus("Đang cập nhật mạng host…");
+  return true;
+}
+
+function startOrderNetworkHostRefresh() {
+  if (orderNetworkHostRefreshTimer) return;
+  orderNetworkHostRefreshTimer = setInterval(() => registerOrderNetworkHost(), ORDER_NETWORK_HOST_REFRESH_MS);
 }
 
 // If a song ends while the WebSocket is disconnected, the "ended" message may
@@ -76,6 +96,7 @@ function connectWs() {
     // reconnect; the server-side playback token makes duplicate reports safe.
     terminalReportedForToken = null;
     sendAuth(); // re-authenticate after every connection/reconnection
+    registerOrderNetworkHost();
     reportIfEnded();
     if (currentVideoId && currentPlaybackToken) {
       armPlaybackWatchdog(currentVideoId, currentPlaybackToken);
@@ -91,13 +112,17 @@ function connectWs() {
     if (!msg || typeof msg !== "object" || Array.isArray(msg)) return;
     if (msg.type === "orderNetworkHostUpdated") {
       const button = document.getElementById("order-network-host");
-      button.textContent = "Mạng host đã cập nhật";
-      button.classList.add("on");
-      setOrderNetworkHostStatus("Đã lưu mạng Internet của máy đang phát.");
-      setTimeout(() => {
-        button.textContent = "Cập nhật mạng host";
-        button.classList.remove("on");
-      }, 2500);
+      if (orderNetworkHostUpdateIsManual) {
+        button.textContent = "Mạng host đã cập nhật";
+        button.classList.add("on");
+        setTimeout(() => {
+          button.textContent = "Cập nhật ngay";
+          button.classList.remove("on");
+        }, 2500);
+      } else {
+        setOrderNetworkHostStatus("Mạng Internet của Host đã được tự động cập nhật.");
+      }
+      orderNetworkHostUpdateIsManual = false;
       return;
     }
     if (msg.type === "orderNetworkHostError") {
@@ -576,11 +601,7 @@ function wireControls() {
     send({ type: "setRequireName", on: !requireName });
   };
   document.getElementById("order-network-host").onclick = () => {
-    if (!send({ type: "registerOrderNetworkHost" })) {
-      setOrderNetworkHostStatus("Mất kết nối Host. Vui lòng thử lại.");
-      return;
-    }
-    setOrderNetworkHostStatus("Đang cập nhật mạng host…");
+    registerOrderNetworkHost({ manual: true });
   };
   document.getElementById("vote-sort-toggle").onclick = () => {
     send({ type: "setVoteSort", on: !voteSortOn });
@@ -627,8 +648,11 @@ async function loadInfo() {
   }
   try {
     // The browser reuses this page's Basic Auth credentials for the request.
-    hostToken = (await (await fetch("/api/host-token")).json()).token || null;
+    const hostAuth = await (await fetch("/api/host-token")).json();
+    hostToken = typeof hostAuth.token === "string" ? hostAuth.token : null;
     sendAuth(); // the WebSocket may have connected before the token arrived
+    registerOrderNetworkHost();
+    startOrderNetworkHostRefresh();
   } catch {
     /* no password or offline — controls remain available or inactive */
   }

@@ -106,3 +106,17 @@ test("admin password result can be copied to the clipboard", async () => {
   assert.equal(copiedText, "Abcdefgh2345");
   assert.equal(copyButton.textContent, "Đã sao chép");
 });
+
+test("admin groups search source and order network lock under operations", () => {
+  const html = readFileSync(path.join(ROOT, "public/admin.html"), "utf8");
+  const source = readFileSync(path.join(ROOT, "public/admin.js"), "utf8");
+  const operationsStart = html.indexOf('id="tab-operations"');
+  const feedbackStart = html.indexOf('id="tab-feedback"');
+
+  assert.ok(operationsStart >= 0);
+  assert.ok(html.indexOf('id="search-mode-form"') > operationsStart);
+  assert.ok(html.indexOf('id="order-network-lock-form"') > operationsStart);
+  assert.ok(html.indexOf('id="search-mode-form"') < feedbackStart);
+  assert.ok(html.indexOf('id="order-network-lock-form"') < feedbackStart);
+  assert.match(source, /currentTab === "tab-operations"/);
+});

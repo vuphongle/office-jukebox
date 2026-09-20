@@ -2341,17 +2341,20 @@ wss.on("connection", (ws, request) => {
             break;
           }
           {
-            const previous = settingsSnapshot();
-            orderNetworkLockIp = ws.__jukeboxClientIp;
-            try {
-              saveSettings();
-            } catch (err) {
-              restoreSettings(previous);
-              console.error(`[settings] unable to save: ${err.message}`);
-              if (ws.readyState === 1) {
-                ws.send(JSON.stringify({ type: "orderNetworkHostError", reason: "Không thể lưu cài đặt lúc này. Vui lòng thử lại." }));
+            const nextHostIp = ws.__jukeboxClientIp;
+            if (nextHostIp !== orderNetworkLockIp) {
+              const previous = settingsSnapshot();
+              orderNetworkLockIp = nextHostIp;
+              try {
+                saveSettings();
+              } catch (err) {
+                restoreSettings(previous);
+                console.error(`[settings] unable to save: ${err.message}`);
+                if (ws.readyState === 1) {
+                  ws.send(JSON.stringify({ type: "orderNetworkHostError", reason: "Không thể lưu cài đặt lúc này. Vui lòng thử lại." }));
+                }
+                break;
               }
-              break;
             }
           }
           ws.send(JSON.stringify({ type: "orderNetworkHostUpdated" }));
