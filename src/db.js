@@ -180,6 +180,8 @@ export function initDb({ dbPath = DEFAULT_DB_PATH, adminUser = process.env.ADMIN
       ON rank_activity_ledger(user_id, event_id, created_at DESC);
     CREATE INDEX IF NOT EXISTS idx_rank_activity_event_created
       ON rank_activity_ledger(event_id, created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_rank_activity_weekly_music
+      ON rank_activity_ledger(created_at, activity_type, user_id);
 
     CREATE TABLE IF NOT EXISTS rank_chat_windows (
       id TEXT PRIMARY KEY,
