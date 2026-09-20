@@ -512,6 +512,8 @@ test("public leaderboard page is available without authentication", async () => 
     assert.match(html, /leaderboard\.css\?v=/);
     assert.match(html, /leaderboard\.js\?v=/);
     assert.match(html, /id="leaderboard-podium"/);
+    assert.match(html, /data-leaderboard-mode="weekly"/);
+    assert.match(html, /id="weekly-standing"/);
   } finally {
     await stopServer(child);
     rmSync(dataDir, { recursive: true, force: true });
