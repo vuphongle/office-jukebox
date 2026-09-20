@@ -127,7 +127,7 @@ button:focus-visible, a:focus-visible {
   background: oklch(100% 0 0 / .045);
 }
 .leaderboard-tab {
-  min-height: 36px;
+  min-height: 44px;
   padding: 0 12px;
   border: 0;
   border-radius: 9px;
@@ -152,7 +152,7 @@ button:focus-visible, a:focus-visible {
   font: 700 24px/1.25 var(--serif);
 }
 .refresh-button {
-  min-height: 42px;
+  min-height: 44px;
   display: inline-flex;
   align-items: center;
   gap: 7px;
@@ -200,7 +200,7 @@ button:focus-visible, a:focus-visible {
 }
 .weekly-standing-values { display: grid; justify-items: end; text-align: right; }
 .weekly-standing-values strong { color: var(--gold); font: 700 26px/1 var(--serif); }
-.weekly-standing-values span { max-width: 30ch; margin-top: 4px; color: var(--text-muted); font-size: 11px; }
+.weekly-standing-values span { max-width: 30ch; margin-top: 4px; color: var(--text-muted); font-size: 12px; }
 .leaderboard-status {
   min-height: 20px;
   margin: 20px 0 12px;
@@ -292,7 +292,7 @@ button:focus-visible, a:focus-visible {
   .weekly-standing h3 { font-size: 16px; }
   .weekly-standing-values strong { font-size: 22px; }
   .weekly-standing-values span { max-width: 15ch; }
-  .refresh-button { width: 42px; padding: 0; justify-content: center; }
+  .refresh-button { width: 44px; padding: 0; justify-content: center; }
   .refresh-button > span:last-child { display: none; }
   .leaderboard-podium { gap: 7px; }
   .leaderboard-podium-card { min-height: 132px; padding: 12px 5px; }

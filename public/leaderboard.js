@@ -40,10 +40,12 @@ const kicker = document.getElementById("leaderboard-kicker");
 const title = document.getElementById("leaderboard-card-title");
 const note = document.getElementById("leaderboard-note");
 const periodLabel = document.getElementById("leaderboard-period");
+const leaderboardCard = document.getElementById("leaderboard-card");
 const weeklyStanding = document.getElementById("weekly-standing");
 const weeklyStandingPosition = document.getElementById("weekly-standing-position");
 const weeklyStandingCopy = document.getElementById("weekly-standing-copy");
-let selectedMode = "weekly";
+const initialMode = new URLSearchParams(window.location.search).get("view");
+let selectedMode = Object.hasOwn(leaderboardModes, initialMode) ? initialMode : "weekly";
 let leaderboardRequest = null;
 
 function escapeHtml(value) {
@@ -83,6 +85,13 @@ function updateModeCopy(mode, period = null) {
     tab.classList.toggle("active", active);
     tab.setAttribute("aria-pressed", String(active));
   });
+}
+
+function writeModeToUrl(mode) {
+  const url = new URL(window.location.href);
+  if (mode === "weekly") url.searchParams.delete("view");
+  else url.searchParams.set("view", mode);
+  window.history.replaceState(null, "", url);
 }
 
 function renderLeaderboard(items, mode) {
@@ -153,6 +162,7 @@ async function loadLeaderboard() {
 
   refresh.disabled = true;
   tabs.forEach((tab) => { tab.disabled = true; });
+  leaderboardCard.setAttribute("aria-busy", "true");
   status.classList.add("is-loading");
   status.textContent = "Đang tải bảng xếp hạng…";
   leaderboardRequest = fetch(config.endpoint)
@@ -180,6 +190,7 @@ async function loadLeaderboard() {
       leaderboardRequest = null;
       refresh.disabled = false;
       tabs.forEach((tab) => { tab.disabled = false; });
+      leaderboardCard.setAttribute("aria-busy", "false");
       status.classList.remove("is-loading");
     });
 
@@ -191,6 +202,7 @@ tabs.forEach((tab) => {
     const nextMode = tab.dataset.leaderboardMode;
     if (!leaderboardModes[nextMode] || nextMode === selectedMode || leaderboardRequest) return;
     selectedMode = nextMode;
+    writeModeToUrl(selectedMode);
     updateModeCopy(selectedMode);
     weeklyStanding.classList.add("hidden");
     clearLeaderboard();
