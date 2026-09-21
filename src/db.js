@@ -133,7 +133,8 @@ export function initDb({ dbPath = DEFAULT_DB_PATH, adminUser = process.env.ADMIN
       started_at INTEGER,
       finished_at INTEGER,
       finish_reason TEXT,
-      played_seconds INTEGER
+      played_seconds INTEGER,
+      provider TEXT NOT NULL DEFAULT 'youtube'
     );
     CREATE INDEX IF NOT EXISTS idx_queue_items_status ON queue_items(status, pinned, pinned_order, vote_score, queue_sequence);
     CREATE INDEX IF NOT EXISTS idx_queue_items_playback_history ON queue_items(event_id, status, finished_at DESC);
@@ -147,6 +148,7 @@ export function initDb({ dbPath = DEFAULT_DB_PATH, adminUser = process.env.ADMIN
       channel TEXT NOT NULL DEFAULT '',
       duration TEXT NOT NULL DEFAULT '',
       thumbnail TEXT,
+      provider TEXT NOT NULL DEFAULT 'youtube',
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL,
       PRIMARY KEY(user_id, video_id)
@@ -296,6 +298,14 @@ export function initDb({ dbPath = DEFAULT_DB_PATH, adminUser = process.env.ADMIN
   }
   if (!queueItemColumns.some((column) => column.name === "played_seconds")) {
     db.run("ALTER TABLE queue_items ADD COLUMN played_seconds INTEGER");
+  }
+  if (!queueItemColumns.some((column) => column.name === "provider")) {
+    db.run("ALTER TABLE queue_items ADD COLUMN provider TEXT NOT NULL DEFAULT 'youtube'");
+  }
+
+  const songFavoriteColumns = db.query("PRAGMA table_info(song_favorites)").all();
+  if (!songFavoriteColumns.some((column) => column.name === "provider")) {
+    db.run("ALTER TABLE song_favorites ADD COLUMN provider TEXT NOT NULL DEFAULT 'youtube'");
   }
 
   const notificationColumns = db.query("PRAGMA table_info(notifications)").all();

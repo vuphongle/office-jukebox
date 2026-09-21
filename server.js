@@ -10,7 +10,7 @@
 //   3. moderate()          — optional event-specific LLM decision (fail-open)
 //   4. state.add()         — add to the queue (SQLite SSOT); broadcast over WebSocket
 
-import { readFileSync, writeFileSync, mkdirSync, existsSync, renameSync, unlinkSync } from "node:fs";
+import { readFileSync, writeFileSync, mkdirSync, existsSync, renameSync, unlinkSync, statSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
@@ -30,6 +30,21 @@ import {
   sanitizeThumbnail,
   isValidYouTubeVideoId,
 } from "./src/youtube.js";
+import {
+  parseSpotifyTrackId,
+  isValidSpotifyTrackId,
+  fetchSpotifyTrackMetadata,
+  buildSpotifyAuthorizeUrl,
+  exchangeSpotifyCode,
+  refreshSpotifyToken,
+} from "./src/spotify.js";
+import {
+  parseSoundCloudUrl,
+  isValidSoundCloudUrl,
+  fetchSoundCloudMetadata,
+} from "./src/soundcloud.js";
+import { resolveMediaLink } from "./src/mediaLinkResolver.js";
+import { fetchLyrics } from "./src/lyricsService.js";
 import { avatarPublicUrl, validateAvatarUpload } from "./src/avatar.js";
 import { prepareRequestSong } from "./src/requestPipeline.js";
 import { moderate, moderationConfigured } from "./src/moderation.js";
@@ -104,6 +119,11 @@ const MAX_POINT_DROP_TITLE_LENGTH = 200;
 const LAN_IP = detectLanIp(process.env.HOST_IP);
 const PUBLIC_BASE = (process.env.PUBLIC_URL || "").replace(/\/+$/, "");
 const GUEST_URL = PUBLIC_BASE ? `${PUBLIC_BASE}/guest` : `http://${LAN_IP}:${PORT}/guest`;
+const SPOTIFY_CLIENT_ID = (process.env.SPOTIFY_CLIENT_ID || "").trim();
+const SPOTIFY_CLIENT_SECRET = (process.env.SPOTIFY_CLIENT_SECRET || "").trim();
+const SPOTIFY_REDIRECT_URI =
+  (process.env.SPOTIFY_REDIRECT_URI || "").trim() ||
+  (PUBLIC_BASE ? `${PUBLIC_BASE}/api/spotify/callback` : `http://${LAN_IP}:${PORT}/api/spotify/callback`);
 
 // --- Initialize SQLite database and repositories (SSOT) --------------------
 const db = initDb();
@@ -252,6 +272,34 @@ let searchMode = SEARCH_MODES.has(savedSettings.searchMode) ? savedSettings.sear
 let orderNetworkLockOn = savedSettings.orderNetworkLockOn ?? false;
 let orderNetworkLockIp = typeof savedSettings.orderNetworkLockIp === "string" ? savedSettings.orderNetworkLockIp : "";
 let chatAiSettings = normalizeChatAiSettings(savedSettings.chatAi || {});
+let spotifySettings = savedSettings.spotify && typeof savedSettings.spotify === "object"
+  ? savedSettings.spotify
+  : { refreshToken: "" };
+let activeSpotifyToken = "";
+let activeSpotifyTokenExpiresAt = 0;
+
+async function getValidSpotifyAccessToken() {
+  const now = Date.now();
+  if (activeSpotifyToken && now < activeSpotifyTokenExpiresAt - 60_000) {
+    return activeSpotifyToken;
+  }
+  if (spotifySettings?.refreshToken && SPOTIFY_CLIENT_ID && SPOTIFY_CLIENT_SECRET) {
+    try {
+      const refreshed = await refreshSpotifyToken(spotifySettings.refreshToken, {
+        clientId: SPOTIFY_CLIENT_ID,
+        clientSecret: SPOTIFY_CLIENT_SECRET,
+      });
+      if (refreshed?.access_token) {
+        activeSpotifyToken = refreshed.access_token;
+        activeSpotifyTokenExpiresAt = now + (Number(refreshed.expires_in) || 3600) * 1000;
+        return activeSpotifyToken;
+      }
+    } catch (err) {
+      console.warn("[spotify] token refresh failed:", err.message);
+    }
+  }
+  return "";
+}
 state.setVoteSort(voteSortOn);
 
 const chatMessages = chatRepo.listRecent("default_event", 40);
@@ -303,6 +351,7 @@ function saveSettings() {
     orderNetworkLockIp,
     chatAi: chatAiSettings,
     feedbackDigest,
+    spotify: spotifySettings,
   });
 }
 
@@ -330,6 +379,7 @@ function settingsSnapshot() {
     orderNetworkLockIp,
     chatAi: chatAiSettings,
     feedbackDigest,
+    spotifyConnected: !!spotifySettings?.refreshToken,
   };
 }
 
@@ -1016,24 +1066,126 @@ app.get("/api/search", publicReadLimit, async (req, res) => {
 
 app.post("/api/youtube/resolve", publicReadLimit, async (req, res) => {
   const rawUrl = typeof req.body?.url === "string" ? req.body.url.trim() : "";
-  if (!rawUrl) return res.status(400).json({ ok: false, reason: "Vui lòng dán link YouTube." });
+  if (!rawUrl) return res.status(400).json({ ok: false, reason: "Vui lòng dán link YouTube, Spotify hoặc SoundCloud." });
 
-  let parsedUrl;
+  let spotifyAccessToken = "";
   try {
-    parsedUrl = new URL(rawUrl);
-  } catch {
-    return res.status(400).json({ ok: false, reason: "Link YouTube không đúng định dạng." });
+    spotifyAccessToken = await getValidSpotifyAccessToken();
+  } catch {}
+
+  const result = await resolveMediaLink(rawUrl, {
+    fetchYouTube: fetchYouTubeMetadata,
+    spotifyConfig: {
+      clientId: SPOTIFY_CLIENT_ID,
+      clientSecret: SPOTIFY_CLIENT_SECRET,
+      accessToken: spotifyAccessToken,
+    },
+  });
+
+  if (!result.ok) {
+    return res.status(400).json(result);
   }
-  const host = parsedUrl.hostname.toLowerCase();
-  if (!["youtube.com", "www.youtube.com", "m.youtube.com", "music.youtube.com", "youtu.be"].includes(host)) {
-    return res.status(400).json({ ok: false, reason: "Hiện tại chỉ hỗ trợ link YouTube." });
+  res.json(result);
+});
+
+// Spotify OAuth and playback status endpoints
+app.get("/api/spotify/status", (req, res) => {
+  res.json({
+    connected: !!spotifySettings?.refreshToken,
+    configured: !!(SPOTIFY_CLIENT_ID && SPOTIFY_CLIENT_SECRET),
+  });
+});
+
+app.get("/api/spotify/login", (req, res) => {
+  if (!SPOTIFY_CLIENT_ID) {
+    return res.status(400).send("Spotify Client ID chưa được cấu hình trong .env.");
+  }
+  const stateVal = randomUUID();
+  const authUrl = buildSpotifyAuthorizeUrl({
+    clientId: SPOTIFY_CLIENT_ID,
+    redirectUri: SPOTIFY_REDIRECT_URI,
+    state: stateVal,
+  });
+  res.redirect(authUrl);
+});
+
+app.get("/api/spotify/callback", async (req, res) => {
+  const code = (req.query.code || "").toString();
+  const error = (req.query.error || "").toString();
+  if (error || !code) {
+    const errText = error || "Không nhận được mã ủy quyền từ Spotify.";
+    return res.send(`<!DOCTYPE html><html><body style="font-family:sans-serif;background:#181818;color:#fff;text-align:center;padding:40px;">
+      <h2 style="color:#ff5555">Kết nối Spotify thất bại</h2>
+      <p>${errText}</p>
+      <script>if(window.opener){window.opener.postMessage({type:"spotify_error",error:${JSON.stringify(errText)}}, "*"); setTimeout(()=>window.close(), 2500);}</script>
+    </body></html>`);
+  }
+  try {
+    const tokens = await exchangeSpotifyCode(code, {
+      clientId: SPOTIFY_CLIENT_ID,
+      clientSecret: SPOTIFY_CLIENT_SECRET,
+      redirectUri: SPOTIFY_REDIRECT_URI,
+    });
+    if (!tokens?.refresh_token) {
+      return res.status(400).send("Không nhận được refresh token từ Spotify.");
+    }
+    spotifySettings = {
+      refreshToken: tokens.refresh_token,
+      updatedAt: Date.now(),
+    };
+    activeSpotifyToken = tokens.access_token || "";
+    activeSpotifyTokenExpiresAt = Date.now() + (Number(tokens.expires_in) || 3600) * 1000;
+    saveSettings();
+    console.log("[spotify] Spotify account successfully connected for Host playback.");
+    return res.send(`<!DOCTYPE html><html><body style="font-family:sans-serif;background:#181818;color:#fff;text-align:center;padding:40px;">
+      <h2 style="color:#1db954">✓ Spotify đã kết nối thành công!</h2>
+      <p>Cửa sổ này sẽ tự động đóng sau giây lát...</p>
+      <script>
+        if (window.opener) {
+          window.opener.postMessage({ type: "spotify_connected" }, "*");
+          setTimeout(() => window.close(), 1200);
+        } else {
+          location.href = "/host";
+        }
+      </script>
+    </body></html>`);
+  } catch (err) {
+    console.error("[spotify] OAuth callback error:", err.message);
+    return res.status(500).send(`<!DOCTYPE html><html><body style="font-family:sans-serif;background:#181818;color:#fff;text-align:center;padding:40px;">
+      <h2 style="color:#ff5555">Lỗi kết nối Spotify</h2>
+      <p>${err.message}</p>
+      <script>if(window.opener){window.opener.postMessage({type:"spotify_error",error:${JSON.stringify(err.message)}}, "*");}</script>
+    </body></html>`);
+  }
+});
+
+app.get("/api/spotify/token", async (req, res) => {
+  const token = await getValidSpotifyAccessToken();
+  if (!token) {
+    return res.status(401).json({ ok: false, reason: "Chưa kết nối tài khoản Spotify Premium hoặc token hết hạn." });
+  }
+  res.json({ ok: true, access_token: token });
+});
+
+app.post("/api/spotify/disconnect", requireHostAuth, (req, res) => {
+  spotifySettings = { refreshToken: "" };
+  activeSpotifyToken = "";
+  activeSpotifyTokenExpiresAt = 0;
+  saveSettings();
+  res.json({ ok: true });
+});
+
+app.get("/api/lyrics", async (req, res) => {
+  const title = (req.query.title || "").toString().trim();
+  const artist = (req.query.artist || "").toString().trim();
+  const durationSec = parseFloat(req.query.duration);
+
+  if (!title) {
+    return res.status(400).json({ ok: false, error: "title_required" });
   }
 
-  const videoId = parseYouTubeVideoId(rawUrl);
-  if (!videoId) return res.status(400).json({ ok: false, reason: "Link YouTube không đúng định dạng." });
-  const song = await fetchYouTubeMetadata(videoId);
-  if (!song) return res.status(502).json({ ok: false, reason: "Không thể lấy thông tin video này. Vui lòng thử lại." });
-  res.json({ ok: true, song });
+  const result = await fetchLyrics(title, artist, Number.isFinite(durationSec) ? durationSec : null);
+  res.json(result);
 });
 
 app.get("/api/host-token", requireHostAuth, (req, res) => {
@@ -1050,9 +1202,22 @@ app.post("/api/request", songRequestIpLimit, async (req, res) => {
       reason: "Order chỉ khả dụng khi bạn dùng cùng mạng Internet với máy host.",
     });
   }
-  const { videoId, title, channel, duration, thumbnail, name, clientId } = req.body || {};
-  if (!isValidYouTubeVideoId(videoId)) {
-    return res.status(400).json({ ok: false, reason: "Mã video YouTube không hợp lệ." });
+  const { videoId, title, channel, duration, thumbnail, name, clientId, provider = "youtube" } = req.body || {};
+  const cleanProvider = (provider || "youtube").toString().toLowerCase();
+  if (cleanProvider === "youtube") {
+    if (!isValidYouTubeVideoId(videoId)) {
+      return res.status(400).json({ ok: false, reason: "Mã video YouTube không hợp lệ." });
+    }
+  } else if (cleanProvider === "spotify") {
+    if (!isValidSpotifyTrackId(videoId)) {
+      return res.status(400).json({ ok: false, reason: "Mã bài hát Spotify không hợp lệ." });
+    }
+  } else if (cleanProvider === "soundcloud") {
+    if (!isValidSoundCloudUrl(videoId)) {
+      return res.status(400).json({ ok: false, reason: "Link bài hát SoundCloud không hợp lệ." });
+    }
+  } else {
+    return res.status(400).json({ ok: false, reason: "Nền tảng bài hát không được hỗ trợ." });
   }
   if (title !== undefined && typeof title !== "string") {
     return res.status(400).json({ ok: false, reason: "Thông tin bài hát không hợp lệ." });
@@ -1104,21 +1269,52 @@ app.post("/api/request", songRequestIpLimit, async (req, res) => {
   pruneLastRequestAt();
 
   try {
-    const prepared = await prepareRequestSong({
-      videoId,
-      clientMetadata: { duration: normalizedDuration },
-      checkPlayable,
-      fetchMetadata: fetchYouTubeMetadata,
-      moderationOn: filterOn,
-      fetchDetails: fetchVideoDetails,
-      moderateSong: moderate,
-      moderationOptions: {
-        strict: moderationMode === "strict",
-        ...(eventContext ? { eventContext } : {}),
-      },
-    });
-    if (!prepared.ok) return res.status(prepared.unavailable ? 502 : 200).json({ ok: false, reason: prepared.reason });
-    const canonical = prepared.song;
+    let canonical = null;
+    if (cleanProvider === "youtube") {
+      const prepared = await prepareRequestSong({
+        videoId,
+        clientMetadata: { duration: normalizedDuration },
+        checkPlayable,
+        fetchMetadata: fetchYouTubeMetadata,
+        moderationOn: filterOn,
+        fetchDetails: fetchVideoDetails,
+        moderateSong: moderate,
+        moderationOptions: {
+          strict: moderationMode === "strict",
+          ...(eventContext ? { eventContext } : {}),
+        },
+      });
+      if (!prepared.ok) return res.status(prepared.unavailable ? 502 : 200).json({ ok: false, reason: prepared.reason });
+      canonical = prepared.song;
+    } else if (cleanProvider === "spotify") {
+      let accessToken = "";
+      try { accessToken = await getValidSpotifyAccessToken(); } catch {}
+      const meta = await fetchSpotifyTrackMetadata(videoId, {
+        clientId: SPOTIFY_CLIENT_ID,
+        clientSecret: SPOTIFY_CLIENT_SECRET,
+        accessToken,
+      });
+      if (!meta) return res.status(502).json({ ok: false, reason: "Không thể lấy thông tin bài hát từ Spotify. Vui lòng thử lại." });
+      if (filterOn) {
+        const verdict = await moderate({ title: meta.title, channel: meta.channel }, null, {
+          strict: moderationMode === "strict",
+          ...(eventContext ? { eventContext } : {}),
+        });
+        if (!verdict?.approved) return res.json({ ok: false, reason: verdict?.reason || "Bài hát không được chấp thuận." });
+      }
+      canonical = meta;
+    } else if (cleanProvider === "soundcloud") {
+      const meta = await fetchSoundCloudMetadata(videoId);
+      if (!meta) return res.status(502).json({ ok: false, reason: "Không thể lấy thông tin bài hát từ SoundCloud. Vui lòng thử lại." });
+      if (filterOn) {
+        const verdict = await moderate({ title: meta.title, channel: meta.channel }, null, {
+          strict: moderationMode === "strict",
+          ...(eventContext ? { eventContext } : {}),
+        });
+        if (!verdict?.approved) return res.json({ ok: false, reason: verdict?.reason || "Bài hát không được chấp thuận." });
+      }
+      canonical = meta;
+    }
 
     if (state.queue.length >= MAX_QUEUE_LENGTH || (queueLimitOn && state.queue.length >= queueLimit)) {
       return res.json({ ok: false, reason: "Hàng đợi đã đầy — vui lòng thử lại sau khi phát bớt bài." });
@@ -1136,6 +1332,7 @@ app.post("/api/request", songRequestIpLimit, async (req, res) => {
       addedBy: requesterName,
       requesterId,
       userId: req.user?.id || null,
+      provider: cleanProvider,
     });
     res.json({ ok: true, reason: "Đã thêm!", position, id: item.id });
   } catch (err) {
@@ -1645,44 +1842,51 @@ app.delete("/api/admin/chat-ai/memory", requireAdmin, (_req, res) => {
 // --- SERVE HTML PAGES ------------------------------------------------------
 
 const BOOT_ID = Date.now().toString(36);
+const PAGE_CACHE = new Map();
+
 function versionedPage(name) {
   const filePath = path.join(__dirname, "public", name);
   if (!existsSync(filePath)) return `<!DOCTYPE html><html><body><h1>${name} not found</h1></body></html>`;
+  let version = BOOT_ID;
+  try {
+    version = Math.floor(statSync(filePath).mtimeMs).toString(36);
+  } catch {}
   return readFileSync(filePath, "utf8").replace(
     /(href|src)="\/((?:guest|host|admin|account|leaderboard|rules|auth-utils|avatar|avatar-crop|history-controller|favorites-controller)\.(?:css|js))"/g,
-    `$1="/$2?v=${BOOT_ID}"`
+    `$1="/$2?v=${version}"`
   );
 }
 
-const HOST_PAGE = versionedPage("host.html");
-const GUEST_PAGE = versionedPage("guest.html");
-const ADMIN_PAGE = versionedPage("admin.html");
-const ACCOUNT_PAGE = versionedPage("account.html");
-const LEADERBOARD_PAGE = versionedPage("leaderboard.html");
-const RULES_PAGE = versionedPage("rules.html");
+function getPage(name) {
+  if (process.env.NODE_ENV === "production") {
+    if (!PAGE_CACHE.has(name)) PAGE_CACHE.set(name, versionedPage(name));
+    return PAGE_CACHE.get(name);
+  }
+  return versionedPage(name);
+}
 
 app.get("/", requireHostAuth, (_req, res) => {
-  res.set("Cache-Control", "no-cache").type("html").send(HOST_PAGE);
+  res.set("Cache-Control", "no-cache").type("html").send(getPage("host.html"));
 });
 
 app.get("/guest", (_req, res) => {
-  res.set("Cache-Control", "no-cache").type("html").send(GUEST_PAGE);
+  res.set("Cache-Control", "no-cache").type("html").send(getPage("guest.html"));
 });
 
 app.get("/admin", (_req, res) => {
-  res.set("Cache-Control", "no-cache").type("html").send(ADMIN_PAGE);
+  res.set("Cache-Control", "no-cache").type("html").send(getPage("admin.html"));
 });
 
 app.get("/account", (_req, res) => {
-  res.set("Cache-Control", "no-cache").type("html").send(ACCOUNT_PAGE);
+  res.set("Cache-Control", "no-cache").type("html").send(getPage("account.html"));
 });
 
 app.get("/leaderboard", (_req, res) => {
-  res.set("Cache-Control", "no-cache").type("html").send(LEADERBOARD_PAGE);
+  res.set("Cache-Control", "no-cache").type("html").send(getPage("leaderboard.html"));
 });
 
 app.get("/rules", (_req, res) => {
-  res.set("Cache-Control", "no-cache").type("html").send(RULES_PAGE);
+  res.set("Cache-Control", "no-cache").type("html").send(getPage("rules.html"));
 });
 
 app.get("/feedback", (_req, res) => {
@@ -2226,13 +2430,17 @@ wss.on("connection", (ws, request) => {
       switch (msg.type) {
         case "ended":
           if (typeof msg.playbackToken !== "string" || !msg.playbackToken) break;
-          if (msg.videoId !== undefined && msg.videoId !== null && !isValidYouTubeVideoId(msg.videoId)) break;
+          const activeItem = state.nowPlaying;
+          const expectedVideoId = activeItem?.videoId;
+          if (msg.videoId !== undefined && msg.videoId !== null && msg.videoId !== expectedVideoId && !isValidYouTubeVideoId(msg.videoId)) break;
           console.log(`[host] finished playing ${msg.videoId}`);
           settleRankTransition(state.advance(msg.videoId || null, { finishReason: "ended", playbackToken: msg.playbackToken, playedSeconds: msg.playedSeconds }));
           break;
         case "error":
           if (typeof msg.playbackToken !== "string" || !msg.playbackToken) break;
-          if (msg.videoId !== undefined && msg.videoId !== null && !isValidYouTubeVideoId(msg.videoId)) break;
+          const activeErrItem = state.nowPlaying;
+          const expectedErrVideoId = activeErrItem?.videoId;
+          if (msg.videoId !== undefined && msg.videoId !== null && msg.videoId !== expectedErrVideoId && !isValidYouTubeVideoId(msg.videoId)) break;
           console.warn(`[host] playback error ${msg.code} on ${msg.videoId} — skipping and refunding points`);
           settleRankTransition(state.advance(msg.videoId || null, { isError: true, finishReason: "error", playbackToken: msg.playbackToken }));
           break;

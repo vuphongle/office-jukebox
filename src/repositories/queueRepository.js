@@ -20,7 +20,7 @@ export class QueueRepository {
     return (row?.maxSeq || 0) + 1;
   }
 
-  createItem({ videoId, title, channel, duration, thumbnail, addedBy, requesterId, addedByUserId = null, eventId = "default_event" }) {
+  createItem({ videoId, title, channel, duration, thumbnail, addedBy, requesterId, addedByUserId = null, eventId = "default_event", provider = "youtube" }) {
     const tx = this.db.transaction(() => {
       const id = randomUUID();
       const now = Date.now();
@@ -30,9 +30,9 @@ export class QueueRepository {
         `INSERT INTO queue_items (
           id, event_id, video_id, title, channel, duration, thumbnail,
           added_by, requester_id, added_by_user_id, queue_sequence,
-          vote_score, pinned, pinned_order, status, added_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, 0, 'queued', ?)`,
-        [id, eventId, videoId, title, channel || "", duration || "3:30", thumbnail || null, addedBy || "", requesterId || "", addedByUserId, seq, now]
+          vote_score, pinned, pinned_order, status, added_at, provider
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, 0, 'queued', ?, ?)`,
+        [id, eventId, videoId, title, channel || "", duration || "3:30", thumbnail || null, addedBy || "", requesterId || "", addedByUserId, seq, now, provider || "youtube"]
       );
 
       return this.findById(id);
@@ -74,7 +74,7 @@ export class QueueRepository {
     return this.db
       .query(
         `SELECT id, video_id, title, channel, duration, added_by, added_by_user_id,
-                vote_score, finished_at, finish_reason, played_seconds
+                vote_score, finished_at, finish_reason, played_seconds, provider
          FROM queue_items
          WHERE event_id = ? AND status = 'played'
          ORDER BY finished_at DESC LIMIT ?`
@@ -92,7 +92,7 @@ export class QueueRepository {
     const items = this.db
       .query(
         `SELECT id, video_id, title, channel, duration, thumbnail, added_by, added_by_user_id,
-                vote_score, finished_at, finish_reason, played_seconds
+                vote_score, finished_at, finish_reason, played_seconds, provider
          FROM queue_items
          WHERE event_id = ? AND added_by_user_id = ? AND status = 'played'
          ORDER BY finished_at DESC, rowid DESC LIMIT ? OFFSET ?`

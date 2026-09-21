@@ -4,11 +4,45 @@
 let player = null;
 let playerReady = false;
 let started = false;
+const myTabId = Math.random().toString(36).slice(2) + Date.now().toString(36);
+const hostCoordinationChannel = typeof BroadcastChannel !== "undefined" ? new BroadcastChannel("jukebox_host_coordination") : null;
+if (hostCoordinationChannel) {
+  hostCoordinationChannel.onmessage = (e) => {
+    if (e.data && e.data.type === "host_claimed_playback" && e.data.tabId !== myTabId) {
+      if (started) {
+        console.warn("[host] Một cửa sổ Host khác đã nhận quyền phát nhạc; tạm dừng cửa sổ này.");
+        started = false;
+        if (player?.stopVideo) player.stopVideo();
+        if (spotifyPlayer?.pause) spotifyPlayer.pause();
+        if (scWidget?.pause) { try { scWidget.pause(); } catch {} }
+        const scIframe = document.getElementById("sc-widget-iframe");
+        if (scIframe && scIframe.src && scIframe.src.includes("auto_play=true")) {
+          scIframe.src = "https://w.soundcloud.com/player/?url=https%3A//api.soundcloud.com/tracks/293&auto_play=false";
+        }
+        document.getElementById("start-overlay").classList.remove("hidden");
+        document.getElementById("stage").classList.add("hidden");
+      }
+    }
+  };
+}
 let currentVideoId = null;
 let currentPlaybackToken = null;
 let terminalReportedForToken = null;
 let playbackEventHandlers = null;
 let latestState = { nowPlaying: null, queue: [] };
+
+// Multi-platform state
+let activePlayerProvider = "youtube";
+let spotifyPlayer = null;
+let spotifyReady = false;
+let spotifyDeviceId = null;
+let spotifyPlayerState = null;
+let spotifyWasPlaying = false;
+let spotifyProgressTimer = null;
+let spotifyStatus = { connected: false, configured: false };
+let scWidget = null;
+let scReady = false;
+let scIsPlaying = false;
 let filterOn = false;
 let moderationMode = "default"; // "default" | "strict" (protocol values)
 let moderationConfigured = false;
@@ -46,6 +80,13 @@ function setOrderNetworkHostStatus(message) {
   const status = document.getElementById("order-network-host-status");
   status.textContent = message;
   status.classList.remove("hidden");
+  if (message.includes("Đã lưu") || message.includes("thành công") || message.includes("đã cập nhật")) {
+    status.classList.add("ok");
+    status.classList.remove("bad");
+  } else {
+    status.classList.add("bad");
+    status.classList.remove("ok");
+  }
   clearTimeout(orderNetworkHostStatusTimer);
   orderNetworkHostStatusTimer = setTimeout(() => status.classList.add("hidden"), 5000);
 }
@@ -71,17 +112,29 @@ function startOrderNetworkHostRefresh() {
 // be lost and the server may keep it as the current song; resync on reconnect.
 function reportIfEnded() {
   if (
-    playerReady && currentVideoId && currentPlaybackToken &&
-    terminalReportedForToken !== currentPlaybackToken && player.getPlayerState &&
-    player.getPlayerState() === YT.PlayerState.ENDED
+    currentVideoId && currentPlaybackToken &&
+    terminalReportedForToken !== currentPlaybackToken
   ) {
-    if (send({
-      type: "ended",
-      videoId: currentVideoId,
-      playbackToken: currentPlaybackToken,
-      playedSeconds: player.getCurrentTime(),
-    })) {
-      terminalReportedForToken = currentPlaybackToken;
+    let ended = false;
+    let playedSeconds = null;
+    if (activePlayerProvider === "youtube" && playerReady && player?.getPlayerState && player.getPlayerState() === YT.PlayerState.ENDED) {
+      ended = true;
+      playedSeconds = player.getCurrentTime ? player.getCurrentTime() : null;
+    } else if (activePlayerProvider === "spotify" && spotifyPlayerState) {
+      if (spotifyPlayerState.paused && spotifyPlayerState.position === 0 && spotifyWasPlaying) {
+        ended = true;
+        playedSeconds = spotifyPlayerState.duration ? spotifyPlayerState.duration / 1000 : null;
+      }
+    }
+    if (ended) {
+      if (send({
+        type: "ended",
+        videoId: currentVideoId,
+        playbackToken: currentPlaybackToken,
+        playedSeconds,
+      })) {
+        terminalReportedForToken = currentPlaybackToken;
+      }
     }
   }
 }
@@ -258,47 +311,621 @@ window.onYouTubeIframeAPIReady = function () {
         }
         updatePlayPauseIcon();
       },
-      // Some browser profiles do not allow audio when the first song arrives
-      // after the Start button click. YouTube reports this separately; request a new
-      // user gesture instead of leaving the server stuck on the current song.
       onAutoplayBlocked: () => showPlaybackRecovery(),
-      onError: () => {}, // generation-scoped handler is installed per load below
+      onError: () => {},
     },
   });
 };
 
+// ---- Real-time Synced Lyrics (LRCLIB & Local API) --------------------------
+let currentLyrics = null;
+let currentLyricsActiveIndex = -1;
+let isLyricsMode = false;
+let currentLyricsTrackKey = "";
+
+function cleanLyricsText(rawTitle, rawArtist) {
+  let title = (rawTitle || "").trim();
+  let artist = (rawArtist || "").trim();
+  if (!artist && title.includes(" - ")) {
+    const parts = title.split(" - ");
+    artist = parts[0].trim();
+    title = parts.slice(1).join(" - ").trim();
+  }
+  title = title
+    .replace(/\[[^\]]*\]/g, "")
+    .replace(/\([^)]*(?:official|video|audio|mv|prod\.|feat\.|ft\.)[^)]*\)/gi, "")
+    .replace(/\|.*$/g, "")
+    .replace(/-.*(?:official|mv|audio).*$/gi, "")
+    .trim();
+  artist = artist.replace(/\s*-\s*Topic$/i, "").trim();
+  return { title, artist };
+}
+
+function parseLrcClient(lrcText) {
+  if (typeof lrcText !== "string" || !lrcText.trim()) return [];
+  const lines = lrcText.split("\n");
+  const result = [];
+  const regex = /\[(\d{2}):(\d{2})(?:\.(\d{2,3}))?\](.*)/;
+  for (const line of lines) {
+    const match = line.match(regex);
+    if (match) {
+      const min = parseInt(match[1], 10);
+      const sec = parseInt(match[2], 10);
+      const ms = match[3] ? parseInt(match[3].padEnd(3, "0").slice(0, 3), 10) : 0;
+      const time = min * 60 + sec + ms / 1000;
+      const text = match[4].trim();
+      if (text) {
+        result.push({ time, text });
+      }
+    }
+  }
+  return result.sort((a, b) => a.time - b.time);
+}
+
+async function loadLyrics(rawTitle, rawArtist, duration) {
+  const { title, artist } = cleanLyricsText(rawTitle, rawArtist);
+  const trackKey = `${artist.toLowerCase()}:::${title.toLowerCase()}`;
+  if (trackKey === currentLyricsTrackKey && currentLyrics) {
+    return;
+  }
+  currentLyricsTrackKey = trackKey;
+  currentLyrics = null;
+  currentLyricsActiveIndex = -1;
+
+  const contentEl = document.getElementById("spotify-lyrics-content");
+  if (contentEl) {
+    contentEl.innerHTML = `<div class="spotify-lyrics-loading">Đang tải lời bài hát đồng bộ…</div>`;
+  }
+
+  let data = null;
+  let durSec = null;
+  if (typeof duration === "string" && duration.includes(":")) {
+    const p = duration.split(":").map(Number);
+    if (p.length === 2) durSec = p[0] * 60 + p[1];
+  } else if (typeof duration === "number") {
+    durSec = duration;
+  }
+
+  // 1. Try local backend /api/lyrics first
+  try {
+    const params = new URLSearchParams({ title, artist });
+    if (durSec) params.set("duration", durSec);
+    const res = await fetch(`/api/lyrics?${params.toString()}`);
+    if (res.ok) {
+      const json = await res.json();
+      if (json.ok && Array.isArray(json.lines) && json.lines.length > 0) {
+        data = json;
+      }
+    }
+  } catch (err) {
+    console.warn("[lyrics] /api/lyrics failed, trying direct LRCLIB fallback:", err);
+  }
+
+  // 2. Direct fallback to LRCLIB API in browser if local endpoint not available
+  if (!data) {
+    try {
+      let lrclibData = null;
+      if (artist) {
+        const p = new URLSearchParams({ track_name: title, artist_name: artist });
+        if (durSec) p.set("duration", Math.round(durSec));
+        const r1 = await fetch(`https://lrclib.net/api/get?${p.toString()}`);
+        if (r1.ok) lrclibData = await r1.json();
+      }
+      if (!lrclibData || (!lrclibData.syncedLyrics && !lrclibData.plainLyrics)) {
+        const q = artist ? `${artist} ${title}` : title;
+        const r2 = await fetch(`https://lrclib.net/api/search?q=${encodeURIComponent(q)}`);
+        if (r2.ok) {
+          const list = await r2.json();
+          if (Array.isArray(list) && list.length > 0) {
+            lrclibData = list.find((it) => Boolean(it.syncedLyrics)) || list[0];
+          }
+        }
+      }
+      if (lrclibData) {
+        let lines = [];
+        let isSynced = false;
+        if (lrclibData.syncedLyrics) {
+          lines = parseLrcClient(lrclibData.syncedLyrics);
+          isSynced = lines.length > 0;
+        }
+        if (!isSynced && lrclibData.plainLyrics) {
+          lines = lrclibData.plainLyrics
+            .split("\n")
+            .map((t) => t.trim())
+            .filter(Boolean)
+            .map((text, idx) => ({ time: idx * 5, text }));
+        }
+        if (lines.length > 0) {
+          data = { ok: true, synced: isSynced, lines };
+        }
+      }
+    } catch (err) {
+      console.warn("[lyrics] direct LRCLIB fetch error:", err);
+    }
+  }
+
+  // Guard against race conditions if track changed while fetching
+  if (trackKey !== currentLyricsTrackKey) return;
+
+  if (!data || !data.lines || data.lines.length === 0) {
+    currentLyrics = null;
+    if (contentEl) {
+      contentEl.innerHTML = `<div class="spotify-lyrics-empty"><span>🎵</span><span>Chưa có lời bài hát đồng bộ cho bài hát này.</span></div>`;
+    }
+    return;
+  }
+
+  currentLyrics = data;
+  renderLyricsLines(data.lines);
+}
+
+function renderLyricsLines(lines) {
+  const contentEl = document.getElementById("spotify-lyrics-content");
+  if (!contentEl) return;
+  contentEl.innerHTML = "";
+
+  const frag = document.createDocumentFragment();
+  lines.forEach((line, idx) => {
+    const lineEl = document.createElement("div");
+    lineEl.className = "spotify-lyric-line";
+    lineEl.dataset.index = idx;
+    lineEl.dataset.time = line.time;
+    lineEl.textContent = line.text;
+    lineEl.addEventListener("click", () => {
+      seekSpotifyTo(line.time);
+      syncLyricsPosition(line.time, true);
+    });
+    frag.appendChild(lineEl);
+  });
+  contentEl.appendChild(frag);
+
+  // Sync with current player position immediately
+  const curPos = (spotifyPlayerState?.position || 0) / 1000;
+  syncLyricsPosition(curPos, true);
+}
+
+function syncLyricsPosition(curSec, forceScroll = false) {
+  if (!currentLyrics || !Array.isArray(currentLyrics.lines) || currentLyrics.lines.length === 0) return;
+  const lines = currentLyrics.lines;
+
+  // Find index of current active line: largest index where line.time <= curSec
+  let activeIdx = -1;
+  for (let i = 0; i < lines.length; i++) {
+    if (lines[i].time <= curSec + 0.25) {
+      activeIdx = i;
+    } else {
+      break;
+    }
+  }
+
+  if (activeIdx === currentLyricsActiveIndex && !forceScroll) return;
+  currentLyricsActiveIndex = activeIdx;
+
+  const contentEl = document.getElementById("spotify-lyrics-content");
+  if (!contentEl) return;
+  const lineEls = contentEl.children;
+
+  for (let i = 0; i < lineEls.length; i++) {
+    const el = lineEls[i];
+    if (i === activeIdx) {
+      el.classList.add("active");
+      el.classList.remove("passed");
+    } else if (i < activeIdx) {
+      el.classList.remove("active");
+      el.classList.add("passed");
+    } else {
+      el.classList.remove("active");
+      el.classList.remove("passed");
+    }
+  }
+
+  if (activeIdx >= 0 && lineEls[activeIdx]) {
+    const activeEl = lineEls[activeIdx];
+    const scroller = document.getElementById("spotify-lyrics-scroller");
+    if (scroller) {
+      const scrollerHeight = scroller.clientHeight;
+      const targetScroll = activeEl.offsetTop - scrollerHeight / 2 + activeEl.clientHeight / 2;
+      scroller.scrollTo({
+        top: Math.max(0, targetScroll),
+        behavior: forceScroll ? "auto" : "smooth",
+      });
+    }
+  }
+}
+
+function toggleLyricsMode(forceState) {
+  const playerSpotifyEl = document.getElementById("player-spotify");
+  const lyricsBtn = document.getElementById("spotify-btn-lyrics");
+  if (!playerSpotifyEl) return;
+
+  isLyricsMode = typeof forceState === "boolean" ? forceState : !isLyricsMode;
+  playerSpotifyEl.classList.toggle("lyrics-mode-active", isLyricsMode);
+  if (lyricsBtn) lyricsBtn.classList.toggle("active", isLyricsMode);
+
+  if (isLyricsMode) {
+    const curPos = (spotifyPlayerState?.position || 0) / 1000;
+    syncLyricsPosition(curPos, true);
+  }
+}
+
+function resetLyrics() {
+  currentLyrics = null;
+  currentLyricsActiveIndex = -1;
+  currentLyricsTrackKey = "";
+  const contentEl = document.getElementById("spotify-lyrics-content");
+  if (contentEl) {
+    contentEl.innerHTML = `<div class="spotify-lyrics-loading">Đang tải lời bài hát…</div>`;
+  }
+}
+
+// ---- Spotify Web Playback SDK ----------------------------------------------
+function formatSpotifyTime(sec) {
+  const s = Math.max(0, Math.floor(sec || 0));
+  const m = Math.floor(s / 60);
+  const rem = s % 60;
+  return `${m}:${rem < 10 ? "0" : ""}${rem}`;
+}
+
+let isSpotifyScrubbing = false;
+
+function updateSpotifyPlayPauseUI(isPaused) {
+  const playerSpotifyEl = document.getElementById("player-spotify");
+  if (playerSpotifyEl) playerSpotifyEl.classList.toggle("is-paused", isPaused);
+
+  // Center play/pause button inside artwork
+  const centerBtn = document.getElementById("spotify-center-play-btn");
+  if (centerBtn) {
+    const cPlay = centerBtn.querySelector(".center-icon-play");
+    const cPause = centerBtn.querySelector(".center-icon-pause");
+    if (cPlay && cPause) {
+      cPlay.classList.toggle("hidden", !isPaused);
+      cPause.classList.toggle("hidden", isPaused);
+    }
+    centerBtn.title = isPaused ? "Phát (Space)" : "Tạm dừng (Space)";
+  }
+
+  // Artwork click tooltip
+  const artCenter = document.getElementById("spotify-art-center");
+  if (artCenter) {
+    artCenter.title = isPaused ? "Nhấp để Phát (Space)" : "Nhấp để Tạm dừng (Space)";
+  }
+
+  // Bottom bar play/pause button
+  const btnPlayPause = document.getElementById("spotify-btn-playpause");
+  if (btnPlayPause) {
+    const iconPlay = btnPlayPause.querySelector(".icon-play");
+    const iconPause = btnPlayPause.querySelector(".icon-pause");
+    if (iconPlay && iconPause) {
+      iconPlay.classList.toggle("hidden", !isPaused);
+      iconPause.classList.toggle("hidden", isPaused);
+    }
+    btnPlayPause.title = isPaused ? "Phát (Space)" : "Tạm dừng (Space)";
+  }
+}
+
+function updateSpotifyProgressUI(state) {
+  if (!state) return;
+  const fillEl = document.getElementById("spotify-progress-fill");
+  const thumbEl = document.getElementById("spotify-scrubber-thumb");
+  const curEl = document.getElementById("spotify-time-cur");
+  const totalEl = document.getElementById("spotify-time-total");
+
+  const pos = (state.position || 0) / 1000;
+  const dur = (state.duration || 0) / 1000;
+  if (!isSpotifyScrubbing && fillEl && dur > 0) {
+    const pct = Math.min(100, Math.max(0, (pos / dur) * 100));
+    fillEl.style.width = `${pct.toFixed(1)}%`;
+    if (thumbEl) thumbEl.style.left = `${pct.toFixed(1)}%`;
+  }
+  if (!isSpotifyScrubbing && curEl) curEl.textContent = formatSpotifyTime(pos);
+  if (totalEl && dur > 0) totalEl.textContent = formatSpotifyTime(dur);
+  if (!isSpotifyScrubbing) syncLyricsPosition(pos);
+
+  const isPaused = Boolean(state.paused);
+  updateSpotifyPlayPauseUI(isPaused);
+
+  const sdkThumb = state.track_window?.current_track?.album?.images?.[0]?.url;
+  if (sdkThumb) {
+    const coverEl = document.getElementById("spotify-cover");
+    if (coverEl && (!coverEl.getAttribute("src") || coverEl.getAttribute("src").startsWith("data:") || coverEl.getAttribute("src") === "")) {
+      coverEl.src = sdkThumb;
+    }
+    const glowEl = document.getElementById("spotify-ambient-glow");
+    if (glowEl && (!glowEl.style.backgroundImage || glowEl.style.backgroundImage.includes("data:"))) {
+      glowEl.style.backgroundImage = `url("${sdkThumb}")`;
+    }
+  }
+}
+
+window.onSpotifyWebPlaybackSDKReady = function () {
+  if (!window.Spotify) return;
+  spotifyPlayer = new window.Spotify.Player({
+    name: "Office Jukebox Projector",
+    getOAuthToken: async (cb) => {
+      try {
+        const res = await fetch("/api/spotify/token");
+        const data = await res.json();
+        if (data.ok && data.access_token) {
+          cb(data.access_token);
+        }
+      } catch (err) {
+        console.warn("[spotify] Token retrieval error:", err);
+      }
+    },
+    volume: 0.8,
+  });
+
+  spotifyPlayer.addListener("ready", ({ device_id }) => {
+    spotifyDeviceId = device_id;
+    spotifyReady = true;
+    console.log("[spotify] Player ready with device ID:", device_id);
+    updateSpotifyStatus();
+    if (activePlayerProvider === "spotify" && started && latestState?.nowPlaying?.videoId === currentVideoId) {
+      playSpotify(currentVideoId);
+    }
+  });
+
+  spotifyPlayer.addListener("not_ready", ({ device_id }) => {
+    console.warn("[spotify] Device ID is offline:", device_id);
+    spotifyReady = false;
+  });
+
+  spotifyPlayer.addListener("player_state_changed", (state) => {
+    spotifyPlayerState = state;
+    if (!state) return;
+    if (activePlayerProvider === "spotify") {
+      updatePlayPauseIcon();
+      updateSpotifyProgressUI(state);
+      clearInterval(spotifyProgressTimer);
+      if (!state.paused) {
+        clearTimeout(playbackWatchdog);
+        hidePlaybackRecovery();
+        spotifyWasPlaying = true;
+        spotifyProgressTimer = setInterval(() => {
+          if (spotifyPlayerState && !spotifyPlayerState.paused && activePlayerProvider === "spotify") {
+            spotifyPlayerState.position = (spotifyPlayerState.position || 0) + 1000;
+            updateSpotifyProgressUI(spotifyPlayerState);
+          }
+        }, 1000);
+      } else if (
+        state.paused &&
+        state.position === 0 &&
+        spotifyWasPlaying &&
+        latestState?.nowPlaying?.videoId === currentVideoId &&
+        currentPlaybackToken &&
+        terminalReportedForToken !== currentPlaybackToken
+      ) {
+        if (send({
+          type: "ended",
+          videoId: currentVideoId,
+          playbackToken: currentPlaybackToken,
+          playedSeconds: state.duration ? state.duration / 1000 : null,
+        })) {
+          terminalReportedForToken = currentPlaybackToken;
+        }
+      }
+    }
+  });
+
+  spotifyPlayer.addListener("initialization_error", ({ message }) => {
+    console.error("[spotify] Init error:", message);
+  });
+  spotifyPlayer.addListener("authentication_error", ({ message }) => {
+    console.error("[spotify] Auth error:", message);
+    updateSpotifyStatus();
+  });
+  spotifyPlayer.addListener("account_error", ({ message }) => {
+    console.error("[spotify] Account error (Spotify Premium required):", message);
+    if (activePlayerProvider === "spotify" && currentPlaybackToken && terminalReportedForToken !== currentPlaybackToken) {
+      if (send({ type: "error", videoId: currentVideoId, playbackToken: currentPlaybackToken, code: "spotify_premium_required" })) {
+        terminalReportedForToken = currentPlaybackToken;
+      }
+    }
+  });
+  spotifyPlayer.addListener("playback_error", ({ message }) => {
+    console.error("[spotify] Playback error:", message);
+    if (activePlayerProvider === "spotify" && currentPlaybackToken && terminalReportedForToken !== currentPlaybackToken) {
+      if (send({ type: "error", videoId: currentVideoId, playbackToken: currentPlaybackToken, code: "playback_error" })) {
+        terminalReportedForToken = currentPlaybackToken;
+      }
+    }
+  });
+
+  spotifyPlayer.connect();
+};
+
+async function playSpotify(trackId) {
+  if (!started) return;
+  if (!spotifyDeviceId) {
+    console.warn("[spotify] Device ID is not ready yet");
+    return;
+  }
+  try {
+    const tokenRes = await fetch("/api/spotify/token");
+    const tokenData = await tokenRes.json();
+    if (!tokenData.ok || !tokenData.access_token) {
+      console.warn("[spotify] No valid token available");
+      showPlaybackRecovery();
+      return;
+    }
+    const token = tokenData.access_token;
+    spotifyWasPlaying = false;
+    const playRes = await fetch(`https://api.spotify.com/v1/me/player/play?device_id=${spotifyDeviceId}`, {
+      method: "PUT",
+      headers: {
+        "Authorization": `Bearer ${token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        uris: [`spotify:track:${trackId}`],
+      }),
+    });
+    if (!playRes.ok && playRes.status !== 204) {
+      await fetch("https://api.spotify.com/v1/me/player", {
+        method: "PUT",
+        headers: {
+          "Authorization": `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ device_ids: [spotifyDeviceId], play: true }),
+      });
+      await fetch(`https://api.spotify.com/v1/me/player/play?device_id=${spotifyDeviceId}`, {
+        method: "PUT",
+        headers: {
+          "Authorization": `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ uris: [`spotify:track:${trackId}`] }),
+      });
+    }
+  } catch (err) {
+    console.error("[spotify] Failed to start Spotify playback:", err);
+  }
+}
+
+// ---- SoundCloud Widget API -------------------------------------------------
+function initSoundCloudWidget() {
+  const iframe = document.getElementById("sc-widget-iframe");
+  if (!iframe || !window.SC || !window.SC.Widget || scWidget) return;
+  scWidget = window.SC.Widget(iframe);
+  scWidget.bind(window.SC.Widget.Events.READY, () => {
+    scReady = true;
+  });
+  scWidget.bind(window.SC.Widget.Events.PLAY, () => {
+    scIsPlaying = true;
+    clearTimeout(playbackWatchdog);
+    hidePlaybackRecovery();
+    updatePlayPauseIcon();
+  });
+  scWidget.bind(window.SC.Widget.Events.PAUSE, () => {
+    scIsPlaying = false;
+    updatePlayPauseIcon();
+  });
+  scWidget.bind(window.SC.Widget.Events.FINISH, () => {
+    scIsPlaying = false;
+    if (activePlayerProvider === "soundcloud" && currentPlaybackToken && terminalReportedForToken !== currentPlaybackToken) {
+      if (send({
+        type: "ended",
+        videoId: currentVideoId,
+        playbackToken: currentPlaybackToken,
+        playedSeconds: null,
+      })) {
+        terminalReportedForToken = currentPlaybackToken;
+      }
+    }
+  });
+  scWidget.bind(window.SC.Widget.Events.ERROR, (err) => {
+    console.warn("[soundcloud] playback error:", err);
+    if (activePlayerProvider === "soundcloud" && currentPlaybackToken && terminalReportedForToken !== currentPlaybackToken) {
+      if (send({
+        type: "error",
+        videoId: currentVideoId,
+        playbackToken: currentPlaybackToken,
+        code: "soundcloud_error",
+      })) {
+        terminalReportedForToken = currentPlaybackToken;
+      }
+    }
+  });
+}
+window.initSoundCloudWidget = initSoundCloudWidget;
+
+function playSoundCloud(url) {
+  if (!started) return;
+  initSoundCloudWidget();
+  scIsPlaying = false;
+
+  const cleanUrl = typeof url === "string" ? url.split("?")[0] : url;
+
+  if (scWidget) {
+    scWidget.load(cleanUrl, {
+      auto_play: true,
+      show_artwork: true,
+      visual: true,
+      callback: () => {
+        if (!started) {
+          try { scWidget.pause(); } catch {}
+          return;
+        }
+        try { scWidget.play(); } catch {}
+      },
+    });
+  } else {
+    const iframe = document.getElementById("sc-widget-iframe");
+    if (iframe) {
+      iframe.src = `https://w.soundcloud.com/player/?url=${encodeURIComponent(cleanUrl)}&color=%23ff5500&auto_play=true&show_artwork=true&visual=true`;
+    }
+  }
+}
+
+function getCurrentPlayerTime() {
+  if (activePlayerProvider === "youtube" && playerReady && player?.getCurrentTime) {
+    const t = Number(player.getCurrentTime());
+    return Number.isFinite(t) ? t : null;
+  }
+  if (activePlayerProvider === "spotify" && spotifyPlayerState?.position) {
+    const t = Number(spotifyPlayerState.position) / 1000;
+    return Number.isFinite(t) ? t : null;
+  }
+  return null;
+}
+
 // Synchronize the player with the song the server reports as current.
 function syncPlayer() {
-  if (!started || !playerReady) return;
+  if (!started) return;
   const np = latestState.nowPlaying;
   const idle = document.getElementById("idle");
+  const playerYtEl = document.getElementById("player");
+  const playerSpotifyEl = document.getElementById("player-spotify");
+  const playerSoundCloudEl = document.getElementById("player-soundcloud");
 
   if (!np) {
     clearTimeout(playbackWatchdog);
-    if (playbackEventHandlers && player.removeEventListener) {
+    clearInterval(spotifyProgressTimer);
+    if (playbackEventHandlers && player?.removeEventListener) {
       player.removeEventListener("onStateChange", playbackEventHandlers.onStateChange);
       player.removeEventListener("onError", playbackEventHandlers.onError);
     }
     currentVideoId = null;
     currentPlaybackToken = null;
     terminalReportedForToken = null;
-    if (player.stopVideo) player.stopVideo();
+    spotifyWasPlaying = false;
+    scIsPlaying = false;
+    if (player?.stopVideo) player.stopVideo();
+    if (spotifyPlayer?.pause) spotifyPlayer.pause();
+    if (scWidget?.pause) { try { scWidget.pause(); } catch {} }
+    const scIframe = document.getElementById("sc-widget-iframe");
+    if (scIframe && scIframe.src && scIframe.src.includes("auto_play=true")) {
+      scIframe.src = "https://w.soundcloud.com/player/?url=https%3A//api.soundcloud.com/tracks/293&auto_play=false";
+    }
     hidePlaybackRecovery();
+    playerYtEl.classList.add("hidden");
+    playerSpotifyEl.classList.add("hidden");
+    playerSoundCloudEl.classList.add("hidden");
+    resetLyrics();
     idle.classList.remove("hidden");
     return;
   }
+
   idle.classList.add("hidden");
+  const provider = (np.provider || "youtube").toLowerCase();
+  activePlayerProvider = provider;
+
   if (np.videoId !== currentVideoId || np.playbackToken !== currentPlaybackToken) {
-    if (playbackEventHandlers && player.removeEventListener) {
+    if (playbackEventHandlers && player?.removeEventListener) {
       player.removeEventListener("onStateChange", playbackEventHandlers.onStateChange);
       player.removeEventListener("onError", playbackEventHandlers.onError);
     }
     currentVideoId = np.videoId;
     currentPlaybackToken = np.playbackToken || null;
+    currentProvider = provider;
     terminalReportedForToken = null;
+    spotifyWasPlaying = false;
+    scIsPlaying = false;
     const eventVideoId = np.videoId;
     const eventPlaybackToken = np.playbackToken || null;
     let terminalReported = false;
+
     const sendTerminal = (type, code = null) => {
       if (terminalReported || !eventPlaybackToken) return;
       const payload = {
@@ -306,33 +933,102 @@ function syncPlayer() {
         videoId: eventVideoId,
         playbackToken: eventPlaybackToken,
       };
-      if (type === "ended") payload.playedSeconds = player.getCurrentTime ? player.getCurrentTime() : null;
+      if (type === "ended") payload.playedSeconds = getCurrentPlayerTime();
       if (type === "error") payload.code = code;
       if (send(payload)) {
         terminalReported = true;
         if (eventPlaybackToken === currentPlaybackToken) terminalReportedForToken = eventPlaybackToken;
       }
     };
-    playbackEventHandlers = {
-      onStateChange: (e) => {
-        if (e.data === YT.PlayerState.ENDED) sendTerminal("ended");
-      },
-      onError: (e) => {
-        // 101/150 = owner disallows embedding; 100 = removed; 2 = invalid code.
-        console.warn("Player error", e.data, "for", eventVideoId);
-        sendTerminal("error", e.data);
-      },
-    };
-    // These listeners close over the server-issued token for this load. If a
-    // delayed callback from an earlier load runs on the same YouTube player,
-    // it sends the earlier token and the server rejects it as stale.
-    if (player.addEventListener) {
-      player.addEventListener("onStateChange", playbackEventHandlers.onStateChange);
-      player.addEventListener("onError", playbackEventHandlers.onError);
+
+    if (provider === "youtube") {
+      clearInterval(spotifyProgressTimer);
+      playerYtEl.classList.remove("hidden");
+      playerSpotifyEl.classList.add("hidden");
+      playerSoundCloudEl.classList.add("hidden");
+      if (spotifyPlayer?.pause) spotifyPlayer.pause();
+      if (scWidget?.pause) { try { scWidget.pause(); } catch {} }
+      const scIframe = document.getElementById("sc-widget-iframe");
+      if (scIframe && scIframe.src && scIframe.src.includes("auto_play=true")) {
+        scIframe.src = "https://w.soundcloud.com/player/?url=https%3A//api.soundcloud.com/tracks/293&auto_play=false";
+      }
+
+      if (!playerReady) return;
+
+      playbackEventHandlers = {
+        onStateChange: (e) => {
+          if (e.data === YT.PlayerState.ENDED) sendTerminal("ended");
+        },
+        onError: (e) => {
+          console.warn("Player error", e.data, "for", eventVideoId);
+          sendTerminal("error", e.data);
+        },
+      };
+      if (player.addEventListener) {
+        player.addEventListener("onStateChange", playbackEventHandlers.onStateChange);
+        player.addEventListener("onError", playbackEventHandlers.onError);
+      }
+      player.loadVideoById(np.videoId);
+      player.playVideo();
+      armPlaybackWatchdog(np.videoId, currentPlaybackToken);
+    } else if (provider === "spotify") {
+      playerYtEl.classList.add("hidden");
+      playerSpotifyEl.classList.remove("hidden");
+      playerSoundCloudEl.classList.add("hidden");
+      if (player?.stopVideo) player.stopVideo();
+      if (scWidget?.pause) { try { scWidget.pause(); } catch {} }
+      const scIframe = document.getElementById("sc-widget-iframe");
+      if (scIframe && scIframe.src && scIframe.src.includes("auto_play=true")) {
+        scIframe.src = "https://w.soundcloud.com/player/?url=https%3A//api.soundcloud.com/tracks/293&auto_play=false";
+      }
+
+      const coverUrl = safeImageUrl(np.thumbnail);
+      const coverEl = document.getElementById("spotify-cover");
+      if (coverEl) coverEl.src = coverUrl;
+      const vinylCover = document.getElementById("spotify-vinyl-cover");
+      if (vinylCover) vinylCover.src = coverUrl;
+      const glowEl = document.getElementById("spotify-ambient-glow");
+      if (glowEl) {
+        glowEl.style.backgroundImage = coverUrl && coverUrl !== NO_THUMB ? `url("${coverUrl}")` : "";
+      }
+      const titleEl = document.getElementById("spotify-title");
+      if (titleEl) titleEl.textContent = np.title || "—";
+      const artistEl = document.getElementById("spotify-artist");
+      if (artistEl) artistEl.textContent = np.channel || "—";
+
+      const reqPill = document.getElementById("spotify-requester-pill");
+      const reqName = document.getElementById("spotify-requester-name");
+      if (reqPill && reqName) {
+        if (np.addedBy) {
+          reqName.textContent = `Yêu cầu: ${np.addedBy}`;
+          reqPill.classList.remove("hidden");
+        } else {
+          reqPill.classList.add("hidden");
+        }
+      }
+
+      const fillEl = document.getElementById("spotify-progress-fill");
+      if (fillEl) fillEl.style.width = "0%";
+      const curEl = document.getElementById("spotify-time-cur");
+      if (curEl) curEl.textContent = "0:00";
+      const totalEl = document.getElementById("spotify-time-total");
+      if (totalEl) totalEl.textContent = np.duration || "0:00";
+
+      updateSpotifyPlayPauseUI(false);
+      loadLyrics(np.title, np.channel, np.duration);
+      playSpotify(np.videoId);
+      armPlaybackWatchdog(np.videoId, currentPlaybackToken);
+    } else if (provider === "soundcloud") {
+      clearInterval(spotifyProgressTimer);
+      playerYtEl.classList.add("hidden");
+      playerSpotifyEl.classList.add("hidden");
+      playerSoundCloudEl.classList.remove("hidden");
+      if (player?.stopVideo) player.stopVideo();
+      if (spotifyPlayer?.pause) spotifyPlayer.pause();
+
+      playSoundCloud(np.videoId);
+      armPlaybackWatchdog(np.videoId, currentPlaybackToken);
     }
-    player.loadVideoById(np.videoId);
-    player.playVideo();
-    armPlaybackWatchdog(np.videoId, currentPlaybackToken);
   }
 }
 
@@ -353,19 +1049,30 @@ function hidePlaybackRecovery() {
 function armPlaybackWatchdog(videoId, playbackToken) {
   clearTimeout(playbackWatchdog);
   playbackWatchdog = setTimeout(() => {
-    if (currentVideoId !== videoId || currentPlaybackToken !== playbackToken || !playerReady) return;
-    const t = player.getCurrentTime ? player.getCurrentTime() : 0;
-    const s = player.getPlayerState ? player.getPlayerState() : -1;
-    if (t >= 1 || s === YT.PlayerState.PLAYING || s === YT.PlayerState.PAUSED) return;
-    // A hidden tab cannot be the projector: the browser blocks autoplay and the
-    // player remains UNSTARTED. Reporting that as an error would skip the song
-    // for everyone. BUFFERING likewise means only that the network is slow. In
-    // both cases, wait through another watchdog cycle instead of skipping.
-    if (document.hidden || s === YT.PlayerState.BUFFERING) {
-      armPlaybackWatchdog(videoId, playbackToken);
-      return;
+    if (currentVideoId !== videoId || currentPlaybackToken !== playbackToken) return;
+    if (activePlayerProvider === "youtube") {
+      if (!playerReady) return;
+      const t = player.getCurrentTime ? player.getCurrentTime() : 0;
+      const s = player.getPlayerState ? player.getPlayerState() : -1;
+      if (t >= 1 || s === YT.PlayerState.PLAYING || s === YT.PlayerState.PAUSED) return;
+      if (document.hidden || s === YT.PlayerState.BUFFERING) {
+        armPlaybackWatchdog(videoId, playbackToken);
+        return;
+      }
+    } else if (activePlayerProvider === "spotify") {
+      if (spotifyWasPlaying || (spotifyPlayerState && !spotifyPlayerState.paused)) return;
+      if (document.hidden) {
+        armPlaybackWatchdog(videoId, playbackToken);
+        return;
+      }
+    } else if (activePlayerProvider === "soundcloud") {
+      if (scIsPlaying) return;
+      if (document.hidden) {
+        armPlaybackWatchdog(videoId, playbackToken);
+        return;
+      }
     }
-    console.warn(`[watchdog] ${videoId} has not started (state ${s}) — skipping`);
+    console.warn(`[watchdog] ${videoId} (${activePlayerProvider}) has not started — skipping`);
     if (
       currentPlaybackToken && terminalReportedForToken !== currentPlaybackToken &&
       send({ type: "error", videoId, playbackToken: currentPlaybackToken, code: "watchdog" })
@@ -390,6 +1097,8 @@ window.addEventListener("pageshow", (e) => {
   currentPlaybackToken = null;
   terminalReportedForToken = null;
   playbackEventHandlers = null;
+  spotifyWasPlaying = false;
+  scIsPlaying = false;
   hidePlaybackRecovery();
   document.getElementById("start-overlay").classList.remove("hidden");
   document.getElementById("stage").classList.add("hidden");
@@ -453,6 +1162,11 @@ function render() {
 
     const isPinned = item.pinned === true;
     const voteScore = item.voteScore || 0;
+    const providerBadge = item.provider === "spotify"
+      ? '<span class="q-platform-badge spotify" title="Spotify Direct Playback">Spotify</span>'
+      : item.provider === "soundcloud"
+        ? '<span class="q-platform-badge soundcloud" title="SoundCloud">SoundCloud</span>'
+        : '';
 
     li.innerHTML = `
       <span class="q-drag-handle" title="Kéo để sắp xếp" aria-hidden="true">⠿</span>
@@ -460,6 +1174,7 @@ function render() {
       <div class="q-meta">
         <div class="q-title-row">
           <div class="q-title"></div>
+          ${providerBadge}
           ${isPinned ? '<span class="q-pinned-badge" title="Bài do host ghim vị trí">📌 Ghim</span>' : ''}
           ${voteScore > 0 ? `<span class="q-vote-badge" title="${voteScore} lượt vote">❤️ ${voteScore}</span>` : ''}
         </div>
@@ -547,34 +1262,111 @@ const PLAY_SVG =
   '<svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>';
 
 function updatePlayPauseIcon() {
-  if (!playerReady) return;
-  const playing = player.getPlayerState && player.getPlayerState() === YT.PlayerState.PLAYING;
+  let playing = false;
+  if (activePlayerProvider === "youtube") {
+    if (playerReady && player?.getPlayerState) {
+      playing = player.getPlayerState() === YT.PlayerState.PLAYING;
+    }
+  } else if (activePlayerProvider === "spotify") {
+    playing = Boolean(spotifyPlayerState && !spotifyPlayerState.paused);
+    updateSpotifyPlayPauseUI(!playing);
+  } else if (activePlayerProvider === "soundcloud") {
+    playing = scIsPlaying;
+  }
   document.getElementById("playpause").innerHTML = playing ? PAUSE_SVG : PLAY_SVG;
 }
 
 // ---- Controls --------------------------------------------------------------
+async function updateSpotifyStatus() {
+  const btn = document.getElementById("spotify-connect-btn");
+  if (!btn) return;
+  try {
+    const res = await fetch("/api/spotify/status");
+    const data = await res.json();
+    spotifyStatus = data;
+    if (data.connected) {
+      btn.textContent = "🟢 Spotify: Đã kết nối";
+      btn.classList.add("connected");
+      btn.title = "Tài khoản Spotify Premium đã kết nối. Nhấp để ngắt kết nối.";
+    } else {
+      btn.textContent = "⚪ Kết nối Spotify";
+      btn.classList.remove("connected");
+      btn.title = "Nhấp để liên kết tài khoản Spotify Premium cho Host phát nhạc.";
+    }
+  } catch {
+    btn.textContent = "⚪ Kết nối Spotify";
+    btn.classList.remove("connected");
+  }
+}
+
+function wireSpotifyConnect() {
+  const btn = document.getElementById("spotify-connect-btn");
+  if (!btn) return;
+  btn.onclick = async () => {
+    if (spotifyStatus.connected) {
+      if (confirm("Host đang kết nối Spotify Premium. Bạn có muốn ngắt kết nối không?")) {
+        try {
+          await fetch("/api/spotify/disconnect", { method: "POST" });
+          await updateSpotifyStatus();
+        } catch (e) {
+          console.error("Disconnect error", e);
+        }
+      }
+    } else {
+      const popup = window.open("/api/spotify/login", "spotify_login", "width=600,height=720");
+      const pollTimer = setInterval(() => {
+        if (!popup || popup.closed) {
+          clearInterval(pollTimer);
+          updateSpotifyStatus();
+        }
+      }, 1000);
+    }
+  };
+
+  window.addEventListener("message", (e) => {
+    if (e.data && (e.data.type === "spotify_connected" || e.data.type === "spotify_error")) {
+      updateSpotifyStatus();
+    }
+  });
+  window.addEventListener("focus", () => {
+    updateSpotifyStatus();
+  });
+}
+
 function wireControls() {
   document.getElementById("resume-playback").onclick = () => {
     const np = latestState.nowPlaying;
-    if (!playerReady || !np) return;
+    if (!np) return;
     hidePlaybackRecovery();
     currentVideoId = np.videoId;
-    // Repeat both load and play inside the click handler. The previous load may
-    // have been fully blocked by the browser.
-    player.loadVideoById(np.videoId);
-    player.playVideo();
+    if (activePlayerProvider === "youtube" && playerReady) {
+      player.loadVideoById(np.videoId);
+      player.playVideo();
+    } else if (activePlayerProvider === "spotify") {
+      playSpotify(np.videoId);
+    } else if (activePlayerProvider === "soundcloud") {
+      playSoundCloud(np.videoId);
+    }
     armPlaybackWatchdog(np.videoId, currentPlaybackToken);
   };
   document.getElementById("playpause").onclick = () => {
-    if (!playerReady) return;
-    const s = player.getPlayerState();
-    if (s === YT.PlayerState.PLAYING) player.pauseVideo();
-    else player.playVideo();
+    if (activePlayerProvider === "youtube") {
+      if (!playerReady) return;
+      const s = player.getPlayerState();
+      if (s === YT.PlayerState.PLAYING) player.pauseVideo();
+      else player.playVideo();
+    } else if (activePlayerProvider === "spotify") {
+      if (spotifyPlayer?.togglePlay) spotifyPlayer.togglePlay();
+    } else if (activePlayerProvider === "soundcloud") {
+      if (scWidget?.toggle) scWidget.toggle();
+    }
   };
   document.getElementById("skip").onclick = () => {
-    const playedSeconds = playerReady && player?.getCurrentTime ? Number(player.getCurrentTime()) : null;
+    const playedSeconds = getCurrentPlayerTime();
     send({ type: "skip", playedSeconds: Number.isFinite(playedSeconds) ? playedSeconds : null });
   };
+  wireSpotifyConnect();
+  wireSpotifyInteractiveControls();
   // Cycle the filter: off → on (normal) → strict (family-safe only) → off.
   document.getElementById("filter-toggle").onclick = () => {
     if (!filterOn) send({ type: "setFilter", on: true, mode: "default" });
@@ -625,7 +1417,306 @@ function wireControls() {
     if (e.target.tagName === "INPUT") return; // typing in the context input
     if (e.code === "Space") { e.preventDefault(); document.getElementById("playpause").click(); }
     if (e.key.toLowerCase() === "n") document.getElementById("skip").click();
+    if (e.key === "ArrowLeft" || e.key.toLowerCase() === "j") {
+      e.preventDefault();
+      seekPlayerRelative(-10);
+    }
+    if (e.key === "ArrowRight" || e.key.toLowerCase() === "l") {
+      e.preventDefault();
+      seekPlayerRelative(10);
+    }
+    if (e.key.toLowerCase() === "f") {
+      e.preventDefault();
+      toggleWrapFullscreen();
+    }
+    if (e.key === "Escape" && isLyricsMode) {
+      e.preventDefault();
+      toggleLyricsMode(false);
+    }
   });
+
+  wireSpotifyInteractiveControls();
+}
+
+function seekSpotifyTo(targetSec) {
+  if (!spotifyPlayer) return;
+  const durSec = spotifyPlayerState?.duration ? spotifyPlayerState.duration / 1000 : 9999;
+  const newPos = Math.max(0, Math.min(durSec, targetSec));
+  const ms = Math.floor(newPos * 1000);
+  if (spotifyPlayer.seek) {
+    spotifyPlayer.seek(ms);
+  }
+  if (spotifyPlayerState) {
+    spotifyPlayerState.position = ms;
+    updateSpotifyProgressUI(spotifyPlayerState);
+  }
+}
+
+function seekSpotifyRelative(deltaSec) {
+  if (!spotifyPlayer || !spotifyPlayerState?.duration) return;
+  const curPos = (spotifyPlayerState.position || 0) / 1000;
+  const durSec = spotifyPlayerState.duration / 1000;
+  const newPos = Math.max(0, Math.min(durSec - 1, curPos + deltaSec));
+  spotifyPlayer.seek(Math.floor(newPos * 1000));
+  spotifyPlayerState.position = Math.floor(newPos * 1000);
+  updateSpotifyProgressUI(spotifyPlayerState);
+}
+
+function seekSoundCloudRelative(deltaSec) {
+  if (!scWidget) return;
+  try {
+    scWidget.getPosition((posMs) => {
+      scWidget.getDuration((durMs) => {
+        const dur = durMs || 0;
+        const newPos = Math.max(0, Math.min(dur, (posMs || 0) + deltaSec * 1000));
+        scWidget.seekTo(newPos);
+      });
+    });
+  } catch {}
+}
+
+function seekPlayerRelative(deltaSec) {
+  if (activePlayerProvider === "spotify") {
+    seekSpotifyRelative(deltaSec);
+  } else if (activePlayerProvider === "soundcloud") {
+    seekSoundCloudRelative(deltaSec);
+  } else if (activePlayerProvider === "youtube" && playerReady && player?.getCurrentTime) {
+    try {
+      const cur = player.getCurrentTime() || 0;
+      const dur = player.getDuration() || 0;
+      const target = Math.max(0, Math.min(dur, cur + deltaSec));
+      player.seekTo(target, true);
+    } catch {}
+  }
+}
+
+function toggleWrapFullscreen() {
+  const wrap = document.getElementById("player-wrap");
+  if (!wrap) return;
+  if (!document.fullscreenElement) {
+    wrap.requestFullscreen?.().catch(console.warn);
+  } else {
+    document.exitFullscreen?.().catch(console.warn);
+  }
+}
+
+function updateFullscreenIcons() {
+  const isFs = Boolean(document.fullscreenElement);
+  document.querySelectorAll(".icon-fullscreen").forEach((el) => el.classList.toggle("hidden", isFs));
+  document.querySelectorAll(".icon-exit-fullscreen").forEach((el) => el.classList.toggle("hidden", !isFs));
+}
+
+document.addEventListener("fullscreenchange", updateFullscreenIcons);
+
+function wireSpotifyInteractiveControls() {
+  const scrubberWrap = document.getElementById("spotify-scrubber-wrap");
+  const scrubberTooltip = document.getElementById("spotify-scrubber-tooltip");
+  const scrubberThumb = document.getElementById("spotify-scrubber-thumb");
+  const fillEl = document.getElementById("spotify-progress-fill");
+  const curEl = document.getElementById("spotify-time-cur");
+  const playerSpotifyEl = document.getElementById("player-spotify");
+
+  function getScrubTimeFromEvent(e) {
+    if (!scrubberWrap || !spotifyPlayerState?.duration) return 0;
+    const rect = scrubberWrap.getBoundingClientRect();
+    const clickX = Math.max(0, Math.min(e.clientX - rect.left, rect.width));
+    const ratio = rect.width > 0 ? clickX / rect.width : 0;
+    return (spotifyPlayerState.duration / 1000) * ratio;
+  }
+
+  if (scrubberWrap) {
+    scrubberWrap.addEventListener("mousemove", (e) => {
+      const durSec = (spotifyPlayerState?.duration || 0) / 1000;
+      if (durSec <= 0) return;
+      const rect = scrubberWrap.getBoundingClientRect();
+      const offsetX = Math.max(0, Math.min(e.clientX - rect.left, rect.width));
+      const ratio = rect.width > 0 ? offsetX / rect.width : 0;
+      const targetSec = durSec * ratio;
+
+      if (scrubberTooltip) {
+        scrubberTooltip.textContent = formatSpotifyTime(targetSec);
+        scrubberTooltip.style.left = `${offsetX}px`;
+        scrubberTooltip.classList.add("visible");
+      }
+
+      if (isSpotifyScrubbing) {
+        const pct = (ratio * 100).toFixed(1);
+        if (fillEl) fillEl.style.width = `${pct}%`;
+        if (scrubberThumb) scrubberThumb.style.left = `${pct}%`;
+        if (curEl) curEl.textContent = formatSpotifyTime(targetSec);
+        syncLyricsPosition(targetSec);
+      }
+    });
+
+    scrubberWrap.addEventListener("mouseleave", () => {
+      if (scrubberTooltip) scrubberTooltip.classList.remove("visible");
+    });
+
+    scrubberWrap.addEventListener("mousedown", (e) => {
+      isSpotifyScrubbing = true;
+      scrubberWrap.classList.add("is-dragging");
+      const targetSec = getScrubTimeFromEvent(e);
+      const durSec = (spotifyPlayerState?.duration || 0) / 1000;
+      if (durSec > 0) {
+        const pct = Math.min(100, Math.max(0, (targetSec / durSec) * 100));
+        if (fillEl) fillEl.style.width = `${pct}%`;
+        if (scrubberThumb) scrubberThumb.style.left = `${pct}%`;
+        if (curEl) curEl.textContent = formatSpotifyTime(targetSec);
+      }
+    });
+
+    window.addEventListener("mouseup", (e) => {
+      if (!isSpotifyScrubbing) return;
+      isSpotifyScrubbing = false;
+      scrubberWrap.classList.remove("is-dragging");
+      const targetSec = getScrubTimeFromEvent(e);
+      seekSpotifyTo(targetSec);
+      syncLyricsPosition(targetSec, true);
+    });
+  }
+
+  // Play/Pause button on player
+  const btnPlayPause = document.getElementById("spotify-btn-playpause");
+  if (btnPlayPause) {
+    btnPlayPause.onclick = (e) => {
+      e.stopPropagation();
+      if (spotifyPlayer?.togglePlay) {
+        spotifyPlayer.togglePlay();
+        if (spotifyPlayerState) {
+          spotifyPlayerState.paused = !spotifyPlayerState.paused;
+          updateSpotifyPlayPauseUI(spotifyPlayerState.paused);
+        }
+      }
+    };
+  }
+
+  // Clicking artwork or center play button toggles play/pause
+  const artCenter = document.getElementById("spotify-art-center");
+  if (artCenter) {
+    artCenter.onclick = () => {
+      if (spotifyPlayer?.togglePlay) {
+        spotifyPlayer.togglePlay();
+        if (spotifyPlayerState) {
+          spotifyPlayerState.paused = !spotifyPlayerState.paused;
+          updateSpotifyPlayPauseUI(spotifyPlayerState.paused);
+        }
+      }
+    };
+  }
+
+  // Tua lùi 10s & tua tới 10s
+  const btnRewind = document.getElementById("spotify-btn-rewind");
+  if (btnRewind) {
+    btnRewind.onclick = (e) => {
+      e.stopPropagation();
+      seekSpotifyRelative(-10);
+    };
+  }
+  const btnForward = document.getElementById("spotify-btn-forward");
+  if (btnForward) {
+    btnForward.onclick = (e) => {
+      e.stopPropagation();
+      seekSpotifyRelative(10);
+    };
+  }
+
+  // Volume slider & mute toggle
+  const volSlider = document.getElementById("spotify-vol-slider");
+  let lastVolume = 0.8;
+  if (volSlider) {
+    volSlider.addEventListener("input", (e) => {
+      const vol = parseFloat(e.target.value);
+      lastVolume = vol;
+      if (spotifyPlayer?.setVolume) spotifyPlayer.setVolume(vol);
+      updateVolumeIcons(vol);
+    });
+  }
+
+  const btnVol = document.getElementById("spotify-btn-vol");
+  if (btnVol) {
+    btnVol.onclick = (e) => {
+      e.stopPropagation();
+      if (!volSlider) return;
+      if (parseFloat(volSlider.value) > 0) {
+        lastVolume = parseFloat(volSlider.value) || 0.8;
+        volSlider.value = 0;
+        if (spotifyPlayer?.setVolume) spotifyPlayer.setVolume(0);
+        updateVolumeIcons(0);
+      } else {
+        const restore = lastVolume || 0.8;
+        volSlider.value = restore;
+        if (spotifyPlayer?.setVolume) spotifyPlayer.setVolume(restore);
+        updateVolumeIcons(restore);
+      }
+    };
+  }
+
+  function updateVolumeIcons(vol) {
+    if (!btnVol) return;
+    const isMute = vol <= 0;
+    const iconHigh = btnVol.querySelector(".icon-vol-high");
+    const iconMute = btnVol.querySelector(".icon-vol-mute");
+    if (iconHigh && iconMute) {
+      iconHigh.classList.toggle("hidden", isMute);
+      iconMute.classList.toggle("hidden", !isMute);
+    }
+  }
+
+  // Fullscreen buttons
+  const fsBtn = document.getElementById("player-fullscreen-btn");
+  if (fsBtn) {
+    fsBtn.onclick = (e) => {
+      e.stopPropagation();
+      toggleWrapFullscreen();
+    };
+  }
+  const scFsBtn = document.getElementById("sc-fullscreen-btn");
+  if (scFsBtn) {
+    scFsBtn.onclick = (e) => {
+      e.stopPropagation();
+      toggleWrapFullscreen();
+    };
+  }
+
+  // Auto-hide controls when idle
+  let spotifyControlsTimeout = null;
+  function showSpotifyControls() {
+    if (!playerSpotifyEl) return;
+    playerSpotifyEl.classList.remove("controls-idle");
+    clearTimeout(spotifyControlsTimeout);
+    spotifyControlsTimeout = setTimeout(() => {
+      if (spotifyPlayerState && !spotifyPlayerState.paused && !isSpotifyScrubbing) {
+        playerSpotifyEl.classList.add("controls-idle");
+      }
+    }, 2500);
+  }
+
+  if (playerSpotifyEl) {
+    playerSpotifyEl.addEventListener("mousemove", showSpotifyControls);
+    playerSpotifyEl.addEventListener("click", showSpotifyControls);
+    playerSpotifyEl.addEventListener("mouseleave", () => {
+      if (spotifyPlayerState && !spotifyPlayerState.paused && !isSpotifyScrubbing) {
+        playerSpotifyEl.classList.add("controls-idle");
+      }
+    });
+  }
+
+  // Lyrics overlay toggles
+  const btnLyrics = document.getElementById("spotify-btn-lyrics");
+  if (btnLyrics) {
+    btnLyrics.onclick = (e) => {
+      e.stopPropagation();
+      toggleLyricsMode();
+    };
+  }
+
+  const btnLyricsClose = document.getElementById("spotify-lyrics-close");
+  if (btnLyricsClose) {
+    btnLyricsClose.onclick = (e) => {
+      e.stopPropagation();
+      toggleLyricsMode(false);
+    };
+  }
 }
 
 // ---- Initialization --------------------------------------------------------
@@ -643,6 +1734,7 @@ async function loadInfo() {
     renderFilter();
     renderQueueLimit();
     renderRequireName();
+    updateSpotifyStatus();
   } catch (err) {
     document.getElementById("guest-url").textContent = "Không thể tải liên kết dành cho khách";
   }
@@ -660,6 +1752,9 @@ async function loadInfo() {
 
 document.getElementById("start-btn").onclick = () => {
   started = true;
+  if (hostCoordinationChannel) {
+    hostCoordinationChannel.postMessage({ type: "host_claimed_playback", tabId: myTabId });
+  }
   document.getElementById("start-overlay").classList.add("hidden");
   document.getElementById("stage").classList.remove("hidden");
   registerOrderNetworkHost();
@@ -671,3 +1766,4 @@ loadInfo();
 wireControls();
 wireQueueDrag();
 connectWs();
+initSoundCloudWidget();

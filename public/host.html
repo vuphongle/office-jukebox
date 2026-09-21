@@ -27,6 +27,114 @@
     <section class="player-pane">
       <div id="player-wrap">
         <div id="player"></div>
+        <div id="player-spotify" class="hidden">
+          <div id="spotify-ambient-glow" class="spotify-ambient-glow"></div>
+          <div class="spotify-ambient-overlay"></div>
+
+          <div class="spotify-badge-corner">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="#1DB954"><path d="M12 0C5.4 0 0 5.4 0 12s5.4 12 12 12 12-5.4 12-12S18.66 0 12 0zm5.521 17.34c-.24.359-.66.48-1.021.24-2.82-1.74-6.36-2.101-10.561-1.141-.418.122-.779-.179-.899-.539-.12-.421.18-.78.54-.9 4.56-1.021 8.52-.6 11.64 1.32.42.18.479.659.301 1.02zm1.44-3.3c-.301.42-.841.6-1.262.3-3.239-1.98-8.159-2.58-11.939-1.38-.479.12-1.02-.12-1.14-.6-.12-.48.12-1.018.6-1.141 4.38-1.38 9.781-.72 13.44 1.56.419.239.54.839.301 1.261zm.12-3.36C15.24 8.4 8.82 8.16 5.16 9.301c-.6.179-1.2-.181-1.38-.721-.18-.601.18-1.2.72-1.381 4.26-1.26 11.28-1.02 15.721 1.621.539.3.719 1.02.419 1.56-.299.421-1.02.599-1.559.3z"/></svg>
+            <span class="spotify-badge-text">Spotify</span>
+          </div>
+
+          <div class="spotify-status-corner">
+            <span class="spotify-live-indicator"></span>
+            <span class="spotify-status-text">Direct Playback</span>
+          </div>
+
+          <!-- Centered Album Artwork & Play/Pause Click Target -->
+          <div class="spotify-art-center" id="spotify-art-center" title="Nhấp để Phát / Tạm dừng">
+            <img id="spotify-cover" src="" alt="Album Art" />
+            <div class="spotify-center-play-overlay">
+              <div class="spotify-center-play-btn" id="spotify-center-play-btn" title="Phát / Tạm dừng (Space)">
+                <svg class="center-icon-play" width="44" height="44" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
+                <svg class="center-icon-pause hidden" width="44" height="44" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="5" width="4" height="14" rx="1.5"/><rect x="14" y="5" width="4" height="14" rx="1.5"/></svg>
+              </div>
+            </div>
+          </div>
+
+          <!-- Real-time Synced Lyrics Overlay -->
+          <div class="spotify-lyrics-view" id="spotify-lyrics-view">
+            <div class="spotify-lyrics-header">
+              <div class="spotify-lyrics-badge">
+                <svg width="15" height="15" viewBox="0 0 256 256" fill="currentColor"><path d="M115.06 46.36a4 4 0 0 0-6.11.54A71.54 71.54 0 0 0 96 88a73.29 73.29 0 0 0 .63 9.42L27.12 192.22A15.93 15.93 0 0 0 28.71 213L43 227.29a15.93 15.93 0 0 0 20.78 1.59l94.81-69.53A73.29 73.29 0 0 0 168 160a71.54 71.54 0 0 0 41.09-12.93 4 4 0 0 0 .54-6.11Zm2.61 103.28-16 16a8 8 0 1 1-11.31-11.31l16-16a8 8 0 0 1 11.31 11.31Zm109.4-20.56a4 4 0 0 1-6.12.54L126.38 35.05a4 4 0 0 1 .54-6.12A71.93 71.93 0 0 1 227.07 129.08Z"/></svg>
+                <span>Lời bài hát đồng bộ</span>
+              </div>
+              <button type="button" class="spotify-lyrics-close" id="spotify-lyrics-close" title="Đóng lời bài hát (Esc)">✕</button>
+            </div>
+            <div class="spotify-lyrics-scroller" id="spotify-lyrics-scroller">
+              <div class="spotify-lyrics-content" id="spotify-lyrics-content">
+                <div class="spotify-lyrics-loading">Đang tải lời bài hát…</div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Interactive Bottom Controls Bar (YouTube-style) -->
+          <div class="spotify-controls-overlay" id="spotify-controls-overlay">
+            <!-- Scrubber Track with Seek, Drag & Tooltip -->
+            <div class="spotify-scrubber-wrap" id="spotify-scrubber-wrap" title="Kéo hoặc nhấp để tua">
+              <div class="spotify-scrubber-tooltip" id="spotify-scrubber-tooltip">0:00</div>
+              <div class="spotify-progress-track">
+                <div id="spotify-progress-fill" class="spotify-progress-fill"></div>
+                <div class="spotify-scrubber-thumb" id="spotify-scrubber-thumb"></div>
+              </div>
+            </div>
+
+            <!-- Controls Row: Play/Pause, -10s, +10s, Time, Volume, Fullscreen -->
+            <div class="spotify-controls-row">
+              <div class="spotify-ctrl-group left">
+                <button type="button" class="spotify-ctrl-btn" id="spotify-btn-playpause" title="Phát / Tạm dừng (Space)">
+                  <svg class="icon-play" width="22" height="22" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
+                  <svg class="icon-pause hidden" width="22" height="22" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="5" width="4" height="14" rx="1.5"/><rect x="14" y="5" width="4" height="14" rx="1.5"/></svg>
+                </button>
+
+                <button type="button" class="spotify-ctrl-btn" id="spotify-btn-rewind" title="Tua lùi 10 giây (←)">
+                  <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><text x="12" y="15.5" font-size="7.5" font-family="sans-serif" font-weight="700" text-anchor="middle" stroke="none" fill="currentColor">10</text></svg>
+                </button>
+
+                <button type="button" class="spotify-ctrl-btn" id="spotify-btn-forward" title="Tua tới 10 giây (→)">
+                  <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><text x="12" y="15.5" font-size="7.5" font-family="sans-serif" font-weight="700" text-anchor="middle" stroke="none" fill="currentColor">10</text></svg>
+                </button>
+
+                <div class="spotify-time-display">
+                  <span id="spotify-time-cur">0:00</span>
+                  <span class="spotify-time-sep">/</span>
+                  <span id="spotify-time-total">0:00</span>
+                </div>
+              </div>
+
+              <div class="spotify-ctrl-group right">
+                <button type="button" class="spotify-ctrl-btn" id="spotify-btn-lyrics" title="Lời bài hát đồng bộ (Karaoke)">
+                  <svg width="20" height="20" viewBox="0 0 256 256" fill="currentColor"><path d="M115.06 46.36a4 4 0 0 0-6.11.54A71.54 71.54 0 0 0 96 88a73.29 73.29 0 0 0 .63 9.42L27.12 192.22A15.93 15.93 0 0 0 28.71 213L43 227.29a15.93 15.93 0 0 0 20.78 1.59l94.81-69.53A73.29 73.29 0 0 0 168 160a71.54 71.54 0 0 0 41.09-12.93 4 4 0 0 0 .54-6.11Zm2.61 103.28-16 16a8 8 0 1 1-11.31-11.31l16-16a8 8 0 0 1 11.31 11.31Zm109.4-20.56a4 4 0 0 1-6.12.54L126.38 35.05a4 4 0 0 1 .54-6.12A71.93,71.93,0,0,1,227.07 129.08Z"/></svg>
+                </button>
+
+                <div class="spotify-vol-wrap">
+                  <button type="button" class="spotify-ctrl-btn" id="spotify-btn-vol" title="Âm lượng">
+                    <svg class="icon-vol-high" width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z"/></svg>
+                    <svg class="icon-vol-mute hidden" width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><path d="M16.5 12c0-1.77-1.02-3.29-2.5-4.03v2.21l2.45 2.45c.03-.2.05-.41.05-.63zm2.5 0c0 .94-.2 1.82-.54 2.64l1.51 1.51C20.63 14.91 21 13.5 21 12c0-4.28-2.99-7.86-7-8.77v2.06c2.89.86 5 3.54 5 6.71zM4.27 3L3 4.27 7.73 9H3v6h4l5 5v-6.73l4.25 4.25c-.67.52-1.42.93-2.25 1.18v2.06c1.38-.31 2.63-.95 3.69-1.81L19.73 21 21 19.73l-9-9L4.27 3zM12 4L9.91 6.09 12 8.18V4z"/></svg>
+                  </button>
+                  <input type="range" class="spotify-vol-slider" id="spotify-vol-slider" min="0" max="1" step="0.02" value="0.8" title="Điều chỉnh âm lượng" />
+                </div>
+
+                <button type="button" class="spotify-ctrl-btn" id="player-fullscreen-btn" title="Toàn màn hình (f)">
+                  <svg class="icon-fullscreen" width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><path d="M7 14H5v5h5v-2H7v-3zm-2-4h2V7h3V5H5v5zm12 7h-3v2h5v-5h-2v3zM14 5v2h3v3h2V5h-5z"/></svg>
+                  <svg class="icon-exit-fullscreen hidden" width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><path d="M5 16h3v3h2v-5H5v2zm3-8H5v2h5V5H8v3zm6 11h2v-3h3v-2h-5v5zm2-11V5h-2v5h5V8h-3z"/></svg>
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <!-- Hidden compatibility elements to safely keep existing JS references -->
+          <div id="spotify-title" class="hidden"></div>
+          <div id="spotify-artist" class="hidden"></div>
+          <div id="spotify-requester-pill" class="hidden"><span id="spotify-requester-name"></span></div>
+          <img id="spotify-vinyl-cover" class="hidden" alt="" />
+        </div>
+        <div id="player-soundcloud" class="hidden">
+          <iframe id="sc-widget-iframe" width="100%" height="100%" scrolling="no" frameborder="no" allow="autoplay; encrypted-media" src="https://w.soundcloud.com/player/?url=https%3A//api.soundcloud.com/tracks/293&auto_play=false"></iframe>
+          <button type="button" class="universal-fullscreen-btn" id="sc-fullscreen-btn" title="Toàn màn hình (f)">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><path d="M7 14H5v5h5v-2H7v-3zm-2-4h2V7h3V5H5v5zm12 7h-3v2h5v-5h-2v3zM14 5v2h3v3h2V5h-5z"/></svg>
+          </button>
+        </div>
         <div id="idle" class="hidden">
           <div class="idle-emoji">🎧</div>
           <p>Chưa có bài hát</p>
@@ -56,6 +164,7 @@
         <!-- Hidden from the UI by design; keep the DOM/id for existing filter logic. -->
         <button id="filter-toggle" class="pill hidden" title="Bộ lọc nội dung — nhấp để chuyển: tắt → bật → nghiêm ngặt (chỉ nội dung phù hợp với gia đình)">Bộ lọc</button>
         <span id="filter-hint" class="filter-hint hidden">Chưa có khóa LLM — chấp nhận tất cả</span>
+        <button id="spotify-connect-btn" class="pill" title="Trạng thái liên kết Spotify của Host">Kết nối Spotify</button>
         <button id="cooldown-toggle" class="pill" title="Thời gian chờ giữa các yêu cầu của từng khách — nhấp để thay đổi">Thời gian chờ</button>
         <button id="queue-limit-toggle" class="pill" title="Giới hạn số bài sắp phát — nhấp để chuyển Tắt, 5, 10, 15, 20">Hàng đợi</button>
         <button id="require-name-toggle" class="pill" title="Bắt buộc khách nhập tên order">Tên order</button>
@@ -94,7 +203,9 @@
 
   <script src="/avatar.js"></script>
   <script src="/host.js"></script>
-  <!-- host.js registers onYouTubeIframeAPIReady before the API can finish loading. -->
+  <!-- host.js registers onYouTubeIframeAPIReady and onSpotifyWebPlaybackSDKReady before APIs finish loading -->
   <script src="https://www.youtube.com/iframe_api"></script>
+  <script src="https://sdk.scdn.co/spotify-player.js"></script>
+  <script src="https://w.soundcloud.com/player/api.js" onload="if (window.initSoundCloudWidget) window.initSoundCloudWidget()"></script>
 </body>
 </html>

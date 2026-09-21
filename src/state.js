@@ -34,6 +34,7 @@ export class JukeboxState {
         this.nowPlaying = {
           id: active.id,
           videoId: active.video_id,
+          provider: active.provider || "youtube",
           title: active.title,
           channel: active.channel || "",
           duration: normalizeDuration(active.duration),
@@ -56,6 +57,7 @@ export class JukeboxState {
       this.queue = items.map((row) => ({
         id: row.id,
         videoId: row.video_id,
+        provider: row.provider || "youtube",
         title: row.title,
         channel: row.channel || "",
         duration: normalizeDuration(row.duration),
@@ -187,7 +189,7 @@ export class JukeboxState {
   }
 
   // Add a moderated/approved song and return the created item with its position.
-  add({ videoId, title, channel, duration, thumbnail, addedBy, requesterId, userId = null }) {
+  add({ videoId, title, channel, duration, thumbnail, addedBy, requesterId, userId = null, provider = "youtube" }) {
     let dbItem = null;
     if (this.queueRepo) {
       dbItem = this.queueRepo.createItem({
@@ -199,12 +201,14 @@ export class JukeboxState {
         addedBy,
         requesterId,
         addedByUserId: userId,
+        provider: provider || "youtube",
       });
     }
 
     const item = {
       id: dbItem ? dbItem.id : randomUUID(),
       videoId,
+      provider: dbItem?.provider || provider || "youtube",
       title,
       channel: channel || "",
       duration: normalizeDuration(duration),

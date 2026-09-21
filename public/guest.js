@@ -1286,7 +1286,12 @@ function showYouTubePreview(song) {
   youtubeLinkThumb.src = safeImageUrl(song.thumbnail);
   youtubeLinkTitle.textContent = song.title;
   updateMarqueeTitle(youtubeLinkTitle);
-  youtubeLinkSub.textContent = song.channel;
+  const providerLabel = song.provider === "spotify"
+    ? " · Spotify"
+    : song.provider === "soundcloud"
+      ? " · SoundCloud"
+      : "";
+  youtubeLinkSub.textContent = (song.channel || "") + providerLabel;
   youtubeLinkAdd.disabled = false;
   youtubeLinkAdd.textContent = "+";
   youtubeLinkPreview.classList.remove("hidden");
@@ -1295,7 +1300,7 @@ function showYouTubePreview(song) {
 youtubeLinkForm.addEventListener("submit", async (e) => {
   e.preventDefault();
   const url = youtubeLinkInput.value.trim();
-  if (!url) return setYouTubeLinkStatus("Vui lòng dán link YouTube.", "bad");
+  if (!url) return setYouTubeLinkStatus("Vui lòng dán link YouTube, Spotify hoặc SoundCloud.", "bad");
   youtubeLinkSubmit.disabled = true;
   youtubeLinkSubmit.textContent = "Đang kiểm tra…";
   youtubeLinkPreview.classList.add("hidden");
@@ -1308,11 +1313,11 @@ youtubeLinkForm.addEventListener("submit", async (e) => {
       body: JSON.stringify({ url }),
     });
     const data = await res.json();
-    if (!res.ok || !data.ok) throw new Error(data.reason || "Link YouTube không đúng định dạng.");
+    if (!res.ok || !data.ok) throw new Error(data.reason || "Link bài hát không đúng định dạng hoặc không được hỗ trợ.");
     showYouTubePreview(data.song);
-    setYouTubeLinkStatus("Đã tìm thấy video. Bạn có thể thêm vào hàng đợi.", "ok");
+    setYouTubeLinkStatus("Đã tìm thấy bài hát. Bạn có thể thêm vào hàng đợi.", "ok");
   } catch (err) {
-    setYouTubeLinkStatus(err.message || "Không thể kiểm tra link YouTube.", "bad");
+    setYouTubeLinkStatus(err.message || "Không thể kiểm tra link bài hát.", "bad");
   } finally {
     youtubeLinkSubmit.disabled = false;
     youtubeLinkSubmit.textContent = "Kiểm tra";
@@ -1740,6 +1745,7 @@ function renderQueue(state) {
       <div class="q-text">
         <div class="t-row">
           <span class="t"></span>
+          ${item.provider === "spotify" ? '<span class="q-platform-badge spotify">Spotify</span>' : item.provider === "soundcloud" ? '<span class="q-platform-badge soundcloud">SoundCloud</span>' : ""}
           ${isPinned ? '<span class="q-pinned-badge">Ghim</span>' : ""}
           <span class="q-favorite-slot"></span>
         </div>
