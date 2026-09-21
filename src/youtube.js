@@ -248,7 +248,14 @@ export async function searchYouTubeByMode(
 // URLs are not song links because the queue requires one specific video.
 const YOUTUBE_VIDEO_ID = /^[A-Za-z0-9_-]{11}$/;
 const YOUTUBE_HOSTS = new Set(["youtube.com", "www.youtube.com", "m.youtube.com", "music.youtube.com", "youtu.be"]);
-const YOUTUBE_THUMBNAIL_HOSTS = new Set(["i.ytimg.com", "img.youtube.com"]);
+const YOUTUBE_THUMBNAIL_HOSTS = new Set([
+  "i.ytimg.com",
+  "img.youtube.com",
+  "i.scdn.co",
+  "mosaic.scdn.co",
+  "soundcloud.com",
+  "www.soundcloud.com",
+]);
 
 export function isValidYouTubeVideoId(value) {
   return typeof value === "string" && YOUTUBE_VIDEO_ID.test(value);
@@ -259,9 +266,15 @@ export function sanitizeThumbnail(value) {
   try {
     const url = new URL(value.trim());
     const host = url.hostname.toLowerCase();
-    const isYouTubeImageHost =
-      YOUTUBE_THUMBNAIL_HOSTS.has(host) || host.endsWith(".ytimg.com") || host.endsWith(".ggpht.com") || host.endsWith(".googleusercontent.com");
-    if (url.protocol !== "https:" || !isYouTubeImageHost) return null;
+    const isAllowedImageHost =
+      YOUTUBE_THUMBNAIL_HOSTS.has(host) ||
+      host.endsWith(".ytimg.com") ||
+      host.endsWith(".ggpht.com") ||
+      host.endsWith(".googleusercontent.com") ||
+      host.endsWith(".scdn.co") ||
+      host.endsWith(".spotifycdn.com") ||
+      host.endsWith(".sndcdn.com");
+    if (url.protocol !== "https:" || !isAllowedImageHost) return null;
     const normalized = url.toString();
     return normalized.length <= 500 ? normalized : null;
   } catch {
