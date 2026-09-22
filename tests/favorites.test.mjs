@@ -43,7 +43,6 @@ test("favorite songs stay private to each user and repeated likes update one rec
       channel: "Canonical artist",
       duration: "3:32",
       thumbnail: "https://i.ytimg.com/vi/dQw4w9WgXcQ/maxresdefault.jpg",
-      provider: "youtube",
     },
   ]);
 });

@@ -20,7 +20,10 @@ function normalizeSong(song) {
   const title = typeof song?.title === "string" ? song.title.trim() : "";
   const channel = typeof song?.channel === "string" ? song.channel.trim() : "";
   const duration = typeof song?.duration === "string" ? song.duration.trim() : "";
-  const provider = (song?.provider || "youtube").toString().toLowerCase().trim();
+  const hasProvider = typeof song?.provider === "string" && Boolean(song.provider.trim());
+  const provider = hasProvider
+    ? song.provider.toLowerCase().trim()
+    : (isValidSpotifyTrackId(videoId) ? "spotify" : (isValidSoundCloudUrl(videoId) ? "soundcloud" : "youtube"));
 
   if (!isValidFavoriteSongId(videoId, provider)) {
     if (provider === "spotify") throw new Error("Mã bài hát Spotify không hợp lệ.");
@@ -39,7 +42,7 @@ function normalizeSong(song) {
     channel,
     duration,
     thumbnail: sanitizeThumbnail(song?.thumbnail),
-    provider,
+    ...(hasProvider || provider !== "youtube" ? { provider } : {}),
   };
 }
 
@@ -50,7 +53,7 @@ function mapFavorite(row) {
     channel: row.channel || "",
     duration: row.duration || "",
     thumbnail: row.thumbnail || null,
-    provider: row.provider || "youtube",
+    ...(row.provider && row.provider !== "youtube" ? { provider: row.provider } : {}),
   };
 }
 
@@ -63,6 +66,7 @@ export class FavoriteRepository {
     if (!userId) throw new Error("Thiếu người dùng.");
     const favorite = normalizeSong(song);
     const now = new Date().toISOString();
+    const provider = favorite.provider || "youtube";
     this.db.run(
       `INSERT INTO song_favorites
        (user_id, video_id, title, channel, duration, thumbnail, provider, created_at, updated_at)
@@ -81,7 +85,7 @@ export class FavoriteRepository {
         favorite.channel,
         favorite.duration,
         favorite.thumbnail,
-        favorite.provider,
+        provider,
         now,
         now,
       ]
