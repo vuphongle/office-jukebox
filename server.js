@@ -34,6 +34,7 @@ import {
   parseSpotifyTrackId,
   isValidSpotifyTrackId,
   fetchSpotifyTrackMetadata,
+  searchSpotifyTracks,
   buildSpotifyAuthorizeUrl,
   exchangeSpotifyCode,
   refreshSpotifyToken,
@@ -1055,7 +1056,25 @@ const MAX_QUEUE_LENGTH = 50;
 app.get("/api/search", publicReadLimit, async (req, res) => {
   const q = (req.query.q || "").toString().trim().slice(0, 100);
   if (!q) return res.json({ results: [] });
+  const platform = (req.query.platform || "youtube").toString().toLowerCase().trim();
+
   try {
+    if (platform === "spotify") {
+      if (!SPOTIFY_CLIENT_ID || !SPOTIFY_CLIENT_SECRET) {
+        return res.status(400).json({ error: "Spotify chưa được cấu hình Client ID / Secret trên hệ thống." });
+      }
+      let accessToken = "";
+      try {
+        accessToken = await getValidSpotifyAccessToken();
+      } catch {}
+      const results = await searchSpotifyTracks(q, {
+        clientId: SPOTIFY_CLIENT_ID,
+        clientSecret: SPOTIFY_CLIENT_SECRET,
+        accessToken,
+      });
+      return res.json({ results });
+    }
+
     const results = await searchYouTubeByMode(q, { mode: searchMode });
     res.json({ results });
   } catch (err) {
@@ -2024,7 +2043,12 @@ function broadcastState() {
     if (client.readyState === 1) client.send(msg);
   }
 }
+let latestSpotifyPlaybackTick = null;
+
 state.onChange = (nextState) => {
+  if (latestSpotifyPlaybackTick && latestSpotifyPlaybackTick.videoId !== nextState.nowPlaying?.videoId) {
+    latestSpotifyPlaybackTick = null;
+  }
   broadcastState();
   chatAiCoordinator.scheduleQueueChange({
     queueCount: nextState.queue?.length || 0,
@@ -2421,14 +2445,53 @@ wss.on("connection", (ws, request) => {
           ok: !!transition,
           ...(transition ? {} : { reason: "Bài đang phát không thuộc về bạn hoặc đã chuyển bài." }),
         }));
-        if (transition) settleRankTransition(transition);
+        if (transition) {
+          latestSpotifyPlaybackTick = null;
+          settleRankTransition(transition);
+        }
+        return;
+      }
+
+      if (msg.type === "requestPlaybackTick") {
+        if (latestSpotifyPlaybackTick && ws.readyState === 1) {
+          ws.send(JSON.stringify({
+            type: "playbackTick",
+            ...latestSpotifyPlaybackTick,
+            serverTime: Date.now(),
+          }));
+        }
         return;
       }
 
       if (!canUseHostControls(ws, currentSession)) return;
 
       switch (msg.type) {
+        case "playbackTick": {
+          if (typeof msg.position !== "number" || msg.position < 0) break;
+          const position = Math.max(0, Math.floor(msg.position));
+          const paused = Boolean(msg.paused);
+          const seek = Boolean(msg.seek);
+          const videoId = typeof msg.videoId === "string" ? msg.videoId : "";
+          latestSpotifyPlaybackTick = {
+            position,
+            paused,
+            seek,
+            videoId,
+            serverTime: Date.now(),
+          };
+          const payload = JSON.stringify({
+            type: "playbackTick",
+            ...latestSpotifyPlaybackTick,
+          });
+          for (const client of wss.clients) {
+            if (client !== ws && client.readyState === 1) {
+              client.send(payload);
+            }
+          }
+          break;
+        }
         case "ended":
+          latestSpotifyPlaybackTick = null;
           if (typeof msg.playbackToken !== "string" || !msg.playbackToken) break;
           const activeItem = state.nowPlaying;
           const expectedVideoId = activeItem?.videoId;
@@ -2437,6 +2500,7 @@ wss.on("connection", (ws, request) => {
           settleRankTransition(state.advance(msg.videoId || null, { finishReason: "ended", playbackToken: msg.playbackToken, playedSeconds: msg.playedSeconds }));
           break;
         case "error":
+          latestSpotifyPlaybackTick = null;
           if (typeof msg.playbackToken !== "string" || !msg.playbackToken) break;
           const activeErrItem = state.nowPlaying;
           const expectedErrVideoId = activeErrItem?.videoId;
@@ -2445,6 +2509,7 @@ wss.on("connection", (ws, request) => {
           settleRankTransition(state.advance(msg.videoId || null, { isError: true, finishReason: "error", playbackToken: msg.playbackToken }));
           break;
         case "skip":
+          latestSpotifyPlaybackTick = null;
           settleRankTransition(state.skip({ playedSeconds: msg.playedSeconds }));
           break;
         case "remove":
