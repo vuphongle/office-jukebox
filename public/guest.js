@@ -1153,6 +1153,32 @@ document.getElementById("shuffle").onclick = () => {
   startBrowse(shuffleArray(browse.queries));
 };
 
+// ---- Search Platform Tabs -----------------------------------------------
+let currentSearchPlatform = "youtube";
+
+function initSearchPlatformTabs() {
+  const tabsWrap = document.getElementById("search-platform-tabs");
+  if (!tabsWrap) return;
+  const tabs = tabsWrap.querySelectorAll(".platform-tab");
+  tabs.forEach((tab) => {
+    tab.addEventListener("click", () => {
+      const targetPlatform = tab.dataset.platform || "youtube";
+      if (targetPlatform === currentSearchPlatform) return;
+      currentSearchPlatform = targetPlatform;
+      tabs.forEach((t) => {
+        const isActive = t === tab;
+        t.classList.toggle("active", isActive);
+        t.setAttribute("aria-selected", isActive ? "true" : "false");
+      });
+      qEl.placeholder = "Tìm bài hát hoặc ca sĩ…";
+      const currentQuery = qEl.value.trim();
+      if (currentQuery && sugSection.classList.contains("hidden")) {
+        doSearch(currentQuery);
+      }
+    });
+  });
+}
+
 // ---- Search --------------------------------------------------------------
 document.getElementById("search-form").addEventListener("submit", (e) => {
   e.preventDefault();
@@ -1169,9 +1195,10 @@ async function doSearch(q) {
   sugSection.classList.add("hidden"); // hide discovery while searching
   moreBtn.classList.add("hidden");
   backToExploreBtn.classList.remove("hidden");
-  setLoading(true, "Đang tìm kiếm…");
+  setLoading(true, currentSearchPlatform === "spotify" ? "Đang tìm kiếm trên Spotify…" : "Đang tìm kiếm…");
   try {
-    const res = await fetch("/api/search?q=" + encodeURIComponent(q));
+    const platformParam = currentSearchPlatform === "spotify" ? "&platform=spotify" : "";
+    const res = await fetch("/api/search?q=" + encodeURIComponent(q) + platformParam);
     if (browse.gen !== gen) return;
     const data = await res.json();
     if (browse.gen !== gen) return;
@@ -1239,10 +1266,14 @@ function safeImageUrl(value) {
 
 function resultCard(r) {
   const li = document.createElement("li");
+  const badgeHtml = getPlatformIconBadge(r.provider);
   li.innerHTML = `
     <img src="${safeImageUrl(r.thumbnail)}" alt="" loading="lazy" />
     <div class="r-meta">
-      <div class="r-title"></div>
+      <div class="r-title-row">
+        <span class="r-title"></span>
+        ${badgeHtml}
+      </div>
       <div class="r-sub"></div>
     </div>
     <div class="r-actions">
@@ -1503,6 +1534,199 @@ function cooldownToast(seconds) {
   }, 1000);
 }
 
+// ---- Real-time Synced Lyrics (Guest Inline) --------------------------------
+let guestLyricsActive = false;
+let currentGuestLyrics = null;
+let currentGuestLyricsActiveIndex = -1;
+let currentGuestLyricsTrackId = "";
+let isGuestLyricsLoading = false;
+let guestLyricsAnchorPosition = 0; // ms
+let guestLyricsAnchorTime = 0; // performance.now()
+let guestLyricsPaused = true;
+let guestLyricsRafId = null;
+
+async function loadGuestLyrics(np) {
+  if (!np || typeof np !== "object") return;
+  const rawTitle = np.title || "";
+  const rawArtist = np.channel || "";
+  const duration = np.duration;
+  const trackId = np.videoId || np.id || `${rawArtist.toLowerCase()}:::${rawTitle.toLowerCase()}`;
+
+  if (trackId === currentGuestLyricsTrackId && currentGuestLyrics?.lines) {
+    renderGuestLyricsLines(currentGuestLyrics.lines);
+    return;
+  }
+  if (trackId === currentGuestLyricsTrackId && isGuestLyricsLoading) {
+    return;
+  }
+
+  currentGuestLyricsTrackId = trackId;
+  isGuestLyricsLoading = true;
+  currentGuestLyrics = null;
+  currentGuestLyricsActiveIndex = -1;
+
+  const contentEl = document.getElementById("np-lyrics-content");
+  if (contentEl) {
+    contentEl.innerHTML = `<div class="np-lyrics-loading">Đang tải lời bài hát đồng bộ…</div>`;
+  }
+
+  let durSec = null;
+  if (typeof duration === "string" && duration.includes(":")) {
+    const p = duration.split(":").map(Number);
+    if (p.length === 2) durSec = p[0] * 60 + p[1];
+  } else if (typeof duration === "number") {
+    durSec = duration;
+  }
+
+  const lyricsClient = window.JukeboxLyrics;
+  const data = lyricsClient
+    ? await lyricsClient.fetchLyricsClient({ title: rawTitle, artist: rawArtist, durationSec: durSec })
+    : null;
+
+  if (trackId !== currentGuestLyricsTrackId) return;
+  isGuestLyricsLoading = false;
+
+  if (!data || !data.lines || data.lines.length === 0) {
+    currentGuestLyrics = null;
+    const currentContentEl = document.getElementById("np-lyrics-content");
+    if (currentContentEl) {
+      currentContentEl.innerHTML = `<div class="np-lyrics-empty"><span>🎵</span><span>Chưa có lời bài hát đồng bộ cho bài hát này.</span></div>`;
+    }
+    return;
+  }
+
+  currentGuestLyrics = data;
+  renderGuestLyricsLines(data.lines);
+}
+
+function renderGuestLyricsLines(lines) {
+  const contentEl = document.getElementById("np-lyrics-content");
+  if (!contentEl) return;
+  contentEl.innerHTML = "";
+
+  const frag = document.createDocumentFragment();
+  lines.forEach((line, idx) => {
+    const lineEl = document.createElement("div");
+    lineEl.className = "guest-lyric-line";
+    lineEl.dataset.index = idx;
+    lineEl.dataset.time = line.time;
+    lineEl.textContent = line.text;
+    frag.appendChild(lineEl);
+  });
+  contentEl.appendChild(frag);
+
+  const curPos = (guestLyricsAnchorPosition || 0) / 1000;
+  syncGuestLyricsPosition(curPos, true);
+}
+
+function syncGuestLyricsPosition(curSec, forceScroll = false) {
+  if (!currentGuestLyrics || !Array.isArray(currentGuestLyrics.lines) || currentGuestLyrics.lines.length === 0) return;
+  const lines = currentGuestLyrics.lines;
+
+  let activeIdx = -1;
+  for (let i = 0; i < lines.length; i++) {
+    if (lines[i].time <= curSec + 0.25) {
+      activeIdx = i;
+    } else {
+      break;
+    }
+  }
+
+  if (activeIdx === currentGuestLyricsActiveIndex && !forceScroll) return;
+  currentGuestLyricsActiveIndex = activeIdx;
+
+  const contentEl = document.getElementById("np-lyrics-content");
+  if (!contentEl) return;
+  const lineEls = contentEl.children;
+
+  for (let i = 0; i < lineEls.length; i++) {
+    const el = lineEls[i];
+    if (i === activeIdx) {
+      el.classList.add("active");
+      el.classList.remove("passed");
+    } else if (i < activeIdx) {
+      el.classList.remove("active");
+      el.classList.add("passed");
+    } else {
+      el.classList.remove("active");
+      el.classList.remove("passed");
+    }
+  }
+
+  if (activeIdx >= 0 && lineEls[activeIdx]) {
+    const activeEl = lineEls[activeIdx];
+    const scroller = document.getElementById("np-lyrics-scroller");
+    if (scroller) {
+      const activeRect = activeEl.getBoundingClientRect();
+      const scrollerRect = scroller.getBoundingClientRect();
+      const diff = activeRect.top - scrollerRect.top + scroller.scrollTop;
+      const targetScroll = diff - scroller.clientHeight / 2 + activeEl.clientHeight / 2;
+      scroller.scrollTo({
+        top: Math.max(0, targetScroll),
+        behavior: forceScroll ? "auto" : "smooth",
+      });
+    }
+  }
+}
+
+function startGuestLyricsSyncLoop() {
+  if (guestLyricsRafId) cancelAnimationFrame(guestLyricsRafId);
+  function loop() {
+    if (!guestLyricsActive) return;
+    if (!guestLyricsPaused) {
+      const elapsed = performance.now() - guestLyricsAnchorTime;
+      const currentPosMs = Math.max(0, guestLyricsAnchorPosition + elapsed);
+      syncGuestLyricsPosition(currentPosMs / 1000);
+    }
+    guestLyricsRafId = requestAnimationFrame(loop);
+  }
+  guestLyricsRafId = requestAnimationFrame(loop);
+}
+
+function toggleGuestLyrics(active) {
+  if (typeof active === "boolean") {
+    guestLyricsActive = active;
+  } else {
+    guestLyricsActive = !guestLyricsActive;
+  }
+
+  const np = lastQueueState?.nowPlaying;
+  if (guestLyricsActive && (!np || np.provider !== "spotify")) {
+    guestLyricsActive = false;
+    return;
+  }
+
+  const npEl = document.getElementById("now-playing");
+  if (!guestLyricsActive && npEl) {
+    delete npEl.dataset.lyricsTrackId;
+  }
+
+  if (lastQueueState) {
+    renderQueue(lastQueueState);
+  }
+
+  if (guestLyricsActive && np) {
+    if (queueWs && queueWs.readyState === WebSocket.OPEN) {
+      queueWs.send(JSON.stringify({ type: "requestPlaybackTick" }));
+    }
+    loadGuestLyrics(np);
+    startGuestLyricsSyncLoop();
+  } else {
+    if (guestLyricsRafId) {
+      cancelAnimationFrame(guestLyricsRafId);
+      guestLyricsRafId = null;
+    }
+  }
+}
+
+function initGuestLyrics() {
+  window.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && guestLyricsActive) {
+      toggleGuestLyrics(false);
+    }
+  });
+}
+
 // ---- Live queue (WebSocket) ------------------------------------------------
 let lastQueueState = null; // retain state so the owned-request badge can be redrawn
 
@@ -1543,6 +1767,30 @@ function connectWs() {
       renderFeedback();
       renderChatSettings();
       renderQueue(msg.state);
+      if (guestLyricsActive) {
+        const curNp = msg.state?.nowPlaying;
+        if (!curNp || curNp.provider !== "spotify") {
+          toggleGuestLyrics(false);
+          toast("info", "🎵", "Bài hát Spotify đã kết thúc.");
+        } else {
+          const trackId = curNp.videoId || curNp.id || `${(curNp.channel || "").toLowerCase()}:::${(curNp.title || "").toLowerCase()}`;
+          if (trackId !== currentGuestLyricsTrackId) {
+            guestLyricsAnchorPosition = 0;
+            guestLyricsAnchorTime = performance.now();
+            loadGuestLyrics(curNp);
+          }
+        }
+      }
+    } else if (msg.type === "playbackTick") {
+      if (guestLyricsActive) {
+        const curNp = lastQueueState?.nowPlaying;
+        if (curNp && curNp.provider === "spotify" && (!msg.videoId || msg.videoId === curNp.videoId)) {
+          guestLyricsAnchorPosition = typeof msg.position === "number" ? msg.position : 0;
+          guestLyricsAnchorTime = performance.now();
+          guestLyricsPaused = Boolean(msg.paused);
+          syncGuestLyricsPosition(guestLyricsAnchorPosition / 1000, Boolean(msg.seek));
+        }
+      }
     } else if (msg.type === "chatHistory") {
       chatMessages = [];
       for (const message of Array.isArray(msg.messages) ? msg.messages.slice(-CHAT_DISPLAY_LIMIT) : []) {
@@ -1652,35 +1900,130 @@ function requestOwnSkip(id, button) {
   queueWs.send(JSON.stringify({ type: "skipOwn", id, clientId }));
 }
 
+function getPlatformIconBadge(provider) {
+  if (provider === "spotify") {
+    return `<span class="platform-icon-badge spotify" title="Spotify" aria-label="Spotify"><svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0C5.4 0 0 5.4 0 12s5.4 12 12 12 12-5.4 12-12S18.66 0 12 0zm5.521 17.34c-.24.359-.66.48-1.021.24-2.82-1.74-6.36-2.101-10.561-1.141-.418.122-.779-.179-.899-.539-.12-.421.18-.78.54-.9 4.56-1.021 8.52-.6 11.64 1.32.42.18.479.659.301 1.02zm1.44-3.3c-.301.42-.841.6-1.262.3-3.239-1.98-8.159-2.58-11.939-1.38-.479.12-1.02-.12-1.14-.6-.12-.48.12-1.021.6-1.141C9.6 9.9 15 10.561 18.72 12.84c.361.181.54.78.241 1.2zm.12-3.36C15.24 8.4 8.82 8.16 5.16 9.301c-.6.179-1.2-.181-1.38-.721-.18-.601.18-1.2.72-1.381 4.26-1.26 11.28-1.02 15.721 1.621.539.3.719 1.02.419 1.56-.299.421-1.02.599-1.559.3z"/></svg></span>`;
+  }
+  if (provider === "soundcloud") {
+    return `<span class="platform-icon-badge soundcloud" title="SoundCloud" aria-label="SoundCloud"><svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><path d="M11.56 8.87V17h8.79a3.65 3.65 0 0 0 3.65-3.65c0-1.89-1.42-3.44-3.26-3.62a4.99 4.99 0 0 0-4.93-4.14 5.06 5.06 0 0 0-4.25 2.28zm-1.42.92v7.21h.71V9.79zm-1.42 1.34v5.87h.71v-5.87zm-1.42 1.05v4.82h.71V12.18zm-1.42.95v3.87h.71v-3.87zm-1.42 1.05v2.82h.71v-2.82zm-1.42.94v1.88h.71v-1.88zm-1.42.47v1.41h.71V16.4zm-1.42.47v.94h.71v-.94z"/></svg></span>`;
+  }
+  return `<span class="platform-icon-badge youtube" title="YouTube" aria-label="YouTube"><svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M23.498 6.186a3.016 3.016 0 0 0-2.122-2.136C19.505 3.545 12 3.545 12 3.545s-7.505 0-9.377.505A3.017 3.017 0 0 0 .502 6.186C0 8.07 0 12 0 12s0 3.93.502 5.814a3.016 3.016 0 0 0 2.122 2.136c1.871.505 9.376.505 9.376.505s7.505 0 9.377-.505a3.015 3.015 0 0 0 2.122-2.136C24 15.93 24 12 24 12s0-3.93-.502-5.814zM9.545 15.568V8.432L15.818 12l-6.273 3.568z"/></svg></span>`;
+}
+
 function renderQueue(state) {
   const np = state.nowPlaying;
   const npEl = document.getElementById("now-playing");
   const myIds = loadMyRequestIds();
   if (np) {
     npEl.classList.remove("hidden");
-    npEl.innerHTML = `
-      <img src="${safeImageUrl(np.thumbnail)}" alt="" />
-      <div class="np-body">
-        <div class="np-label">
-          <span class="eq"><span></span><span></span><span></span></span>
-          ĐANG PHÁT
+    const isSpotify = np.provider === "spotify";
+    if (!isSpotify) {
+      guestLyricsActive = false;
+      if (guestLyricsRafId) {
+        cancelAnimationFrame(guestLyricsRafId);
+        guestLyricsRafId = null;
+      }
+    }
+
+    if (guestLyricsActive && isSpotify) {
+      const trackId = np.videoId || np.id || `${(np.channel || "").toLowerCase()}:::${(np.title || "").toLowerCase()}`;
+
+      if (npEl.classList.contains("lyrics-mode") && npEl.dataset.lyricsTrackId === trackId) {
+        const skipButton = npEl.querySelector(".np-skip-own");
+        if (skipButton) {
+          skipButton.className = `np-skip-own${myIds.has(np.id) ? "" : " hidden"}`;
+          skipButton.disabled = pendingOwnSkips.has(np.id);
+        }
+        const favSlot = npEl.querySelector(".np-favorite-slot");
+        if (favSlot) favSlot.replaceWith(createFavoriteButton(np, "np-favorite-btn"));
+      } else {
+        npEl.classList.add("lyrics-mode");
+        npEl.dataset.lyricsTrackId = trackId;
+        npEl.innerHTML = `
+          <div class="np-lyrics-header">
+            <div class="np-lyrics-meta">
+              <img class="np-lyrics-thumb" src="${safeImageUrl(np.thumbnail)}" alt="" />
+              <div class="np-lyrics-track">
+                <div class="np-lyrics-badge">
+                  <span class="eq"><span></span><span></span><span></span></span>
+                  <span>Lời bài hát · Đồng bộ</span>
+                </div>
+                <div class="np-lyrics-title"></div>
+                <div class="np-lyrics-sub"></div>
+              </div>
+            </div>
+            <div class="np-actions np-lyrics-actions">
+              <button class="np-lyrics-toggle-btn" id="np-lyrics-toggle-btn" type="button" title="Thu nhỏ về khung đang phát" aria-label="Thu nhỏ về khung đang phát">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+                <span>Thu nhỏ</span>
+              </button>
+              <span class="np-favorite-slot"></span>
+              <button class="np-skip-own${myIds.has(np.id) ? "" : " hidden"}" type="button" title="Bỏ qua bài hát của bạn" aria-label="Bỏ qua bài hát của bạn"${pendingOwnSkips.has(np.id) ? " disabled" : ""}>Bỏ qua</button>
+            </div>
+          </div>
+          <div class="np-lyrics-scroller" id="np-lyrics-scroller">
+            <div class="np-lyrics-content" id="np-lyrics-content">
+              <div class="np-lyrics-loading">Đang tải lời bài hát đồng bộ…</div>
+            </div>
+          </div>`;
+        npEl.querySelector(".np-lyrics-title").textContent = np.title;
+        updateMarqueeTitle(npEl.querySelector(".np-lyrics-title"));
+        npEl.querySelector(".np-lyrics-sub").textContent =
+          (np.channel || "") + (np.addedBy ? ` · Người chọn: ${np.addedBy}` : "");
+        const skipButton = npEl.querySelector(".np-skip-own");
+        if (skipButton) skipButton.onclick = () => requestOwnSkip(np.id, skipButton);
+        npEl.querySelector(".np-favorite-slot").replaceWith(createFavoriteButton(np, "np-favorite-btn"));
+        const collapseBtn = npEl.querySelector("#np-lyrics-toggle-btn");
+        if (collapseBtn) {
+          collapseBtn.onclick = () => toggleGuestLyrics(false);
+        }
+
+        if (trackId === currentGuestLyricsTrackId && currentGuestLyrics?.lines) {
+          renderGuestLyricsLines(currentGuestLyrics.lines);
+        } else {
+          loadGuestLyrics(np);
+        }
+      }
+    } else {
+      delete npEl.dataset.lyricsTrackId;
+      npEl.classList.remove("lyrics-mode");
+      npEl.innerHTML = `
+        <img src="${safeImageUrl(np.thumbnail)}" alt="" />
+        <div class="np-body">
+          <div class="np-label">
+            <span class="eq"><span></span><span></span><span></span></span>
+            ĐANG PHÁT
+          </div>
+          <div class="np-title"></div>
+          <div class="np-sub"></div>
         </div>
-        <div class="np-title"></div>
-        <div class="np-sub"></div>
-      </div>
-      <div class="np-actions">
-        <span class="np-favorite-slot"></span>
-        <button class="np-skip-own${myIds.has(np.id) ? "" : " hidden"}" type="button" title="Bỏ qua bài hát của bạn" aria-label="Bỏ qua bài hát của bạn"${pendingOwnSkips.has(np.id) ? " disabled" : ""}>Bỏ qua</button>
-      </div>`;
-    npEl.querySelector(".np-title").textContent = np.title;
-    updateMarqueeTitle(npEl.querySelector(".np-title"));
-    npEl.querySelector(".np-sub").textContent =
-      (np.channel || "") + (np.addedBy ? ` · Người chọn: ${np.addedBy}` : "");
-    const skipButton = npEl.querySelector(".np-skip-own");
-    skipButton.onclick = () => requestOwnSkip(np.id, skipButton);
-    npEl.querySelector(".np-favorite-slot").replaceWith(createFavoriteButton(np, "np-favorite-btn"));
+        <div class="np-actions">
+          <button class="np-lyrics-btn${isSpotify ? "" : " hidden"}" id="np-lyrics-btn" type="button" title="Xem lời bài hát" aria-label="Xem lời bài hát">
+            <svg width="16" height="16" viewBox="0 0 256 256" fill="currentColor"><path d="M115.06 46.36a4 4 0 0 0-6.11.54A71.54 71.54 0 0 0 96 88a73.29 73.29 0 0 0 .63 9.42L27.12 192.22A15.93 15.93 0 0 0 28.71 213L43 227.29a15.93 15.93 0 0 0 20.78 1.59l94.81-69.53A73.29 73.29 0 0 0 168 160a71.54 71.54 0 0 0 41.09-12.93 4 4 0 0 0 .54-6.11Zm2.61 103.28-16 16a8 8 0 1 1-11.31-11.31l16-16a8 8 0 0 1 11.31 11.31Zm109.4-20.56a4 4 0 0 1-6.12.54L126.38 35.05a4 4 0 0 1 .54-6.12A71.93 71.93 0 0 1 227.07 129.08Z"/></svg>
+          </button>
+          <span class="np-favorite-slot"></span>
+          <button class="np-skip-own${myIds.has(np.id) ? "" : " hidden"}" type="button" title="Bỏ qua bài hát của bạn" aria-label="Bỏ qua bài hát của bạn"${pendingOwnSkips.has(np.id) ? " disabled" : ""}>Bỏ qua</button>
+        </div>`;
+      npEl.querySelector(".np-title").textContent = np.title;
+      updateMarqueeTitle(npEl.querySelector(".np-title"));
+      npEl.querySelector(".np-sub").textContent =
+        (np.channel || "") + (np.addedBy ? ` · Người chọn: ${np.addedBy}` : "");
+      const skipButton = npEl.querySelector(".np-skip-own");
+      if (skipButton) skipButton.onclick = () => requestOwnSkip(np.id, skipButton);
+      npEl.querySelector(".np-favorite-slot").replaceWith(createFavoriteButton(np, "np-favorite-btn"));
+      const lyricsBtn = npEl.querySelector("#np-lyrics-btn");
+      if (lyricsBtn) {
+        lyricsBtn.onclick = () => toggleGuestLyrics(true);
+      }
+    }
   } else {
     npEl.classList.add("hidden");
+    npEl.classList.remove("lyrics-mode");
+    guestLyricsActive = false;
+    if (guestLyricsRafId) {
+      cancelAnimationFrame(guestLyricsRafId);
+      guestLyricsRafId = null;
+    }
   }
 
   const queue = state.queue || [];
@@ -1745,7 +2088,7 @@ function renderQueue(state) {
       <div class="q-text">
         <div class="t-row">
           <span class="t"></span>
-          ${item.provider === "spotify" ? '<span class="q-platform-badge spotify">Spotify</span>' : item.provider === "soundcloud" ? '<span class="q-platform-badge soundcloud">SoundCloud</span>' : ""}
+          ${getPlatformIconBadge(item.provider)}
           ${isPinned ? '<span class="q-pinned-badge">Ghim</span>' : ""}
           <span class="q-favorite-slot"></span>
         </div>
@@ -2109,6 +2452,8 @@ selectGenre("All"); // render the tab and load real songs on page open
 renderRequestSettings();
 renderFeedback();
 setupHistoryInfiniteScroll();
+initSearchPlatformTabs();
+initGuestLyrics();
 window.addEventListener("jukebox:notification", (event) => {
   if (currentUser) toast("info", "🔔", "Bạn có thông báo mới", { sub: event.detail?.title || "Mở chuông để xem cập nhật." });
 });
