@@ -2454,10 +2454,15 @@ wss.on("connection", (ws, request) => {
 
       if (msg.type === "requestPlaybackTick") {
         if (latestSpotifyPlaybackTick && ws.readyState === 1) {
+          const now = Date.now();
+          const elapsed = latestSpotifyPlaybackTick.paused
+            ? 0
+            : Math.max(0, now - (latestSpotifyPlaybackTick.serverTime || now));
           ws.send(JSON.stringify({
             type: "playbackTick",
             ...latestSpotifyPlaybackTick,
-            serverTime: Date.now(),
+            position: latestSpotifyPlaybackTick.position + elapsed,
+            serverTime: now,
           }));
         }
         return;
