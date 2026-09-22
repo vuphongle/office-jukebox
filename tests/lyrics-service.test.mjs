@@ -14,6 +14,10 @@ describe("Lyrics Service & LRC Parser", () => {
     const q3 = cleanLyricsQuery("See Tình (prod. by DTAP)", "Hoàng Thùy Linh - Topic");
     expect(q3.title).toBe("See Tình");
     expect(q3.artist).toBe("Hoàng Thùy Linh");
+
+    const q4 = cleanLyricsQuery("LAVIEM (feat. Quang Hùng MasterD, CAPTAIN BOY, Pháp Kiều, CoolKid & Danny Chung...)", "TINH HÀ \"SAY HI\", Quang Hùng MasterD");
+    expect(q4.title).toBe("LAVIEM");
+    expect(q4.artist).toContain("TINH HÀ");
   });
 
   it("parses standard LRC strings into sorted time-stamped array", () => {
