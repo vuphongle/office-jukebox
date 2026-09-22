@@ -39,6 +39,13 @@ let spotifyDeviceId = null;
 let spotifyPlayerState = null;
 let spotifyWasPlaying = false;
 let spotifyProgressTimer = null;
+let spotifyAnchorPos = 0; // ms
+let spotifyAnchorTime = 0; // performance.now()
+let spotifyRafId = null;
+let spotifyReAnchorTimer = null;
+let isSeekPending = false;
+let seekTargetMs = 0;
+let lastBroadcastTickTime = 0;
 let spotifyStatus = { connected: false, configured: false };
 let scWidget = null;
 let scReady = false;
@@ -451,7 +458,7 @@ function toggleLyricsMode(forceState) {
   if (lyricsBtn) lyricsBtn.classList.toggle("active", isLyricsMode);
 
   if (isLyricsMode) {
-    const curPos = (spotifyPlayerState?.position || 0) / 1000;
+    const curPos = getInterpolatedSpotifyPosition() / 1000;
     syncLyricsPosition(curPos, true);
   }
 }
@@ -545,11 +552,82 @@ function updateSpotifyProgressUI(state) {
   }
 }
 
+function getInterpolatedSpotifyPosition() {
+  if (!spotifyPlayerState) return 0;
+  if (spotifyPlayerState.paused) return spotifyAnchorPos;
+  const elapsed = performance.now() - spotifyAnchorTime;
+  const dur = spotifyPlayerState.duration || Infinity;
+  return Math.min(dur, Math.max(0, spotifyAnchorPos + elapsed));
+}
+
+function stopSpotifySync() {
+  if (spotifyRafId) {
+    cancelAnimationFrame(spotifyRafId);
+    spotifyRafId = null;
+  }
+  if (spotifyReAnchorTimer) {
+    clearInterval(spotifyReAnchorTimer);
+    spotifyReAnchorTimer = null;
+  }
+  if (spotifyProgressTimer) {
+    clearInterval(spotifyProgressTimer);
+    spotifyProgressTimer = null;
+  }
+}
+
+function startSpotifySync() {
+  stopSpotifySync();
+
+  function loop() {
+    if (activePlayerProvider !== "spotify" || !spotifyPlayerState || spotifyPlayerState.paused) {
+      spotifyRafId = null;
+      return;
+    }
+    const currentPosMs = getInterpolatedSpotifyPosition();
+    spotifyPlayerState.position = currentPosMs;
+    updateSpotifyProgressUI(spotifyPlayerState);
+
+    const now = performance.now();
+    if (now - lastBroadcastTickTime >= 3000) {
+      lastBroadcastTickTime = now;
+      broadcastSpotifyTick({ seek: false });
+    }
+
+    spotifyRafId = requestAnimationFrame(loop);
+  }
+
+  spotifyRafId = requestAnimationFrame(loop);
+
+  spotifyReAnchorTimer = setInterval(() => {
+    reAnchorFromSdk();
+  }, 3000);
+}
+
+async function reAnchorFromSdk() {
+  if (activePlayerProvider !== "spotify" || !spotifyPlayer || !spotifyPlayer.getCurrentState) return;
+  try {
+    const currentState = await spotifyPlayer.getCurrentState();
+    if (!currentState) return;
+    spotifyPlayerState = currentState;
+    if (!isSeekPending) {
+      spotifyAnchorPos = currentState.position || 0;
+      spotifyAnchorTime = performance.now();
+    }
+    if (!currentState.paused && !spotifyRafId) {
+      startSpotifySync();
+    }
+  } catch (err) {
+    console.warn("[spotify] reAnchorFromSdk error:", err);
+  }
+}
+
 function broadcastSpotifyTick({ seek = false } = {}) {
   if (activePlayerProvider === "spotify" && spotifyPlayerState) {
+    const pos = getInterpolatedSpotifyPosition();
+    lastBroadcastTickTime = performance.now();
     send({
       type: "playbackTick",
-      position: Math.max(0, Math.floor(spotifyPlayerState.position || 0)),
+      position: Math.max(0, Math.floor(pos)),
       paused: Boolean(spotifyPlayerState.paused),
       seek: Boolean(seek),
       videoId: currentVideoId,
@@ -595,20 +673,29 @@ window.onSpotifyWebPlaybackSDKReady = function () {
     if (!state) return;
     if (activePlayerProvider === "spotify") {
       updatePlayPauseIcon();
-      updateSpotifyProgressUI(state);
-      broadcastSpotifyTick({ seek: true });
-      clearInterval(spotifyProgressTimer);
+
+      if (isSeekPending) {
+        const diff = Math.abs((state.position || 0) - seekTargetMs);
+        if (diff < 1000) {
+          isSeekPending = false;
+          spotifyAnchorPos = state.position || 0;
+          spotifyAnchorTime = performance.now();
+        }
+      } else {
+        spotifyAnchorPos = state.position || 0;
+        spotifyAnchorTime = performance.now();
+      }
+
+      updateSpotifyProgressUI(spotifyPlayerState);
+      broadcastSpotifyTick({ seek: isSeekPending });
+
+      stopSpotifySync();
+
       if (!state.paused) {
         clearTimeout(playbackWatchdog);
         hidePlaybackRecovery();
         spotifyWasPlaying = true;
-        spotifyProgressTimer = setInterval(() => {
-          if (spotifyPlayerState && !spotifyPlayerState.paused && activePlayerProvider === "spotify") {
-            spotifyPlayerState.position = (spotifyPlayerState.position || 0) + 1000;
-            updateSpotifyProgressUI(spotifyPlayerState);
-            broadcastSpotifyTick({ seek: false });
-          }
-        }, 1000);
+        startSpotifySync();
       } else if (
         state.paused &&
         state.position === 0 &&
@@ -672,6 +759,9 @@ async function playSpotify(trackId) {
     }
     const token = tokenData.access_token;
     spotifyWasPlaying = false;
+    spotifyAnchorPos = 0;
+    spotifyAnchorTime = performance.now();
+    isSeekPending = false;
     const playRes = await fetch(`https://api.spotify.com/v1/me/player/play?device_id=${spotifyDeviceId}`, {
       method: "PUT",
       headers: {
@@ -803,7 +893,7 @@ function syncPlayer() {
 
   if (!np) {
     clearTimeout(playbackWatchdog);
-    clearInterval(spotifyProgressTimer);
+    stopSpotifySync();
     if (playbackEventHandlers && player?.removeEventListener) {
       player.removeEventListener("onStateChange", playbackEventHandlers.onStateChange);
       player.removeEventListener("onError", playbackEventHandlers.onError);
@@ -864,7 +954,7 @@ function syncPlayer() {
     };
 
     if (provider === "youtube") {
-      clearInterval(spotifyProgressTimer);
+      stopSpotifySync();
       playerYtEl.classList.remove("hidden");
       playerSpotifyEl.classList.add("hidden");
       playerSoundCloudEl.classList.add("hidden");
@@ -941,7 +1031,7 @@ function syncPlayer() {
       playSpotify(np.videoId);
       armPlaybackWatchdog(np.videoId, currentPlaybackToken);
     } else if (provider === "soundcloud") {
-      clearInterval(spotifyProgressTimer);
+      stopSpotifySync();
       playerYtEl.classList.add("hidden");
       playerSpotifyEl.classList.add("hidden");
       playerSoundCloudEl.classList.remove("hidden");
@@ -1365,6 +1455,10 @@ function seekSpotifyTo(targetSec) {
   const durSec = spotifyPlayerState?.duration ? spotifyPlayerState.duration / 1000 : 9999;
   const newPos = Math.max(0, Math.min(durSec, targetSec));
   const ms = Math.floor(newPos * 1000);
+  isSeekPending = true;
+  seekTargetMs = ms;
+  spotifyAnchorPos = ms;
+  spotifyAnchorTime = performance.now();
   if (spotifyPlayer.seek) {
     spotifyPlayer.seek(ms);
   }
@@ -1373,20 +1467,17 @@ function seekSpotifyTo(targetSec) {
     updateSpotifyProgressUI(spotifyPlayerState);
     broadcastSpotifyTick({ seek: true });
   }
+  setTimeout(() => {
+    isSeekPending = false;
+  }, 2000);
 }
 
 function seekSpotifyRelative(deltaSec) {
   if (!spotifyPlayer || !spotifyPlayerState?.duration) return;
-  const curPos = (spotifyPlayerState.position || 0) / 1000;
+  const curPos = getInterpolatedSpotifyPosition() / 1000;
   const durSec = spotifyPlayerState.duration / 1000;
   const newPos = Math.max(0, Math.min(durSec - 1, curPos + deltaSec));
-  const ms = Math.floor(newPos * 1000);
-  spotifyPlayer.seek(ms);
-  if (spotifyPlayerState) {
-    spotifyPlayerState.position = ms;
-    updateSpotifyProgressUI(spotifyPlayerState);
-    broadcastSpotifyTick({ seek: true });
-  }
+  seekSpotifyTo(newPos);
 }
 
 function seekSoundCloudRelative(deltaSec) {
@@ -1512,6 +1603,14 @@ function wireSpotifyInteractiveControls() {
         if (spotifyPlayerState) {
           spotifyPlayerState.paused = !spotifyPlayerState.paused;
           updateSpotifyPlayPauseUI(spotifyPlayerState.paused);
+          if (spotifyPlayerState.paused) {
+            spotifyAnchorPos = getInterpolatedSpotifyPosition();
+            spotifyAnchorTime = performance.now();
+            stopSpotifySync();
+          } else {
+            spotifyAnchorTime = performance.now();
+            startSpotifySync();
+          }
           broadcastSpotifyTick({ seek: true });
         }
       }
@@ -1527,6 +1626,14 @@ function wireSpotifyInteractiveControls() {
         if (spotifyPlayerState) {
           spotifyPlayerState.paused = !spotifyPlayerState.paused;
           updateSpotifyPlayPauseUI(spotifyPlayerState.paused);
+          if (spotifyPlayerState.paused) {
+            spotifyAnchorPos = getInterpolatedSpotifyPosition();
+            spotifyAnchorTime = performance.now();
+            stopSpotifySync();
+          } else {
+            spotifyAnchorTime = performance.now();
+            startSpotifySync();
+          }
           broadcastSpotifyTick({ seek: true });
         }
       }
@@ -1690,6 +1797,12 @@ document.getElementById("start-btn").onclick = () => {
   startOrderNetworkHostRefresh();
   syncPlayer();
 };
+
+document.addEventListener("visibilitychange", () => {
+  if (!document.hidden && activePlayerProvider === "spotify") {
+    reAnchorFromSdk();
+  }
+});
 
 loadInfo();
 wireControls();
