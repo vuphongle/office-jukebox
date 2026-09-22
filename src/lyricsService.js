@@ -37,15 +37,22 @@ export function parseLrc(lrcText) {
   if (typeof lrcText !== "string" || !lrcText.trim()) return [];
   const lines = lrcText.split("\n");
   const result = [];
-  const regex = /\[(\d{2}):(\d{2})(?:\.(\d{2,3}))?\](.*)/;
+  let offsetMs = 0;
+  const timeRegex = /\[(\d{2}):(\d{2})(?:\.(\d{2,3}))?\](.*)/;
+  const offsetRegex = /^\[offset:\s*([+-]?\d+)\s*\]/i;
 
   for (const line of lines) {
-    const match = line.match(regex);
+    const offsetMatch = line.match(offsetRegex);
+    if (offsetMatch) {
+      offsetMs = parseInt(offsetMatch[1], 10) || 0;
+      continue;
+    }
+    const match = line.match(timeRegex);
     if (match) {
       const min = parseInt(match[1], 10);
       const sec = parseInt(match[2], 10);
       const ms = match[3] ? parseInt(match[3].padEnd(3, "0").slice(0, 3), 10) : 0;
-      const time = min * 60 + sec + ms / 1000;
+      const time = Math.max(0, min * 60 + sec + (ms + offsetMs) / 1000);
       const text = match[4].trim();
       if (text) {
         result.push({ time, text });

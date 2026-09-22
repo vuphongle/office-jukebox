@@ -62,6 +62,24 @@ describe("JukeboxLyrics Client Module", () => {
     expect(JukeboxLyrics.parseLrc("Không có timestamp")).toEqual([]);
   });
 
+  test("parseLrc applies [offset:+/-ms] tags accurately", () => {
+    const lrcPositive = `
+[offset:+500]
+[00:10.00]Lời bài hát trễ nửa giây
+`;
+    const parsedPos = JukeboxLyrics.parseLrc(lrcPositive);
+    expect(parsedPos).toHaveLength(1);
+    expect(parsedPos[0]).toEqual({ time: 10.5, text: "Lời bài hát trễ nửa giây" });
+
+    const lrcNegative = `
+[offset:-400]
+[00:05.50]Lời bài hát sớm 400ms
+`;
+    const parsedNeg = JukeboxLyrics.parseLrc(lrcNegative);
+    expect(parsedNeg).toHaveLength(1);
+    expect(parsedNeg[0]).toEqual({ time: 5.1, text: "Lời bài hát sớm 400ms" });
+  });
+
   test("fetchLyricsClient queries local API then falls back to LRCLIB", async () => {
     // 1. Local API success
     const mockFetchLocal = async (url) => {
