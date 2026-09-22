@@ -1544,6 +1544,7 @@ let guestLyricsAnchorPosition = 0; // ms
 let guestLyricsAnchorTime = 0; // performance.now()
 let guestLyricsPaused = true;
 let guestLyricsRafId = null;
+let lastGuestTickReceivedTime = 0;
 
 async function loadGuestLyrics(np) {
   if (!np || typeof np !== "object") return;
@@ -1672,11 +1673,18 @@ function syncGuestLyricsPosition(curSec, forceScroll = false) {
 function startGuestLyricsSyncLoop() {
   if (guestLyricsRafId) cancelAnimationFrame(guestLyricsRafId);
   function loop() {
-    if (!guestLyricsActive) return;
+    if (!guestLyricsActive) {
+      guestLyricsRafId = null;
+      return;
+    }
     if (!guestLyricsPaused) {
-      const elapsed = performance.now() - guestLyricsAnchorTime;
-      const currentPosMs = Math.max(0, guestLyricsAnchorPosition + elapsed);
-      syncGuestLyricsPosition(currentPosMs / 1000);
+      if (lastGuestTickReceivedTime > 0 && performance.now() - lastGuestTickReceivedTime > 10000) {
+        guestLyricsPaused = true;
+      } else {
+        const elapsed = performance.now() - guestLyricsAnchorTime;
+        const currentPosMs = Math.max(0, guestLyricsAnchorPosition + elapsed);
+        syncGuestLyricsPosition(currentPosMs / 1000);
+      }
     }
     guestLyricsRafId = requestAnimationFrame(loop);
   }
@@ -1725,6 +1733,11 @@ function initGuestLyrics() {
       toggleGuestLyrics(false);
     }
   });
+  document.addEventListener("visibilitychange", () => {
+    if (!document.hidden && guestLyricsActive && queueWs?.readyState === WebSocket.OPEN) {
+      queueWs.send(JSON.stringify({ type: "requestPlaybackTick" }));
+    }
+  });
 }
 
 // ---- Live queue (WebSocket) ------------------------------------------------
@@ -1745,6 +1758,11 @@ function connectWs() {
   const proto = location.protocol === "https:" ? "wss" : "ws";
   const ws = new WebSocket(`${proto}://${location.host}`);
   queueWs = ws;
+  ws.onopen = () => {
+    if (guestLyricsActive && queueWs?.readyState === WebSocket.OPEN) {
+      queueWs.send(JSON.stringify({ type: "requestPlaybackTick" }));
+    }
+  };
   ws.onmessage = (e) => {
     let msg;
     try {
@@ -1785,9 +1803,26 @@ function connectWs() {
       if (guestLyricsActive) {
         const curNp = lastQueueState?.nowPlaying;
         if (curNp && curNp.provider === "spotify" && (!msg.videoId || msg.videoId === curNp.videoId)) {
-          guestLyricsAnchorPosition = typeof msg.position === "number" ? msg.position : 0;
-          guestLyricsAnchorTime = performance.now();
-          guestLyricsPaused = Boolean(msg.paused);
+          const isPaused = Boolean(msg.paused);
+          const rawDelay = typeof msg.serverTime === "number" ? Date.now() - msg.serverTime : 0;
+          const networkDelay = (!isPaused && rawDelay >= 0 && rawDelay <= 2000) ? rawDelay : 0;
+          const targetPosition = (typeof msg.position === "number" ? msg.position : 0) + networkDelay;
+
+          const now = performance.now();
+          const currentExpectedPos = guestLyricsPaused
+            ? guestLyricsAnchorPosition
+            : guestLyricsAnchorPosition + (now - guestLyricsAnchorTime);
+          const drift = targetPosition - currentExpectedPos;
+
+          if (msg.seek || guestLyricsPaused !== isPaused || Math.abs(drift) > 500 || guestLyricsAnchorTime === 0) {
+            guestLyricsAnchorPosition = targetPosition;
+            guestLyricsAnchorTime = now;
+          } else {
+            guestLyricsAnchorPosition += drift * 0.3;
+          }
+
+          guestLyricsPaused = isPaused;
+          lastGuestTickReceivedTime = now;
           syncGuestLyricsPosition(guestLyricsAnchorPosition / 1000, Boolean(msg.seek));
         }
       }

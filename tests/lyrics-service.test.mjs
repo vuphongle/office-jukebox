@@ -42,6 +42,14 @@ describe("Lyrics Service & LRC Parser", () => {
     expect(parseLrc("random text without timestamps")).toEqual([]);
   });
 
+  it("applies [offset:+/-ms] tag to all parsed lines", () => {
+    const lrc = "[offset:+600]\n[00:02.00]Line with +600ms\n[00:05.50]Second line";
+    const parsed = parseLrc(lrc);
+    expect(parsed).toHaveLength(2);
+    expect(parsed[0].time).toBeCloseTo(2.6, 2);
+    expect(parsed[1].time).toBeCloseTo(6.1, 2);
+  });
+
   it("fetches synced lyrics with mock fetch", async () => {
     const mockLrc = "[00:10.00]Hello world\n[00:20.00]Second line";
     const mockFetch = async (url) => {
