@@ -24,7 +24,7 @@ test("favorite UI state ignores stale users and synchronizes pending song change
   const firstIdentity = controller.captureIdentity();
   assert.equal(controller.isIdentityCurrent(firstIdentity), true);
   assert.equal(controller.replace(firstIdentity, [first, second]), true);
-  assert.deepEqual(controller.all().map((item) => item.videoId), [first.videoId, second.videoId]);
+  assert.deepEqual([...controller.all().map((item) => item.videoId)], [first.videoId, second.videoId]);
   assert.equal(controller.isFavorite(first.videoId), true);
   assert.equal(controller.replace({ userId: "user-b", generation: firstIdentity.generation }, []), false);
   assert.equal(controller.isFavorite(first.videoId), true);
@@ -40,7 +40,7 @@ test("favorite UI state ignores stale users and synchronizes pending song change
   controller.upsert(firstIdentity, first);
   assert.equal(controller.all()[0].videoId, first.videoId);
   assert.equal(controller.setIdentity("user-b"), true);
-  assert.deepEqual(controller.all(), []);
+  assert.deepEqual([...controller.all()], []);
   assert.equal(controller.isFavorite(first.videoId), false);
 });
 

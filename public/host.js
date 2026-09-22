@@ -323,48 +323,12 @@ let currentLyricsActiveIndex = -1;
 let isLyricsMode = false;
 let currentLyricsTrackKey = "";
 
-function cleanLyricsText(rawTitle, rawArtist) {
-  let title = (rawTitle || "").trim();
-  let artist = (rawArtist || "").trim();
-  if (!artist && title.includes(" - ")) {
-    const parts = title.split(" - ");
-    artist = parts[0].trim();
-    title = parts.slice(1).join(" - ").trim();
-  }
-  title = title
-    .replace(/\[[^\]]*\]/g, "")
-    .replace(/\([^)]*(?:official|video|audio|mv|prod\.|feat\.|ft\.)[^)]*\)/gi, "")
-    .replace(/\|.*$/g, "")
-    .replace(/-.*(?:official|mv|audio).*$/gi, "")
-    .trim();
-  artist = artist.replace(/\s*-\s*Topic$/i, "").trim();
-  return { title, artist };
-}
-
-function parseLrcClient(lrcText) {
-  if (typeof lrcText !== "string" || !lrcText.trim()) return [];
-  const lines = lrcText.split("\n");
-  const result = [];
-  const regex = /\[(\d{2}):(\d{2})(?:\.(\d{2,3}))?\](.*)/;
-  for (const line of lines) {
-    const match = line.match(regex);
-    if (match) {
-      const min = parseInt(match[1], 10);
-      const sec = parseInt(match[2], 10);
-      const ms = match[3] ? parseInt(match[3].padEnd(3, "0").slice(0, 3), 10) : 0;
-      const time = min * 60 + sec + ms / 1000;
-      const text = match[4].trim();
-      if (text) {
-        result.push({ time, text });
-      }
-    }
-  }
-  return result.sort((a, b) => a.time - b.time);
-}
-
 async function loadLyrics(rawTitle, rawArtist, duration) {
-  const { title, artist } = cleanLyricsText(rawTitle, rawArtist);
-  const trackKey = `${artist.toLowerCase()}:::${title.toLowerCase()}`;
+  const lyricsClient = window.JukeboxLyrics;
+  const cleaned = lyricsClient
+    ? lyricsClient.cleanLyricsQuery(rawTitle, rawArtist)
+    : { title: (rawTitle || "").trim(), artist: (rawArtist || "").trim() };
+  const trackKey = `${cleaned.artist.toLowerCase()}:::${cleaned.title.toLowerCase()}`;
   if (trackKey === currentLyricsTrackKey && currentLyrics) {
     return;
   }
@@ -377,7 +341,6 @@ async function loadLyrics(rawTitle, rawArtist, duration) {
     contentEl.innerHTML = `<div class="spotify-lyrics-loading">Đang tải lời bài hát đồng bộ…</div>`;
   }
 
-  let data = null;
   let durSec = null;
   if (typeof duration === "string" && duration.includes(":")) {
     const p = duration.split(":").map(Number);
@@ -386,65 +349,10 @@ async function loadLyrics(rawTitle, rawArtist, duration) {
     durSec = duration;
   }
 
-  // 1. Try local backend /api/lyrics first
-  try {
-    const params = new URLSearchParams({ title, artist });
-    if (durSec) params.set("duration", durSec);
-    const res = await fetch(`/api/lyrics?${params.toString()}`);
-    if (res.ok) {
-      const json = await res.json();
-      if (json.ok && Array.isArray(json.lines) && json.lines.length > 0) {
-        data = json;
-      }
-    }
-  } catch (err) {
-    console.warn("[lyrics] /api/lyrics failed, trying direct LRCLIB fallback:", err);
-  }
+  const data = lyricsClient
+    ? await lyricsClient.fetchLyricsClient({ title: rawTitle, artist: rawArtist, durationSec: durSec })
+    : null;
 
-  // 2. Direct fallback to LRCLIB API in browser if local endpoint not available
-  if (!data) {
-    try {
-      let lrclibData = null;
-      if (artist) {
-        const p = new URLSearchParams({ track_name: title, artist_name: artist });
-        if (durSec) p.set("duration", Math.round(durSec));
-        const r1 = await fetch(`https://lrclib.net/api/get?${p.toString()}`);
-        if (r1.ok) lrclibData = await r1.json();
-      }
-      if (!lrclibData || (!lrclibData.syncedLyrics && !lrclibData.plainLyrics)) {
-        const q = artist ? `${artist} ${title}` : title;
-        const r2 = await fetch(`https://lrclib.net/api/search?q=${encodeURIComponent(q)}`);
-        if (r2.ok) {
-          const list = await r2.json();
-          if (Array.isArray(list) && list.length > 0) {
-            lrclibData = list.find((it) => Boolean(it.syncedLyrics)) || list[0];
-          }
-        }
-      }
-      if (lrclibData) {
-        let lines = [];
-        let isSynced = false;
-        if (lrclibData.syncedLyrics) {
-          lines = parseLrcClient(lrclibData.syncedLyrics);
-          isSynced = lines.length > 0;
-        }
-        if (!isSynced && lrclibData.plainLyrics) {
-          lines = lrclibData.plainLyrics
-            .split("\n")
-            .map((t) => t.trim())
-            .filter(Boolean)
-            .map((text, idx) => ({ time: idx * 5, text }));
-        }
-        if (lines.length > 0) {
-          data = { ok: true, synced: isSynced, lines };
-        }
-      }
-    } catch (err) {
-      console.warn("[lyrics] direct LRCLIB fetch error:", err);
-    }
-  }
-
-  // Guard against race conditions if track changed while fetching
   if (trackKey !== currentLyricsTrackKey) return;
 
   if (!data || !data.lines || data.lines.length === 0) {
@@ -637,6 +545,18 @@ function updateSpotifyProgressUI(state) {
   }
 }
 
+function broadcastSpotifyTick({ seek = false } = {}) {
+  if (activePlayerProvider === "spotify" && spotifyPlayerState) {
+    send({
+      type: "playbackTick",
+      position: Math.max(0, Math.floor(spotifyPlayerState.position || 0)),
+      paused: Boolean(spotifyPlayerState.paused),
+      seek: Boolean(seek),
+      videoId: currentVideoId,
+    });
+  }
+}
+
 window.onSpotifyWebPlaybackSDKReady = function () {
   if (!window.Spotify) return;
   spotifyPlayer = new window.Spotify.Player({
@@ -676,6 +596,7 @@ window.onSpotifyWebPlaybackSDKReady = function () {
     if (activePlayerProvider === "spotify") {
       updatePlayPauseIcon();
       updateSpotifyProgressUI(state);
+      broadcastSpotifyTick({ seek: true });
       clearInterval(spotifyProgressTimer);
       if (!state.paused) {
         clearTimeout(playbackWatchdog);
@@ -685,6 +606,7 @@ window.onSpotifyWebPlaybackSDKReady = function () {
           if (spotifyPlayerState && !spotifyPlayerState.paused && activePlayerProvider === "spotify") {
             spotifyPlayerState.position = (spotifyPlayerState.position || 0) + 1000;
             updateSpotifyProgressUI(spotifyPlayerState);
+            broadcastSpotifyTick({ seek: false });
           }
         }, 1000);
       } else if (
@@ -1449,6 +1371,7 @@ function seekSpotifyTo(targetSec) {
   if (spotifyPlayerState) {
     spotifyPlayerState.position = ms;
     updateSpotifyProgressUI(spotifyPlayerState);
+    broadcastSpotifyTick({ seek: true });
   }
 }
 
@@ -1457,9 +1380,13 @@ function seekSpotifyRelative(deltaSec) {
   const curPos = (spotifyPlayerState.position || 0) / 1000;
   const durSec = spotifyPlayerState.duration / 1000;
   const newPos = Math.max(0, Math.min(durSec - 1, curPos + deltaSec));
-  spotifyPlayer.seek(Math.floor(newPos * 1000));
-  spotifyPlayerState.position = Math.floor(newPos * 1000);
-  updateSpotifyProgressUI(spotifyPlayerState);
+  const ms = Math.floor(newPos * 1000);
+  spotifyPlayer.seek(ms);
+  if (spotifyPlayerState) {
+    spotifyPlayerState.position = ms;
+    updateSpotifyProgressUI(spotifyPlayerState);
+    broadcastSpotifyTick({ seek: true });
+  }
 }
 
 function seekSoundCloudRelative(deltaSec) {
@@ -1585,6 +1512,7 @@ function wireSpotifyInteractiveControls() {
         if (spotifyPlayerState) {
           spotifyPlayerState.paused = !spotifyPlayerState.paused;
           updateSpotifyPlayPauseUI(spotifyPlayerState.paused);
+          broadcastSpotifyTick({ seek: true });
         }
       }
     };
@@ -1599,6 +1527,7 @@ function wireSpotifyInteractiveControls() {
         if (spotifyPlayerState) {
           spotifyPlayerState.paused = !spotifyPlayerState.paused;
           updateSpotifyPlayPauseUI(spotifyPlayerState.paused);
+          broadcastSpotifyTick({ seek: true });
         }
       }
     };

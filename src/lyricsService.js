@@ -24,6 +24,7 @@ export function cleanLyricsQuery(rawTitle, rawArtist) {
     .replace(/\([^)]*(?:official|video|audio|mv|prod\.|feat\.|ft\.)[^)]*\)/gi, "")
     .replace(/\|.*$/g, "")
     .replace(/-.*(?:official|mv|audio).*$/gi, "")
+    .replace(/\s*(?:-\s*)?(?:feat\.|ft\.).*$/gi, "")
     .trim();
 
   // Strip artist noise like " - Topic"
@@ -59,7 +60,7 @@ export async function fetchLyrics(
   rawTitle,
   rawArtist = "",
   durationSec = null,
-  { fetchImpl = globalThis.fetch, timeoutMs = 5000 } = {}
+  { fetchImpl = globalThis.fetch, timeoutMs = 6000 } = {}
 ) {
   const { title, artist } = cleanLyricsQuery(rawTitle, rawArtist);
   if (!title) return { ok: false, error: "empty_title" };
@@ -69,13 +70,15 @@ export async function fetchLyrics(
     return lyricsCache.get(cacheKey);
   }
 
+  const primaryArtist = artist ? artist.split(/[,;]/)[0].replace(/["']/g, "").trim() : "";
+
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
 
   try {
     let data = null;
 
-    // 1. Try exact match first if we have both title and artist
+    // 1. Try exact match first if we have artist
     if (artist) {
       const params = new URLSearchParams({
         track_name: title,
@@ -85,30 +88,66 @@ export async function fetchLyrics(
         params.set("duration", Math.round(durationSec));
       }
 
-      const res = await fetchImpl(`${LRCLIB_BASE}/get?${params.toString()}`, {
-        headers: { "User-Agent": USER_AGENT, Accept: "application/json" },
-        signal: controller.signal,
-      });
+      try {
+        const res = await fetchImpl(`${LRCLIB_BASE}/get?${params.toString()}`, {
+          headers: { "User-Agent": USER_AGENT, Accept: "application/json" },
+          signal: controller.signal,
+        });
+        if (res.ok) {
+          data = await res.json();
+        }
+      } catch {}
 
-      if (res.ok) {
-        data = await res.json();
+      // If exact with full artist failed, try exact with primary artist
+      if ((!data || (!data.syncedLyrics && !data.plainLyrics)) && primaryArtist && primaryArtist !== artist) {
+        const p2 = new URLSearchParams({
+          track_name: title,
+          artist_name: primaryArtist,
+        });
+        if (durationSec && Number.isFinite(durationSec)) {
+          p2.set("duration", Math.round(durationSec));
+        }
+        try {
+          const res2 = await fetchImpl(`${LRCLIB_BASE}/get?${p2.toString()}`, {
+            headers: { "User-Agent": USER_AGENT, Accept: "application/json" },
+            signal: controller.signal,
+          });
+          if (res2.ok) {
+            data = await res2.json();
+          }
+        } catch {}
       }
     }
 
-    // 2. If exact match didn't yield synced lyrics, try fuzzy search
+    // 2. If exact match didn't yield synced lyrics, try fuzzy search queries in order
     if (!data || (!data.syncedLyrics && !data.plainLyrics)) {
-      const query = artist ? `${artist} ${title}` : title;
-      const searchRes = await fetchImpl(`${LRCLIB_BASE}/search?q=${encodeURIComponent(query)}`, {
-        headers: { "User-Agent": USER_AGENT, Accept: "application/json" },
-        signal: controller.signal,
-      });
+      const queries = [
+        primaryArtist ? `${primaryArtist} ${title}` : `${artist} ${title}`,
+        artist && artist !== primaryArtist ? `${artist} ${title}` : null,
+        title,
+      ].filter(Boolean);
 
-      if (searchRes.ok) {
-        const results = await searchRes.json();
-        if (Array.isArray(results) && results.length > 0) {
-          // Find first result with synced lyrics, or fallback to first result
-          data = results.find((item) => Boolean(item.syncedLyrics)) || results[0];
-        }
+      for (const query of queries) {
+        if (data && data.syncedLyrics) break;
+        try {
+          const searchRes = await fetchImpl(`${LRCLIB_BASE}/search?q=${encodeURIComponent(query)}`, {
+            headers: { "User-Agent": USER_AGENT, Accept: "application/json" },
+            signal: controller.signal,
+          });
+
+          if (searchRes.ok) {
+            const results = await searchRes.json();
+            if (Array.isArray(results) && results.length > 0) {
+              const best = results.find((item) => Boolean(item.syncedLyrics));
+              if (best) {
+                data = best;
+                break;
+              } else if (!data) {
+                data = results[0];
+              }
+            }
+          }
+        } catch {}
       }
     }
 

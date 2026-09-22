@@ -158,6 +158,95 @@ export async function fetchSpotifyTrackMetadata(
   return fetchSpotifyOEmbed(trackId, { fetchImpl, timeoutMs });
 }
 
+export async function searchSpotifyTracks(
+  query,
+  {
+    clientId = "",
+    clientSecret = "",
+    accessToken = "",
+    market = "VN",
+    limit = 10,
+    fetchImpl = globalThis.fetch,
+    timeoutMs = 6000,
+  } = {}
+) {
+  if (typeof query !== "string" || !query.trim()) return [];
+
+  let token = accessToken;
+  if (!token && clientId && clientSecret) {
+    token = await getClientCredentialsToken({ clientId, clientSecret, fetchImpl }).catch(() => null);
+  }
+  if (!token) {
+    throw new Error("Spotify credentials or access token required for search.");
+  }
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    const params = new URLSearchParams({
+      q: query.trim(),
+      type: "track",
+      market: market || "VN",
+      limit: String(Math.min(Math.max(1, limit), 10)),
+    });
+
+    let res = await fetchImpl(`https://api.spotify.com/v1/search?${params.toString()}`, {
+      headers: {
+        Authorization: `Bearer ${token}`,
+        Accept: "application/json",
+      },
+      signal: controller.signal,
+    });
+
+    if (res.status === 401 && clientId && clientSecret) {
+      const fallbackToken = await getClientCredentialsToken({ clientId, clientSecret, fetchImpl }).catch(() => null);
+      if (fallbackToken && fallbackToken !== token) {
+        token = fallbackToken;
+        res = await fetchImpl(`https://api.spotify.com/v1/search?${params.toString()}`, {
+          headers: {
+            Authorization: `Bearer ${token}`,
+            Accept: "application/json",
+          },
+          signal: controller.signal,
+        });
+      }
+    }
+
+    if (!res.ok) {
+      const errBody = await res.text().catch(() => "");
+      throw new Error(`Spotify search API error (${res.status}): ${errBody}`);
+    }
+
+    const data = await res.json();
+    const items = Array.isArray(data?.tracks?.items) ? data.tracks.items : [];
+
+    return items
+      .filter((track) => track && typeof track.id === "string" && isValidSpotifyTrackId(track.id))
+      .map((track) => {
+        const artists = Array.isArray(track.artists)
+          ? track.artists.map((a) => a?.name).filter(Boolean).join(", ")
+          : "";
+        const image =
+          track.album?.images?.[0]?.url ||
+          track.album?.images?.[1]?.url ||
+          null;
+
+        return {
+          videoId: track.id,
+          title: typeof track.name === "string" ? track.name.trim() : "Unknown Title",
+          channel: artists || "Spotify Artist",
+          duration: formatDurationMs(track.duration_ms),
+          thumbnail: image,
+          provider: "spotify",
+        };
+      });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+
 export const SPOTIFY_OAUTH_SCOPES = [
   "streaming",
   "user-read-email",

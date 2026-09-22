@@ -8,7 +8,7 @@ import { UserRepository } from "../src/repositories/userRepository.js";
 afterEach(() => closeDb());
 
 test("notifications fan out to active users and support read state", () => {
-  const db = initDb({ dbPath: ":memory:" });
+  const db = initDb({ dbPath: ":memory:", adminUser: "", adminPass: "" });
   const userRepo = new UserRepository(db);
   const notificationRepo = new NotificationRepository(db);
   const sender = userRepo.create({ username: "notify-sender", passwordHash: "p" });
@@ -63,7 +63,7 @@ test("notifications fan out to active users and support read state", () => {
 });
 
 test("notification history is newest-first and bounded to twenty items", () => {
-  const db = initDb({ dbPath: ":memory:" });
+  const db = initDb({ dbPath: ":memory:", adminUser: "", adminPass: "" });
   const userRepo = new UserRepository(db);
   const notificationRepo = new NotificationRepository(db);
   const user = userRepo.create({ username: "notify-history", passwordHash: "p" });
@@ -86,7 +86,7 @@ test("notification history is newest-first and bounded to twenty items", () => {
 });
 
 test("admin notification history exposes delivery and read counts", () => {
-  const db = initDb({ dbPath: ":memory:" });
+  const db = initDb({ dbPath: ":memory:", adminUser: "", adminPass: "" });
   const userRepo = new UserRepository(db);
   const notificationRepo = new NotificationRepository(db);
   const admin = userRepo.create({ username: "notify-admin", passwordHash: "p", role: "admin" });
