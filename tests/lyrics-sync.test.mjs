@@ -348,4 +348,3 @@ describe("Lyrics Synchronization Invariants", () => {
   });
 });
 
-
