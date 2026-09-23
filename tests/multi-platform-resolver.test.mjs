@@ -116,6 +116,8 @@ describe("Unified media link detection and resolution", () => {
     assert.equal(detectLinkProvider("https://www.youtube.com/watch?v=dQw4w9WgXcQ"), "youtube");
     assert.equal(detectLinkProvider("https://open.spotify.com/track/4cOdK2wGLETKBW3PvgPWqT"), "spotify");
     assert.equal(detectLinkProvider("https://soundcloud.com/artist/song"), "soundcloud");
+    assert.equal(detectLinkProvider("https://vt.tiktok.com/ZSjR3kX7L/"), "tiktok");
+    assert.equal(detectLinkProvider("https://www.tiktok.com/@user/video/6718335390845095173"), "tiktok");
     assert.equal(detectLinkProvider("https://unknown-site.com/media/123"), "unknown");
   });
 
@@ -166,9 +168,47 @@ describe("Unified media link detection and resolution", () => {
     assert.equal(res.song.provider, "spotify");
   });
 
+  test("resolves TikTok link directly with tiktok provider", async () => {
+    const mockFetch = async (url) => {
+      if (url.includes("tikwm.com")) {
+        return {
+          ok: true,
+          json: async () => ({
+            code: 0,
+            msg: "success",
+            data: {
+              id: "6718335390845095173",
+              title: "Trend Dance #fyp",
+              duration: 30,
+              cover: "https://p16.tiktokcdn.com/cover.jpg",
+              music: "https://v16.tiktokcdn.com/music.mp3",
+              music_info: {
+                title: "Hit Song",
+                author: "Artist TT",
+              },
+            },
+          }),
+        };
+      }
+      return { ok: false };
+    };
+
+    const res = await resolveMediaLink("https://vt.tiktok.com/ZSjR3kX7L/", {
+      fetchImpl: mockFetch,
+    });
+
+    assert.ok(res.ok);
+    assert.equal(res.song.videoId, "https://vt.tiktok.com/ZSjR3kX7L");
+    assert.equal(res.song.title, "Hit Song");
+    assert.equal(res.song.channel, "Artist TT");
+    assert.equal(res.song.duration, "0:30");
+    assert.equal(res.song.provider, "tiktok");
+  });
+
   test("rejects unsupported URLs with friendly message", async () => {
     const res = await resolveMediaLink("https://vimeo.com/12345678");
     assert.equal(res.ok, false);
     assert.ok(res.reason.includes("YouTube, Spotify"));
+    assert.ok(res.reason.includes("TikTok"));
   });
 });

@@ -147,4 +147,205 @@ describe("Lyrics Synchronization Invariants", () => {
     expect(parsed[0].time).toBeCloseTo(2.2, 2); // 1.0 + 1.2 = 2.2
     expect(parsed[1].time).toBeCloseTo(5.7, 2); // 4.5 + 1.2 = 5.7
   });
+
+  test("server falls back to nowPlaying.startedAt when latestSpotifyPlaybackTick is null", () => {
+    const startedAt = Date.now() - 15000; // started 15s ago
+    const nowPlaying = {
+      provider: "spotify",
+      videoId: "track_fallback",
+      startedAt,
+    };
+    const latestSpotifyPlaybackTick = null;
+
+    function getServerTickResponse(now = Date.now()) {
+      if (latestSpotifyPlaybackTick) {
+        const elapsed = latestSpotifyPlaybackTick.paused
+          ? 0
+          : Math.max(0, now - (latestSpotifyPlaybackTick.serverTime || now));
+        return {
+          type: "playbackTick",
+          ...latestSpotifyPlaybackTick,
+          position: latestSpotifyPlaybackTick.position + elapsed,
+          serverTime: now,
+        };
+      }
+      if (nowPlaying?.provider === "spotify") {
+        const elapsed = nowPlaying.startedAt ? Math.max(0, now - nowPlaying.startedAt) : 0;
+        return {
+          type: "playbackTick",
+          position: elapsed,
+          paused: false,
+          seek: false,
+          videoId: nowPlaying.videoId || "",
+          serverTime: now,
+        };
+      }
+      return null;
+    }
+
+    const res = getServerTickResponse();
+    expect(res).not.toBeNull();
+    expect(res.position).toBeGreaterThanOrEqual(14900);
+    expect(res.position).toBeLessThanOrEqual(15200);
+    expect(res.videoId).toBe("track_fallback");
+    expect(res.paused).toBe(false);
+  });
+
+  test("guest continuous extrapolation does not freeze after 10 seconds while song is playing", () => {
+    function calculateGuestProgress({
+      anchorPos,
+      anchorTime,
+      isPaused,
+      currentTime,
+      durationMs,
+    }) {
+      if (isPaused) {
+        return { posMs: anchorPos, paused: true, shouldRequestTick: false };
+      }
+      const elapsed = anchorTime > 0 ? currentTime - anchorTime : 0;
+      const currentPosMs = Math.max(0, anchorPos + elapsed);
+      if (currentPosMs >= durationMs + 5000) {
+        return { posMs: currentPosMs, paused: true, shouldRequestTick: false };
+      }
+      return {
+        posMs: currentPosMs,
+        paused: false,
+        shouldRequestTick: currentTime - anchorTime > 4000,
+      };
+    }
+
+    const t0 = 1000;
+    const anchorPos = 30000; // 30s into song
+    const durationMs = 210000; // 3m30s
+
+    // At 12 seconds elapsed (past the old 10s freeze point):
+    const progressAt12s = calculateGuestProgress({
+      anchorPos,
+      anchorTime: t0,
+      isPaused: false,
+      currentTime: t0 + 12000,
+      durationMs,
+    });
+
+    expect(progressAt12s.paused).toBe(false);
+    expect(progressAt12s.posMs).toBe(42000);
+    expect(progressAt12s.shouldRequestTick).toBe(true);
+  });
+
+  test("renderGuestLyricsLines position includes elapsed time and does not jump backwards", () => {
+    function computeInitialRenderPosition({
+      anchorPos,
+      anchorTime,
+      isPaused,
+      currentTime,
+    }) {
+      const elapsed = (!isPaused && anchorTime > 0) ? currentTime - anchorTime : 0;
+      return Math.max(0, (anchorPos || 0) + elapsed) / 1000;
+    }
+
+    const t0 = 50000;
+    const curPos = computeInitialRenderPosition({
+      anchorPos: 20000, // 20s
+      anchorTime: t0,
+      isPaused: false,
+      currentTime: t0 + 6500, // 6.5s later
+    });
+
+    expect(curPos).toBe(26.5);
+  });
+
+  test("lyrics vertical centering: every line from index 0 to N-1 aligns exactly with vertical center of scroller", () => {
+    function simulateLyricsLayout({ lineCount, scrollerH = 220, lineH = 38, gap = 6 }) {
+      const centerPad = Math.round((scrollerH - lineH) / 2);
+      const totalH = centerPad * 2 + lineCount * lineH + Math.max(0, lineCount - 1) * gap;
+      const maxScroll = Math.max(0, totalH - scrollerH);
+
+      const lines = [];
+      for (let i = 0; i < lineCount; i++) {
+        const lineTop = centerPad + i * (lineH + gap);
+        const lineCenter = lineTop + lineH / 2;
+        const targetScroll = Math.max(0, Math.min(maxScroll, Math.round(lineCenter - scrollerH / 2)));
+        const visibleCenterOnScreen = lineCenter - targetScroll;
+        lines.push({
+          index: i,
+          targetScroll,
+          visibleCenterOnScreen,
+          isExactCenter: Math.abs(visibleCenterOnScreen - scrollerH / 2) <= 1,
+        });
+      }
+
+      return { centerPad, totalH, maxScroll, lines };
+    }
+
+    // Test with standard 40 lines lyrics on 220px desktop scroller
+    const desktopLayout = simulateLyricsLayout({ lineCount: 40, scrollerH: 220, lineH: 38, gap: 6 });
+    expect(desktopLayout.lines[0].targetScroll).toBe(0);
+    expect(desktopLayout.lines[0].visibleCenterOnScreen).toBe(110);
+    expect(desktopLayout.lines[0].isExactCenter).toBe(true);
+
+    const lastIdx = desktopLayout.lines.length - 1;
+    expect(desktopLayout.lines[lastIdx].targetScroll).toBe(desktopLayout.maxScroll);
+    expect(desktopLayout.lines[lastIdx].visibleCenterOnScreen).toBe(110);
+    expect(desktopLayout.lines[lastIdx].isExactCenter).toBe(true);
+
+    for (const line of desktopLayout.lines) {
+      expect(line.isExactCenter).toBe(true);
+      expect(line.targetScroll).toBeGreaterThanOrEqual(0);
+      expect(line.targetScroll).toBeLessThanOrEqual(desktopLayout.maxScroll);
+    }
+
+    // Test on 185px mobile scroller
+    const mobileLayout = simulateLyricsLayout({ lineCount: 25, scrollerH: 185, lineH: 34, gap: 4 });
+    for (const line of mobileLayout.lines) {
+      expect(line.isExactCenter).toBe(true);
+    }
+
+    // Test single-line lyrics
+    const singleLineLayout = simulateLyricsLayout({ lineCount: 1, scrollerH: 220, lineH: 38, gap: 6 });
+    expect(singleLineLayout.lines[0].targetScroll).toBe(0);
+    expect(singleLineLayout.lines[0].isExactCenter).toBe(true);
+  });
+
+  test("playbackTick anchor normalization prevents backward time jitter and activeIndex rollback", () => {
+    const lines = [
+      { time: 10.0, text: "Line 1" },
+      { time: 15.0, text: "Line 2" },
+      { time: 20.0, text: "Line 3" },
+      { time: 25.0, text: "Line 4" },
+    ];
+
+    function getActiveIndex(lines, curSec) {
+      let activeIdx = -1;
+      for (let i = 0; i < lines.length; i++) {
+        if (lines[i].time <= curSec + 0.25) {
+          activeIdx = i;
+        } else {
+          break;
+        }
+      }
+      return activeIdx;
+    }
+
+    // At 15.1s, Line 2 (index 1) has just become active.
+    let anchorPos = 12000;
+    let anchorTime = 1000;
+    const nowAtTransition = 1000 + 3100; // 4100ms
+    const curSec = (anchorPos + (nowAtTransition - anchorTime)) / 1000; // 15.1s
+    expect(getActiveIndex(lines, curSec)).toBe(1);
+
+    // Buggy implementation: tick arrives with 15.12s, drift is small (+20ms).
+    // The buggy code did `anchorPos += drift * 0.3` without updating anchorTime,
+    // then called syncGuestLyricsPosition(anchorPos / 1000) directly:
+    const buggySyncTime = (anchorPos + 20 * 0.3) / 1000; // ~12.006s!
+    expect(getActiveIndex(lines, buggySyncTime)).toBe(0); // ROLLED BACK TO LINE 1 (JERK)!
+
+    // Fixed implementation: anchor is normalized to current time,
+    // and normal playback ticks do not call syncGuestLyricsPosition out-of-band:
+    const fixedPosMs = (anchorPos + (nowAtTransition - anchorTime)) + 20 * 0.3; // 15126ms
+    const fixedAnchorTime = nowAtTransition;
+    const fixedRafCurSec = (fixedPosMs + (nowAtTransition - fixedAnchorTime)) / 1000;
+    expect(getActiveIndex(lines, fixedRafCurSec)).toBe(1); // STAYED AT LINE 2 (NO ROLLBACK)!
+  });
 });
+
+

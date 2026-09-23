@@ -5,6 +5,7 @@
 import { parseYouTubeVideoId, fetchYouTubeMetadata } from "./youtube.js";
 import { parseSpotifyTrackId, fetchSpotifyTrackMetadata } from "./spotify.js";
 import { parseSoundCloudUrl, fetchSoundCloudMetadata } from "./soundcloud.js";
+import { isValidTikTokUrl, parseTikTokUrl, fetchTikTokMetadata } from "./tiktok.js";
 
 export function detectLinkProvider(rawUrl) {
   if (typeof rawUrl !== "string" || !rawUrl.trim()) return "unknown";
@@ -13,6 +14,7 @@ export function detectLinkProvider(rawUrl) {
   if (parseYouTubeVideoId(trimmed)) return "youtube";
   if (parseSpotifyTrackId(trimmed)) return "spotify";
   if (parseSoundCloudUrl(trimmed)) return "soundcloud";
+  if (isValidTikTokUrl(trimmed)) return "tiktok";
 
   return "unknown";
 }
@@ -86,8 +88,26 @@ export async function resolveMediaLink(
     };
   }
 
+  if (provider === "tiktok") {
+    const videoUrl = parseTikTokUrl(rawUrl);
+    if (!videoUrl) {
+      return { ok: false, reason: "Link TikTok không đúng định dạng." };
+    }
+    const song = await fetchTikTokMetadata(videoUrl, { fetchImpl });
+    if (!song) {
+      return { ok: false, reason: "Không thể lấy thông tin bài hát TikTok này. Vui lòng thử lại." };
+    }
+    return {
+      ok: true,
+      song: {
+        ...song,
+        provider: "tiktok",
+      },
+    };
+  }
+
   return {
     ok: false,
-    reason: "Hiện tại hệ thống chỉ hỗ trợ link YouTube, Spotify và SoundCloud.",
+    reason: "Hiện tại hệ thống chỉ hỗ trợ link YouTube, Spotify, SoundCloud và TikTok.",
   };
 }

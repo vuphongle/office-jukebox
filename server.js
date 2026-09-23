@@ -44,6 +44,11 @@ import {
   isValidSoundCloudUrl,
   fetchSoundCloudMetadata,
 } from "./src/soundcloud.js";
+import {
+  isValidTikTokUrl,
+  parseTikTokUrl,
+  fetchTikTokMetadata,
+} from "./src/tiktok.js";
 import { resolveMediaLink } from "./src/mediaLinkResolver.js";
 import { fetchLyrics } from "./src/lyricsService.js";
 import { avatarPublicUrl, validateAvatarUpload } from "./src/avatar.js";
@@ -1085,7 +1090,7 @@ app.get("/api/search", publicReadLimit, async (req, res) => {
 
 app.post("/api/youtube/resolve", publicReadLimit, async (req, res) => {
   const rawUrl = typeof req.body?.url === "string" ? req.body.url.trim() : "";
-  if (!rawUrl) return res.status(400).json({ ok: false, reason: "Vui lòng dán link YouTube, Spotify hoặc SoundCloud." });
+  if (!rawUrl) return res.status(400).json({ ok: false, reason: "Vui lòng dán link YouTube, Spotify, SoundCloud hoặc TikTok." });
 
   let spotifyAccessToken = "";
   try {
@@ -1194,6 +1199,22 @@ app.post("/api/spotify/disconnect", requireHostAuth, (req, res) => {
   res.json({ ok: true });
 });
 
+app.get("/api/tiktok/stream", publicReadLimit, async (req, res) => {
+  const rawUrl = typeof req.query?.url === "string" ? req.query.url.trim() : "";
+  if (!rawUrl || !isValidTikTokUrl(rawUrl)) {
+    return res.status(400).json({ ok: false, error: "invalid_tiktok_url" });
+  }
+  try {
+    const meta = await fetchTikTokMetadata(rawUrl);
+    if (!meta || !meta.streamUrl) {
+      return res.status(502).json({ ok: false, error: "stream_not_available" });
+    }
+    res.redirect(302, meta.streamUrl);
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err.message || "stream_fetch_failed" });
+  }
+});
+
 app.get("/api/lyrics", async (req, res) => {
   const title = (req.query.title || "").toString().trim();
   const artist = (req.query.artist || "").toString().trim();
@@ -1234,6 +1255,10 @@ app.post("/api/request", songRequestIpLimit, async (req, res) => {
   } else if (cleanProvider === "soundcloud") {
     if (!isValidSoundCloudUrl(videoId)) {
       return res.status(400).json({ ok: false, reason: "Link bài hát SoundCloud không hợp lệ." });
+    }
+  } else if (cleanProvider === "tiktok") {
+    if (!isValidTikTokUrl(videoId)) {
+      return res.status(400).json({ ok: false, reason: "Link bài hát TikTok không hợp lệ." });
     }
   } else {
     return res.status(400).json({ ok: false, reason: "Nền tảng bài hát không được hỗ trợ." });
@@ -1325,6 +1350,17 @@ app.post("/api/request", songRequestIpLimit, async (req, res) => {
     } else if (cleanProvider === "soundcloud") {
       const meta = await fetchSoundCloudMetadata(videoId);
       if (!meta) return res.status(502).json({ ok: false, reason: "Không thể lấy thông tin bài hát từ SoundCloud. Vui lòng thử lại." });
+      if (filterOn) {
+        const verdict = await moderate({ title: meta.title, channel: meta.channel }, null, {
+          strict: moderationMode === "strict",
+          ...(eventContext ? { eventContext } : {}),
+        });
+        if (!verdict?.approved) return res.json({ ok: false, reason: verdict?.reason || "Bài hát không được chấp thuận." });
+      }
+      canonical = meta;
+    } else if (cleanProvider === "tiktok") {
+      const meta = await fetchTikTokMetadata(videoId);
+      if (!meta) return res.status(502).json({ ok: false, reason: "Không thể lấy thông tin bài hát từ TikTok. Vui lòng thử lại." });
       if (filterOn) {
         const verdict = await moderate({ title: meta.title, channel: meta.channel }, null, {
           strict: moderationMode === "strict",
@@ -2050,6 +2086,21 @@ state.onChange = (nextState) => {
     latestSpotifyPlaybackTick = null;
   }
   broadcastState();
+  if (nextState.nowPlaying?.provider === "spotify" && latestSpotifyPlaybackTick && !latestSpotifyPlaybackTick.paused) {
+    const now = Date.now();
+    const elapsed = Math.max(0, now - (latestSpotifyPlaybackTick.serverTime || now));
+    const tickMsg = JSON.stringify({
+      type: "playbackTick",
+      ...latestSpotifyPlaybackTick,
+      position: latestSpotifyPlaybackTick.position + elapsed,
+      serverTime: now,
+    });
+    for (const client of wss.clients) {
+      if (client.readyState === 1) {
+        client.send(tickMsg);
+      }
+    }
+  }
   chatAiCoordinator.scheduleQueueChange({
     queueCount: nextState.queue?.length || 0,
     nowPlaying: nextState.nowPlaying?.title || null,
@@ -2453,17 +2504,29 @@ wss.on("connection", (ws, request) => {
       }
 
       if (msg.type === "requestPlaybackTick") {
-        if (latestSpotifyPlaybackTick && ws.readyState === 1) {
+        if (ws.readyState === 1) {
           const now = Date.now();
-          const elapsed = latestSpotifyPlaybackTick.paused
-            ? 0
-            : Math.max(0, now - (latestSpotifyPlaybackTick.serverTime || now));
-          ws.send(JSON.stringify({
-            type: "playbackTick",
-            ...latestSpotifyPlaybackTick,
-            position: latestSpotifyPlaybackTick.position + elapsed,
-            serverTime: now,
-          }));
+          if (latestSpotifyPlaybackTick) {
+            const elapsed = latestSpotifyPlaybackTick.paused
+              ? 0
+              : Math.max(0, now - (latestSpotifyPlaybackTick.serverTime || now));
+            ws.send(JSON.stringify({
+              type: "playbackTick",
+              ...latestSpotifyPlaybackTick,
+              position: latestSpotifyPlaybackTick.position + elapsed,
+              serverTime: now,
+            }));
+          } else if (state.nowPlaying?.provider === "spotify") {
+            const elapsed = state.nowPlaying.startedAt ? Math.max(0, now - state.nowPlaying.startedAt) : 0;
+            ws.send(JSON.stringify({
+              type: "playbackTick",
+              position: elapsed,
+              paused: false,
+              seek: false,
+              videoId: state.nowPlaying.videoId || "",
+              serverTime: now,
+            }));
+          }
         }
         return;
       }
