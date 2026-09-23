@@ -15,6 +15,7 @@ if (hostCoordinationChannel) {
         if (player?.stopVideo) player.stopVideo();
         if (spotifyPlayer?.pause) spotifyPlayer.pause();
         if (scWidget?.pause) { try { scWidget.pause(); } catch {} }
+        if (tiktokAudio) { try { tiktokAudio.pause(); } catch {} }
         const scIframe = document.getElementById("sc-widget-iframe");
         if (scIframe && scIframe.src && scIframe.src.includes("auto_play=true")) {
           scIframe.src = "https://w.soundcloud.com/player/?url=https%3A//api.soundcloud.com/tracks/293&auto_play=false";
@@ -43,6 +44,7 @@ let spotifyAnchorPos = 0; // ms
 let spotifyAnchorTime = 0; // performance.now()
 let spotifyRafId = null;
 let spotifyReAnchorTimer = null;
+let spotifyTickBroadcastTimer = null;
 let isSeekPending = false;
 let seekTargetMs = 0;
 let lastBroadcastTickTime = 0;
@@ -50,6 +52,8 @@ let spotifyStatus = { connected: false, configured: false };
 let scWidget = null;
 let scReady = false;
 let scIsPlaying = false;
+let tiktokAudio = null;
+let tiktokIsPlaying = false;
 let filterOn = false;
 let moderationMode = "default"; // "default" | "strict" (protocol values)
 let moderationConfigured = false;
@@ -573,6 +577,10 @@ function stopSpotifySync() {
     clearInterval(spotifyProgressTimer);
     spotifyProgressTimer = null;
   }
+  if (spotifyTickBroadcastTimer) {
+    clearInterval(spotifyTickBroadcastTimer);
+    spotifyTickBroadcastTimer = null;
+  }
 }
 
 function startSpotifySync() {
@@ -587,12 +595,6 @@ function startSpotifySync() {
     spotifyPlayerState.position = currentPosMs;
     updateSpotifyProgressUI(spotifyPlayerState);
 
-    const now = performance.now();
-    if (now - lastBroadcastTickTime >= 3000) {
-      lastBroadcastTickTime = now;
-      broadcastSpotifyTick({ seek: false });
-    }
-
     spotifyRafId = requestAnimationFrame(loop);
   }
 
@@ -601,6 +603,12 @@ function startSpotifySync() {
   spotifyReAnchorTimer = setInterval(() => {
     reAnchorFromSdk();
   }, 3000);
+
+  spotifyTickBroadcastTimer = setInterval(() => {
+    if (activePlayerProvider === "spotify" && spotifyPlayerState) {
+      broadcastSpotifyTick({ seek: false });
+    }
+  }, 2500);
 }
 
 async function reAnchorFromSdk() {
@@ -613,8 +621,11 @@ async function reAnchorFromSdk() {
       spotifyAnchorPos = currentState.position || 0;
       spotifyAnchorTime = performance.now();
     }
-    if (!currentState.paused && !spotifyRafId) {
-      startSpotifySync();
+    if (!currentState.paused) {
+      broadcastSpotifyTick({ seek: false });
+      if (!spotifyRafId) {
+        startSpotifySync();
+      }
     }
   } catch (err) {
     console.warn("[spotify] reAnchorFromSdk error:", err);
@@ -879,7 +890,133 @@ function getCurrentPlayerTime() {
     const t = Number(spotifyPlayerState.position) / 1000;
     return Number.isFinite(t) ? t : null;
   }
+  if (activePlayerProvider === "tiktok" && tiktokAudio) {
+    const t = Number(tiktokAudio.currentTime);
+    return Number.isFinite(t) ? t : null;
+  }
   return null;
+}
+
+// ---- TikTok Audio Player ---------------------------------------------------
+function initTikTokPlayer() {
+  if (tiktokAudio) return;
+  tiktokAudio = document.getElementById("tiktok-audio-player");
+  if (!tiktokAudio) return;
+
+  tiktokAudio.addEventListener("play", () => {
+    tiktokIsPlaying = true;
+    clearTimeout(playbackWatchdog);
+    hidePlaybackRecovery();
+    updatePlayPauseIcon();
+  });
+
+  tiktokAudio.addEventListener("pause", () => {
+    tiktokIsPlaying = false;
+    updatePlayPauseIcon();
+  });
+
+  tiktokAudio.addEventListener("timeupdate", () => {
+    if (!tiktokAudio) return;
+    const cur = tiktokAudio.currentTime || 0;
+    const dur = tiktokAudio.duration || 0;
+    const curEl = document.getElementById("tiktok-time-cur");
+    const totalEl = document.getElementById("tiktok-time-total");
+    const fillEl = document.getElementById("tiktok-progress-fill");
+
+    if (curEl) curEl.textContent = formatTikTokTime(cur);
+    if (totalEl && dur > 0) totalEl.textContent = formatTikTokTime(dur);
+    if (fillEl && dur > 0) {
+      const pct = Math.min(100, Math.max(0, (cur / dur) * 100));
+      fillEl.style.width = `${pct.toFixed(1)}%`;
+    }
+  });
+
+  tiktokAudio.addEventListener("ended", () => {
+    tiktokIsPlaying = false;
+    updatePlayPauseIcon();
+    if (activePlayerProvider === "tiktok" && currentPlaybackToken && terminalReportedForToken !== currentPlaybackToken) {
+      if (send({
+        type: "ended",
+        videoId: currentVideoId,
+        playbackToken: currentPlaybackToken,
+        playedSeconds: tiktokAudio.currentTime || null,
+      })) {
+        terminalReportedForToken = currentPlaybackToken;
+      }
+    }
+  });
+
+  tiktokAudio.addEventListener("error", (e) => {
+    console.warn("[tiktok] audio playback error:", e);
+    tiktokIsPlaying = false;
+    updatePlayPauseIcon();
+    if (activePlayerProvider === "tiktok" && currentPlaybackToken && terminalReportedForToken !== currentPlaybackToken) {
+      if (send({
+        type: "error",
+        videoId: currentVideoId,
+        playbackToken: currentPlaybackToken,
+        code: "tiktok_playback_error",
+      })) {
+        terminalReportedForToken = currentPlaybackToken;
+      }
+    }
+  });
+
+  const artCenter = document.getElementById("tiktok-art-center");
+  if (artCenter) {
+    artCenter.addEventListener("click", () => toggleTikTokPlay());
+  }
+  const progressBar = document.getElementById("tiktok-progress-bar");
+  if (progressBar) {
+    progressBar.addEventListener("click", (e) => {
+      if (!tiktokAudio || !tiktokAudio.duration) return;
+      const rect = progressBar.getBoundingClientRect();
+      const clickX = e.clientX - rect.left;
+      const pct = Math.min(1, Math.max(0, clickX / rect.width));
+      tiktokAudio.currentTime = pct * tiktokAudio.duration;
+    });
+  }
+}
+
+function formatTikTokTime(sec) {
+  const s = Math.max(0, Math.floor(sec || 0));
+  const m = Math.floor(s / 60);
+  const rem = s % 60;
+  return `${m}:${rem.toString().padStart(2, "0")}`;
+}
+
+function updateTikTokPlayPauseUI(isPaused) {
+  const centerPlay = document.getElementById("tiktok-center-play-btn");
+  if (!centerPlay) return;
+  const iconPlay = centerPlay.querySelector(".center-icon-play");
+  const iconPause = centerPlay.querySelector(".center-icon-pause");
+  if (iconPlay && iconPause) {
+    iconPlay.classList.toggle("hidden", !isPaused);
+    iconPause.classList.toggle("hidden", isPaused);
+  }
+}
+
+function toggleTikTokPlay() {
+  if (!tiktokAudio) return;
+  if (tiktokAudio.paused) {
+    tiktokAudio.play().catch((err) => console.warn("[tiktok] play blocked:", err));
+  } else {
+    tiktokAudio.pause();
+  }
+}
+
+function playTikTok(url) {
+  if (!started) return;
+  initTikTokPlayer();
+  if (!tiktokAudio) return;
+
+  tiktokIsPlaying = false;
+  // Endpoint /api/tiktok/stream auto-refreshes stream and 302 redirects to active MP3
+  tiktokAudio.src = `/api/tiktok/stream?url=${encodeURIComponent(url)}`;
+  tiktokAudio.play().catch((err) => {
+    console.warn("[tiktok] autoplay prevented:", err);
+    showPlaybackRecovery();
+  });
 }
 
 // Synchronize the player with the song the server reports as current.
@@ -890,6 +1027,7 @@ function syncPlayer() {
   const playerYtEl = document.getElementById("player");
   const playerSpotifyEl = document.getElementById("player-spotify");
   const playerSoundCloudEl = document.getElementById("player-soundcloud");
+  const playerTikTokEl = document.getElementById("player-tiktok");
 
   if (!np) {
     clearTimeout(playbackWatchdog);
@@ -903,9 +1041,11 @@ function syncPlayer() {
     terminalReportedForToken = null;
     spotifyWasPlaying = false;
     scIsPlaying = false;
+    tiktokIsPlaying = false;
     if (player?.stopVideo) player.stopVideo();
     if (spotifyPlayer?.pause) spotifyPlayer.pause();
     if (scWidget?.pause) { try { scWidget.pause(); } catch {} }
+    if (tiktokAudio) { try { tiktokAudio.pause(); tiktokAudio.currentTime = 0; } catch {} }
     const scIframe = document.getElementById("sc-widget-iframe");
     if (scIframe && scIframe.src && scIframe.src.includes("auto_play=true")) {
       scIframe.src = "https://w.soundcloud.com/player/?url=https%3A//api.soundcloud.com/tracks/293&auto_play=false";
@@ -914,6 +1054,7 @@ function syncPlayer() {
     playerYtEl.classList.add("hidden");
     playerSpotifyEl.classList.add("hidden");
     playerSoundCloudEl.classList.add("hidden");
+    playerTikTokEl?.classList.add("hidden");
     resetLyrics();
     idle.classList.remove("hidden");
     return;
@@ -958,8 +1099,10 @@ function syncPlayer() {
       playerYtEl.classList.remove("hidden");
       playerSpotifyEl.classList.add("hidden");
       playerSoundCloudEl.classList.add("hidden");
+      playerTikTokEl?.classList.add("hidden");
       if (spotifyPlayer?.pause) spotifyPlayer.pause();
       if (scWidget?.pause) { try { scWidget.pause(); } catch {} }
+      if (tiktokAudio) { try { tiktokAudio.pause(); } catch {} }
       const scIframe = document.getElementById("sc-widget-iframe");
       if (scIframe && scIframe.src && scIframe.src.includes("auto_play=true")) {
         scIframe.src = "https://w.soundcloud.com/player/?url=https%3A//api.soundcloud.com/tracks/293&auto_play=false";
@@ -987,8 +1130,10 @@ function syncPlayer() {
       playerYtEl.classList.add("hidden");
       playerSpotifyEl.classList.remove("hidden");
       playerSoundCloudEl.classList.add("hidden");
+      playerTikTokEl?.classList.add("hidden");
       if (player?.stopVideo) player.stopVideo();
       if (scWidget?.pause) { try { scWidget.pause(); } catch {} }
+      if (tiktokAudio) { try { tiktokAudio.pause(); } catch {} }
       const scIframe = document.getElementById("sc-widget-iframe");
       if (scIframe && scIframe.src && scIframe.src.includes("auto_play=true")) {
         scIframe.src = "https://w.soundcloud.com/player/?url=https%3A//api.soundcloud.com/tracks/293&auto_play=false";
@@ -1035,10 +1180,58 @@ function syncPlayer() {
       playerYtEl.classList.add("hidden");
       playerSpotifyEl.classList.add("hidden");
       playerSoundCloudEl.classList.remove("hidden");
+      playerTikTokEl?.classList.add("hidden");
       if (player?.stopVideo) player.stopVideo();
       if (spotifyPlayer?.pause) spotifyPlayer.pause();
+      if (tiktokAudio) { try { tiktokAudio.pause(); } catch {} }
 
       playSoundCloud(np.videoId);
+      armPlaybackWatchdog(np.videoId, currentPlaybackToken);
+    } else if (provider === "tiktok") {
+      stopSpotifySync();
+      playerYtEl.classList.add("hidden");
+      playerSpotifyEl.classList.add("hidden");
+      playerSoundCloudEl.classList.add("hidden");
+      playerTikTokEl?.classList.remove("hidden");
+      if (player?.stopVideo) player.stopVideo();
+      if (spotifyPlayer?.pause) spotifyPlayer.pause();
+      if (scWidget?.pause) { try { scWidget.pause(); } catch {} }
+
+      const coverUrl = safeImageUrl(np.thumbnail);
+      const coverEl = document.getElementById("tiktok-cover");
+      if (coverEl) {
+        coverEl.referrerPolicy = "no-referrer";
+        coverEl.src = coverUrl;
+      }
+      const glowEl = document.getElementById("tiktok-ambient-glow");
+      if (glowEl) {
+        glowEl.style.backgroundImage = coverUrl && coverUrl !== NO_THUMB ? `url("${coverUrl}")` : "";
+      }
+      const titleEl = document.getElementById("tiktok-title");
+      if (titleEl) titleEl.textContent = np.title || "—";
+      const channelEl = document.getElementById("tiktok-channel");
+      if (channelEl) channelEl.textContent = np.channel || "—";
+
+      const reqPill = document.getElementById("tiktok-requester-pill");
+      const reqName = document.getElementById("tiktok-requester-name");
+      if (reqPill && reqName) {
+        if (np.addedBy) {
+          reqName.textContent = `Yêu cầu: ${np.addedBy}`;
+          reqPill.classList.remove("hidden");
+        } else {
+          reqPill.classList.add("hidden");
+        }
+      }
+
+      const fillEl = document.getElementById("tiktok-progress-fill");
+      if (fillEl) fillEl.style.width = "0%";
+      const curEl = document.getElementById("tiktok-time-cur");
+      if (curEl) curEl.textContent = "0:00";
+      const totalEl = document.getElementById("tiktok-time-total");
+      if (totalEl) totalEl.textContent = np.duration || "0:30";
+
+      updateTikTokPlayPauseUI(false);
+      playTikTok(np.videoId);
       armPlaybackWatchdog(np.videoId, currentPlaybackToken);
     }
   }
@@ -1083,6 +1276,12 @@ function armPlaybackWatchdog(videoId, playbackToken) {
         armPlaybackWatchdog(videoId, playbackToken);
         return;
       }
+    } else if (activePlayerProvider === "tiktok") {
+      if (tiktokIsPlaying) return;
+      if (document.hidden) {
+        armPlaybackWatchdog(videoId, playbackToken);
+        return;
+      }
     }
     console.warn(`[watchdog] ${videoId} (${activePlayerProvider}) has not started — skipping`);
     if (
@@ -1111,6 +1310,8 @@ window.addEventListener("pageshow", (e) => {
   playbackEventHandlers = null;
   spotifyWasPlaying = false;
   scIsPlaying = false;
+  tiktokIsPlaying = false;
+  if (tiktokAudio) { try { tiktokAudio.pause(); } catch {} }
   hidePlaybackRecovery();
   document.getElementById("start-overlay").classList.remove("hidden");
   document.getElementById("stage").classList.add("hidden");
@@ -1170,7 +1371,7 @@ function render() {
     li.className = "q-item";
     li.dataset.id = item.id;
     li.draggable = true;
-    const thumb = `<img src="${safeImageUrl(item.thumbnail)}" alt="" />`;
+    const thumb = `<img src="${safeImageUrl(item.thumbnail)}" alt="" referrerpolicy="no-referrer" />`;
 
     const isPinned = item.pinned === true;
     const voteScore = item.voteScore || 0;
@@ -1178,7 +1379,9 @@ function render() {
       ? '<span class="q-platform-badge spotify" title="Spotify Direct Playback">Spotify</span>'
       : item.provider === "soundcloud"
         ? '<span class="q-platform-badge soundcloud" title="SoundCloud">SoundCloud</span>'
-        : '';
+        : item.provider === "tiktok"
+          ? '<span class="q-platform-badge tiktok" title="TikTok Direct Audio">TikTok</span>'
+          : '';
 
     li.innerHTML = `
       <span class="q-drag-handle" title="Kéo để sắp xếp" aria-hidden="true">⠿</span>
@@ -1284,6 +1487,9 @@ function updatePlayPauseIcon() {
     updateSpotifyPlayPauseUI(!playing);
   } else if (activePlayerProvider === "soundcloud") {
     playing = scIsPlaying;
+  } else if (activePlayerProvider === "tiktok") {
+    playing = tiktokIsPlaying;
+    updateTikTokPlayPauseUI(!playing);
   }
   document.getElementById("playpause").innerHTML = playing ? PAUSE_SVG : PLAY_SVG;
 }
@@ -1358,6 +1564,8 @@ function wireControls() {
       playSpotify(np.videoId);
     } else if (activePlayerProvider === "soundcloud") {
       playSoundCloud(np.videoId);
+    } else if (activePlayerProvider === "tiktok") {
+      playTikTok(np.videoId);
     }
     armPlaybackWatchdog(np.videoId, currentPlaybackToken);
   };
@@ -1371,6 +1579,8 @@ function wireControls() {
       if (spotifyPlayer?.togglePlay) spotifyPlayer.togglePlay();
     } else if (activePlayerProvider === "soundcloud") {
       if (scWidget?.toggle) scWidget.toggle();
+    } else if (activePlayerProvider === "tiktok") {
+      toggleTikTokPlay();
     }
   };
   document.getElementById("skip").onclick = () => {

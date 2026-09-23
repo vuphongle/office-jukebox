@@ -74,6 +74,41 @@ test("favorite songs validate metadata and unlike is idempotent", () => {
   assert.deepEqual(favorites.list(user.id), []);
 });
 
+test("favorite songs support TikTok tracks and retain their thumbnails", () => {
+  const db = initDb({ dbPath: ":memory:" });
+  const users = new UserRepository(db);
+  const favorites = new FavoriteRepository(db);
+  const user = users.create({ username: "favorite-tiktok", passwordHash: "p" });
+
+  const ttUrl = "https://vt.tiktok.com/ZSqEydUb4";
+  const ttCover = "https://p19-common-sign.tiktokcdn-us.com/tos-alisg-p-0037/cover.jpeg?x-expires=1790161200&x-signature=abc";
+
+  const saved = favorites.save(user.id, {
+    videoId: ttUrl,
+    title: "LAVIEM Drill Mix - Prod. | Editby. Ca",
+    channel: "Music For Life",
+    duration: "0:41",
+    thumbnail: ttCover,
+    provider: "tiktok",
+  });
+
+  assert.equal(saved.provider, "tiktok");
+  assert.equal(saved.thumbnail, ttCover);
+  assert.deepEqual(favorites.list(user.id), [
+    {
+      videoId: ttUrl,
+      title: "LAVIEM Drill Mix - Prod. | Editby. Ca",
+      channel: "Music For Life",
+      duration: "0:41",
+      thumbnail: ttCover,
+      provider: "tiktok",
+    },
+  ]);
+
+  assert.equal(favorites.remove(user.id, ttUrl), true);
+  assert.deepEqual(favorites.list(user.id), []);
+});
+
 async function startServer(dataDir) {
   const port = 48000 + Math.floor(Math.random() * 1000);
   const child = spawn("bun", ["server.js"], {

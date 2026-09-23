@@ -2,6 +2,7 @@ import { parseDurationSeconds } from "../duration.js";
 import { isValidYouTubeVideoId, sanitizeThumbnail } from "../youtube.js";
 import { isValidSpotifyTrackId } from "../spotify.js";
 import { isValidSoundCloudUrl } from "../soundcloud.js";
+import { isValidTikTokUrl } from "../tiktok.js";
 
 const MAX_TITLE_LENGTH = 200;
 const MAX_CHANNEL_LENGTH = 120;
@@ -12,6 +13,7 @@ export function isValidFavoriteSongId(videoId, provider = "youtube") {
   const cleanProvider = (provider || "youtube").toString().toLowerCase().trim();
   if (cleanProvider === "spotify") return isValidSpotifyTrackId(videoId);
   if (cleanProvider === "soundcloud") return isValidSoundCloudUrl(videoId);
+  if (cleanProvider === "tiktok") return isValidTikTokUrl(videoId);
   return isValidYouTubeVideoId(videoId);
 }
 
@@ -23,11 +25,16 @@ function normalizeSong(song) {
   const hasProvider = typeof song?.provider === "string" && Boolean(song.provider.trim());
   const provider = hasProvider
     ? song.provider.toLowerCase().trim()
-    : (isValidSpotifyTrackId(videoId) ? "spotify" : (isValidSoundCloudUrl(videoId) ? "soundcloud" : "youtube"));
+    : (isValidSpotifyTrackId(videoId)
+        ? "spotify"
+        : (isValidSoundCloudUrl(videoId)
+            ? "soundcloud"
+            : (isValidTikTokUrl(videoId) ? "tiktok" : "youtube")));
 
   if (!isValidFavoriteSongId(videoId, provider)) {
     if (provider === "spotify") throw new Error("Mã bài hát Spotify không hợp lệ.");
     if (provider === "soundcloud") throw new Error("Link bài hát SoundCloud không hợp lệ.");
+    if (provider === "tiktok") throw new Error("Link bài hát TikTok không hợp lệ.");
     throw new Error("Mã video YouTube không hợp lệ.");
   }
   if (!title || title.length > MAX_TITLE_LENGTH) throw new Error("Tên bài hát không hợp lệ.");

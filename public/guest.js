@@ -1268,7 +1268,7 @@ function resultCard(r) {
   const li = document.createElement("li");
   const badgeHtml = getPlatformIconBadge(r.provider);
   li.innerHTML = `
-    <img src="${safeImageUrl(r.thumbnail)}" alt="" loading="lazy" />
+    <img src="${safeImageUrl(r.thumbnail)}" alt="" loading="lazy" referrerpolicy="no-referrer" />
     <div class="r-meta">
       <div class="r-title-row">
         <span class="r-title"></span>
@@ -1321,7 +1321,9 @@ function showYouTubePreview(song) {
     ? " · Spotify"
     : song.provider === "soundcloud"
       ? " · SoundCloud"
-      : "";
+      : song.provider === "tiktok"
+        ? " · TikTok"
+        : "";
   youtubeLinkSub.textContent = (song.channel || "") + providerLabel;
   youtubeLinkAdd.disabled = false;
   youtubeLinkAdd.textContent = "+";
@@ -1331,7 +1333,7 @@ function showYouTubePreview(song) {
 youtubeLinkForm.addEventListener("submit", async (e) => {
   e.preventDefault();
   const url = youtubeLinkInput.value.trim();
-  if (!url) return setYouTubeLinkStatus("Vui lòng dán link YouTube, Spotify hoặc SoundCloud.", "bad");
+  if (!url) return setYouTubeLinkStatus("Vui lòng dán link YouTube, Spotify, SoundCloud hoặc TikTok.", "bad");
   youtubeLinkSubmit.disabled = true;
   youtubeLinkSubmit.textContent = "Đang kiểm tra…";
   youtubeLinkPreview.classList.add("hidden");
@@ -1600,6 +1602,15 @@ async function loadGuestLyrics(np) {
   renderGuestLyricsLines(data.lines);
 }
 
+function updateLyricsCenterPad(scroller) {
+  if (!scroller) return;
+  const h = scroller.clientHeight;
+  if (h > 0) {
+    const pad = Math.max(40, Math.round(h / 2 - 19));
+    scroller.style.setProperty("--lyrics-center-pad", `${pad}px`);
+  }
+}
+
 function renderGuestLyricsLines(lines) {
   const contentEl = document.getElementById("np-lyrics-content");
   if (!contentEl) return;
@@ -1616,7 +1627,23 @@ function renderGuestLyricsLines(lines) {
   });
   contentEl.appendChild(frag);
 
-  const curPos = (guestLyricsAnchorPosition || 0) / 1000;
+  const scroller = document.getElementById("np-lyrics-scroller");
+  if (scroller) {
+    updateLyricsCenterPad(scroller);
+    if (window.ResizeObserver && !scroller._hasLyricsResizeObs) {
+      scroller._hasLyricsResizeObs = true;
+      const ro = new ResizeObserver(() => {
+        updateLyricsCenterPad(scroller);
+      });
+      ro.observe(scroller);
+    }
+  }
+
+  currentGuestLyricsActiveIndex = -1;
+  const elapsed = (!guestLyricsPaused && guestLyricsAnchorTime > 0)
+    ? performance.now() - guestLyricsAnchorTime
+    : 0;
+  const curPos = Math.max(0, (guestLyricsAnchorPosition || 0) + elapsed) / 1000;
   syncGuestLyricsPosition(curPos, true);
 }
 
@@ -1654,40 +1681,89 @@ function syncGuestLyricsPosition(curSec, forceScroll = false) {
     }
   }
 
+  const scroller = document.getElementById("np-lyrics-scroller");
+  if (!scroller) return;
+
   if (activeIdx >= 0 && lineEls[activeIdx]) {
     const activeEl = lineEls[activeIdx];
-    const scroller = document.getElementById("np-lyrics-scroller");
-    if (scroller) {
-      const activeRect = activeEl.getBoundingClientRect();
-      const scrollerRect = scroller.getBoundingClientRect();
-      const diff = activeRect.top - scrollerRect.top + scroller.scrollTop;
-      const targetScroll = diff - scroller.clientHeight / 2 + activeEl.clientHeight / 2;
-      scroller.scrollTo({
-        top: Math.max(0, targetScroll),
-        behavior: forceScroll ? "auto" : "smooth",
-      });
-    }
+    updateLyricsCenterPad(scroller);
+
+    const scrollerRect = scroller.getBoundingClientRect();
+    const activeRect = activeEl.getBoundingClientRect();
+    const currentScroll = scroller.scrollTop;
+    const activeCenter = (activeRect.top - scrollerRect.top) + currentScroll + (activeRect.height / 2);
+    const scrollerCenter = scroller.clientHeight / 2;
+    const targetScroll = Math.max(0, Math.round(activeCenter - scrollerCenter));
+
+    scroller.scrollTo({
+      top: targetScroll,
+      behavior: forceScroll ? "auto" : "smooth",
+    });
+  } else if (forceScroll && activeIdx === -1) {
+    scroller.scrollTo({
+      top: 0,
+      behavior: "auto",
+    });
   }
 }
 
 function startGuestLyricsSyncLoop() {
   if (guestLyricsRafId) cancelAnimationFrame(guestLyricsRafId);
+  let lastAutoTickRequestTime = 0;
+
   function loop() {
     if (!guestLyricsActive) {
       guestLyricsRafId = null;
       return;
     }
+
+    const now = performance.now();
+    const curNp = lastQueueState?.nowPlaying;
+
     if (!guestLyricsPaused) {
-      if (lastGuestTickReceivedTime > 0 && performance.now() - lastGuestTickReceivedTime > 10000) {
+      const elapsed = (guestLyricsAnchorTime > 0) ? (now - guestLyricsAnchorTime) : 0;
+      const currentPosMs = Math.max(0, guestLyricsAnchorPosition + elapsed);
+
+      // Periodically request a tick from server if more than 4s without a tick to keep drift low,
+      // but do NOT pause; smoothly extrapolate so lyrics never freeze.
+      if (lastGuestTickReceivedTime > 0 && now - lastGuestTickReceivedTime > 4000) {
+        if (now - lastAutoTickRequestTime > 3000) {
+          lastAutoTickRequestTime = now;
+          if (queueWs && queueWs.readyState === WebSocket.OPEN) {
+            queueWs.send(JSON.stringify({ type: "requestPlaybackTick" }));
+          }
+        }
+      }
+
+      let durMs = Infinity;
+      if (curNp?.duration) {
+        if (typeof curNp.duration === "number") durMs = curNp.duration * 1000;
+        else if (typeof curNp.duration === "string" && curNp.duration.includes(":")) {
+          const p = curNp.duration.split(":").map(Number);
+          if (p.length === 2) durMs = (p[0] * 60 + p[1]) * 1000;
+        }
+      }
+
+      if (currentPosMs >= durMs + 5000) {
         guestLyricsPaused = true;
       } else {
-        const elapsed = performance.now() - guestLyricsAnchorTime;
-        const currentPosMs = Math.max(0, guestLyricsAnchorPosition + elapsed);
         syncGuestLyricsPosition(currentPosMs / 1000);
       }
+    } else {
+      // While paused, hold position
+      syncGuestLyricsPosition(guestLyricsAnchorPosition / 1000);
+      // If room state says Spotify is currently playing, check with server if paused state ended
+      if (curNp && curNp.provider === "spotify" && now - lastAutoTickRequestTime > 4000) {
+        lastAutoTickRequestTime = now;
+        if (queueWs && queueWs.readyState === WebSocket.OPEN) {
+          queueWs.send(JSON.stringify({ type: "requestPlaybackTick" }));
+        }
+      }
     }
+
     guestLyricsRafId = requestAnimationFrame(loop);
   }
+
   guestLyricsRafId = requestAnimationFrame(loop);
 }
 
@@ -1714,6 +1790,7 @@ function toggleGuestLyrics(active) {
   }
 
   if (guestLyricsActive && np) {
+    guestLyricsPaused = false;
     if (queueWs && queueWs.readyState === WebSocket.OPEN) {
       queueWs.send(JSON.stringify({ type: "requestPlaybackTick" }));
     }
@@ -1792,10 +1869,14 @@ function connectWs() {
           toast("info", "🎵", "Bài hát Spotify đã kết thúc.");
         } else {
           const trackId = curNp.videoId || curNp.id || `${(curNp.channel || "").toLowerCase()}:::${(curNp.title || "").toLowerCase()}`;
-          if (trackId !== currentGuestLyricsTrackId) {
+          if (String(trackId) !== String(currentGuestLyricsTrackId)) {
             guestLyricsAnchorPosition = 0;
             guestLyricsAnchorTime = performance.now();
+            guestLyricsPaused = false;
             loadGuestLyrics(curNp);
+            if (queueWs && queueWs.readyState === WebSocket.OPEN) {
+              queueWs.send(JSON.stringify({ type: "requestPlaybackTick" }));
+            }
           }
         }
       }
@@ -1811,19 +1892,25 @@ function connectWs() {
           const now = performance.now();
           const currentExpectedPos = guestLyricsPaused
             ? guestLyricsAnchorPosition
-            : guestLyricsAnchorPosition + (now - guestLyricsAnchorTime);
+            : guestLyricsAnchorPosition + (guestLyricsAnchorTime > 0 ? (now - guestLyricsAnchorTime) : 0);
           const drift = targetPosition - currentExpectedPos;
 
           if (msg.seek || guestLyricsPaused !== isPaused || Math.abs(drift) > 500 || guestLyricsAnchorTime === 0) {
             guestLyricsAnchorPosition = targetPosition;
             guestLyricsAnchorTime = now;
           } else {
-            guestLyricsAnchorPosition += drift * 0.3;
+            guestLyricsAnchorPosition = currentExpectedPos + drift * 0.3;
+            guestLyricsAnchorTime = now;
           }
 
           guestLyricsPaused = isPaused;
           lastGuestTickReceivedTime = now;
-          syncGuestLyricsPosition(guestLyricsAnchorPosition / 1000, Boolean(msg.seek));
+
+          if (msg.seek) {
+            syncGuestLyricsPosition(guestLyricsAnchorPosition / 1000, true);
+          } else if (guestLyricsPaused) {
+            syncGuestLyricsPosition(guestLyricsAnchorPosition / 1000, false);
+          }
         }
       }
     } else if (msg.type === "chatHistory") {
@@ -1942,6 +2029,9 @@ function getPlatformIconBadge(provider) {
   if (provider === "soundcloud") {
     return `<span class="platform-icon-badge soundcloud" title="SoundCloud" aria-label="SoundCloud"><svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><path d="M11.56 8.87V17h8.79a3.65 3.65 0 0 0 3.65-3.65c0-1.89-1.42-3.44-3.26-3.62a4.99 4.99 0 0 0-4.93-4.14 5.06 5.06 0 0 0-4.25 2.28zm-1.42.92v7.21h.71V9.79zm-1.42 1.34v5.87h.71v-5.87zm-1.42 1.05v4.82h.71V12.18zm-1.42.95v3.87h.71v-3.87zm-1.42 1.05v2.82h.71v-2.82zm-1.42.94v1.88h.71v-1.88zm-1.42.47v1.41h.71V16.4zm-1.42.47v.94h.71v-.94z"/></svg></span>`;
   }
+  if (provider === "tiktok") {
+    return `<span class="platform-icon-badge tiktok" title="TikTok" aria-label="TikTok"><svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M19.59 6.69a4.83 4.83 0 0 1-3.77-4.25V2h-3.45v13.67a2.89 2.89 0 0 1-5.2 1.74 2.89 2.89 0 0 1 2.31-4.64c.29 0 .58.04.86.12V9.42a6.34 6.34 0 0 0-6.61 6.32 6.34 6.34 0 0 0 6.34 6.34 6.34 6.34 0 0 0 6.34-6.34V9.08a8.28 8.28 0 0 0 4.82 1.54V7.17a4.85 4.85 0 0 1-1.64-.48z"/></svg></span>`;
+  }
   return `<span class="platform-icon-badge youtube" title="YouTube" aria-label="YouTube"><svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M23.498 6.186a3.016 3.016 0 0 0-2.122-2.136C19.505 3.545 12 3.545 12 3.545s-7.505 0-9.377.505A3.017 3.017 0 0 0 .502 6.186C0 8.07 0 12 0 12s0 3.93.502 5.814a3.016 3.016 0 0 0 2.122 2.136c1.871.505 9.376.505 9.376.505s7.505 0 9.377-.505a3.015 3.015 0 0 0 2.122-2.136C24 15.93 24 12 24 12s0-3.93-.502-5.814zM9.545 15.568V8.432L15.818 12l-6.273 3.568z"/></svg></span>`;
 }
 
@@ -1962,22 +2052,31 @@ function renderQueue(state) {
 
     if (guestLyricsActive && isSpotify) {
       const trackId = np.videoId || np.id || `${(np.channel || "").toLowerCase()}:::${(np.title || "").toLowerCase()}`;
+      const isSameTrack = npEl.classList.contains("lyrics-mode") && String(npEl.dataset.lyricsTrackId) === String(trackId);
 
-      if (npEl.classList.contains("lyrics-mode") && npEl.dataset.lyricsTrackId === trackId) {
+      if (isSameTrack) {
         const skipButton = npEl.querySelector(".np-skip-own");
         if (skipButton) {
           skipButton.className = `np-skip-own${myIds.has(np.id) ? "" : " hidden"}`;
           skipButton.disabled = pendingOwnSkips.has(np.id);
         }
         const favSlot = npEl.querySelector(".np-favorite-slot");
-        if (favSlot) favSlot.replaceWith(createFavoriteButton(np, "np-favorite-btn"));
+        if (favSlot) {
+          favSlot.replaceWith(createFavoriteButton(np, "np-favorite-btn"));
+        } else {
+          const favBtn = npEl.querySelector(".np-favorite-btn");
+          if (favBtn) {
+            favBtn.dataset.favoriteVideoId = np.videoId;
+            syncFavoriteButton(favBtn);
+          }
+        }
       } else {
         npEl.classList.add("lyrics-mode");
-        npEl.dataset.lyricsTrackId = trackId;
+        npEl.dataset.lyricsTrackId = String(trackId);
         npEl.innerHTML = `
           <div class="np-lyrics-header">
             <div class="np-lyrics-meta">
-              <img class="np-lyrics-thumb" src="${safeImageUrl(np.thumbnail)}" alt="" />
+              <img class="np-lyrics-thumb" src="${safeImageUrl(np.thumbnail)}" alt="" referrerpolicy="no-referrer" />
               <div class="np-lyrics-track">
                 <div class="np-lyrics-badge">
                   <span class="eq"><span></span><span></span><span></span></span>
@@ -2013,7 +2112,8 @@ function renderQueue(state) {
           collapseBtn.onclick = () => toggleGuestLyrics(false);
         }
 
-        if (trackId === currentGuestLyricsTrackId && currentGuestLyrics?.lines) {
+        currentGuestLyricsActiveIndex = -1;
+        if (String(trackId) === String(currentGuestLyricsTrackId) && currentGuestLyrics?.lines) {
           renderGuestLyricsLines(currentGuestLyrics.lines);
         } else {
           loadGuestLyrics(np);
@@ -2023,7 +2123,7 @@ function renderQueue(state) {
       delete npEl.dataset.lyricsTrackId;
       npEl.classList.remove("lyrics-mode");
       npEl.innerHTML = `
-        <img src="${safeImageUrl(np.thumbnail)}" alt="" />
+        <img src="${safeImageUrl(np.thumbnail)}" alt="" referrerpolicy="no-referrer" />
         <div class="np-body">
           <div class="np-label">
             <span class="eq"><span></span><span></span><span></span></span>
@@ -2119,7 +2219,7 @@ function renderQueue(state) {
     li.dataset.id = item.id;
     li.innerHTML = `
       <span class="q-num">${i + 1}</span>
-      <img src="${safeImageUrl(item.thumbnail)}" alt="" loading="lazy" />
+      <img src="${safeImageUrl(item.thumbnail)}" alt="" loading="lazy" referrerpolicy="no-referrer" />
       <div class="q-text">
         <div class="t-row">
           <span class="t"></span>
@@ -2406,7 +2506,7 @@ function renderHistoryItems(items, listEl) {
     const addedByText = item.addedBy ? `Người chọn: ${item.addedBy}` : "Người chọn: Khách ẩn danh";
 
     li.innerHTML = `
-      <img src="${safeImageUrl(item.thumbnail)}" alt="" loading="lazy" />
+      <img src="${safeImageUrl(item.thumbnail)}" alt="" loading="lazy" referrerpolicy="no-referrer" />
       <div class="history-text">
         <div class="history-title"></div>
         <span class="history-byline"></span>

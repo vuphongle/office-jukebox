@@ -273,10 +273,18 @@ export function sanitizeThumbnail(value) {
       host.endsWith(".googleusercontent.com") ||
       host.endsWith(".scdn.co") ||
       host.endsWith(".spotifycdn.com") ||
-      host.endsWith(".sndcdn.com");
+      host.endsWith(".sndcdn.com") ||
+      host.endsWith(".tiktokcdn.com") ||
+      host.endsWith(".tiktokcdn-us.com") ||
+      host.endsWith(".byteoversea.com") ||
+      host.endsWith(".ibytedtos.com") ||
+      host.endsWith(".tiktok.com") ||
+      host.endsWith(".tikwm.com") ||
+      host === "tikwm.com" ||
+      host.endsWith(".bytedance.com");
     if (url.protocol !== "https:" || !isAllowedImageHost) return null;
     const normalized = url.toString();
-    return normalized.length <= 500 ? normalized : null;
+    return normalized.length <= 2000 ? normalized : null;
   } catch {
     return null;
   }

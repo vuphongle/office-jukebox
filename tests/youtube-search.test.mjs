@@ -235,6 +235,10 @@ test("request metadata accepts only valid video IDs and YouTube image URLs", () 
   assert.equal(youtube.isValidYouTubeVideoId("W7rindfYUHk"), true);
   assert.equal(youtube.isValidYouTubeVideoId("not-video"), false);
   assert.equal(youtube.sanitizeThumbnail("https://i.ytimg.com/vi/W7rindfYUHk/hqdefault.jpg"), "https://i.ytimg.com/vi/W7rindfYUHk/hqdefault.jpg");
+  assert.equal(
+    youtube.sanitizeThumbnail("https://p19-common-sign.tiktokcdn-us.com/tos-alisg-p-0037/cover.jpeg?x-expires=1790161200&x-signature=abc"),
+    "https://p19-common-sign.tiktokcdn-us.com/tos-alisg-p-0037/cover.jpeg?x-expires=1790161200&x-signature=abc"
+  );
   assert.equal(youtube.sanitizeThumbnail("https://attacker.example/track.gif"), null);
   const encoded = youtube.sanitizeThumbnail('https://i.ytimg.com/" onerror="alert(1)');
   assert.ok(encoded);

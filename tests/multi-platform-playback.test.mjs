@@ -56,30 +56,55 @@ describe("Multi-platform playback and queue state", () => {
     assert.equal(state.queue[1].provider, "soundcloud");
     assert.equal(state.queue[1].videoId, "https://soundcloud.com/rick-astley/never-gonna-give-you-up");
 
-    // 4. Verify snapshot includes provider
+    // 4. Add TikTok song
+    const ttSong = {
+      videoId: "https://vt.tiktok.com/ZSjR3kX7L",
+      title: "Trend Dance Hit",
+      channel: "TikTok Star",
+      duration: "0:30",
+      thumbnail: "https://p16.tiktokcdn.com/cover.jpg",
+      provider: "tiktok",
+      streamUrl: "https://v16.tiktokcdn.com/stream.mp3",
+    };
+    const ttRes = state.add(ttSong);
+    assert.equal(ttRes.position, 3); // queued at pos 3
+    assert.equal(state.queue[2].provider, "tiktok");
+    assert.equal(state.queue[2].videoId, "https://vt.tiktok.com/ZSjR3kX7L");
+
+    // 5. Verify snapshot includes provider
     const snapshot = state.snapshot();
     assert.equal(snapshot.nowPlaying.provider, "youtube");
     assert.equal(snapshot.queue[0].provider, "spotify");
     assert.equal(snapshot.queue[1].provider, "soundcloud");
+    assert.equal(snapshot.queue[2].provider, "tiktok");
 
-    // 5. Advance from YouTube to Spotify
+    // 6. Advance from YouTube to Spotify
     const ytToken = state.nowPlaying.playbackToken;
     state.advance(ytSong.videoId, { finishReason: "ended", playbackToken: ytToken, playedSeconds: 213 });
     assert.equal(state.nowPlaying.provider, "spotify");
     assert.equal(state.nowPlaying.videoId, "4cOdK2wGLETKBW3PvgPWqT");
-    assert.equal(state.queue.length, 1);
+    assert.equal(state.queue.length, 2);
     assert.equal(state.queue[0].provider, "soundcloud");
+    assert.equal(state.queue[1].provider, "tiktok");
 
-    // 6. Advance from Spotify to SoundCloud
+    // 7. Advance from Spotify to SoundCloud
     const spToken = state.nowPlaying.playbackToken;
     state.advance(spSong.videoId, { finishReason: "ended", playbackToken: spToken, playedSeconds: 213 });
     assert.equal(state.nowPlaying.provider, "soundcloud");
     assert.equal(state.nowPlaying.videoId, "https://soundcloud.com/rick-astley/never-gonna-give-you-up");
+    assert.equal(state.queue.length, 1);
+    assert.equal(state.queue[0].provider, "tiktok");
+
+    // 8. Advance from SoundCloud to TikTok
+    const scToken = state.nowPlaying.playbackToken;
+    state.advance(scSong.videoId, { finishReason: "ended", playbackToken: scToken, playedSeconds: 213 });
+    assert.equal(state.nowPlaying.provider, "tiktok");
+    assert.equal(state.nowPlaying.videoId, "https://vt.tiktok.com/ZSjR3kX7L");
     assert.equal(state.queue.length, 0);
 
-    // 7. Advance from SoundCloud to idle
-    const scToken = state.nowPlaying.playbackToken;
-    state.advance(scSong.videoId, { finishReason: "ended", playbackToken: scToken });
+    // 9. Advance from TikTok to idle
+    const ttToken = state.nowPlaying.playbackToken;
+    state.advance(ttSong.videoId, { finishReason: "ended", playbackToken: ttToken });
     assert.equal(state.nowPlaying, null);
     assert.equal(state.queue.length, 0);
   });
