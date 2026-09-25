@@ -35,10 +35,13 @@ import {
   isValidSpotifyTrackId,
   fetchSpotifyTrackMetadata,
   searchSpotifyTracks,
+  searchSpotifyArtistTracks,
+  isArtistMatch,
   buildSpotifyAuthorizeUrl,
   exchangeSpotifyCode,
   refreshSpotifyToken,
 } from "./src/spotify.js";
+import { ARTIST_AVATARS } from "./src/artistAvatars.js";
 import {
   parseSoundCloudUrl,
   isValidSoundCloudUrl,
@@ -50,7 +53,7 @@ import {
   fetchTikTokMetadata,
 } from "./src/tiktok.js";
 import { resolveMediaLink } from "./src/mediaLinkResolver.js";
-import { fetchLyrics } from "./src/lyricsService.js";
+import { fetchLyrics, prefetchLyricsForTrack } from "./src/lyricsService.js";
 import { avatarPublicUrl, validateAvatarUpload } from "./src/avatar.js";
 import { prepareRequestSong } from "./src/requestPipeline.js";
 import { moderate, moderationConfigured } from "./src/moderation.js";
@@ -93,6 +96,7 @@ import {
   setSessionCookie,
   clearSessionCookie,
   getSessionTokenFromCookieHeader,
+  ensureDeviceId,
   requireAuth,
   requireAdmin,
 } from "./src/auth.js";
@@ -100,7 +104,8 @@ import { createFixedWindowRateLimiter } from "./src/rateLimit.js";
 import { canUseHostControls, refreshSocketIdentity } from "./src/socketAuth.js";
 import { performCheckin, getLocalDate } from "./src/checkin.js";
 import { parsePagination } from "./src/pagination.js";
-import { getClientIp, parseTrustProxy } from "./src/clientIp.js";
+import { getClientIp, parseTrustProxy, isPrivateIp } from "./src/clientIp.js";
+import { countUserQueuedSongs } from "./src/queueLimit.js";
 import { WebSocketRateLimiter } from "./src/websocketRateLimit.js";
 import { parseDurationSeconds } from "./src/duration.js";
 import { generateRandomPassword } from "./src/password.js";
@@ -127,9 +132,30 @@ const PUBLIC_BASE = (process.env.PUBLIC_URL || "").replace(/\/+$/, "");
 const GUEST_URL = PUBLIC_BASE ? `${PUBLIC_BASE}/guest` : `http://${LAN_IP}:${PORT}/guest`;
 const SPOTIFY_CLIENT_ID = (process.env.SPOTIFY_CLIENT_ID || "").trim();
 const SPOTIFY_CLIENT_SECRET = (process.env.SPOTIFY_CLIENT_SECRET || "").trim();
+const SPOTIFY_BACKUP_CLIENT_ID = (process.env.SPOTIFY_BACKUP_CLIENT_ID || "").trim();
+const SPOTIFY_BACKUP_CLIENT_SECRET = (process.env.SPOTIFY_BACKUP_CLIENT_SECRET || "").trim();
 const SPOTIFY_REDIRECT_URI =
   (process.env.SPOTIFY_REDIRECT_URI || "").trim() ||
   (PUBLIC_BASE ? `${PUBLIC_BASE}/api/spotify/callback` : `http://${LAN_IP}:${PORT}/api/spotify/callback`);
+
+function getSpotifyCredentialsPool() {
+  const pool = [];
+  if (SPOTIFY_CLIENT_ID && SPOTIFY_CLIENT_SECRET) {
+    pool.push({
+      clientId: SPOTIFY_CLIENT_ID,
+      clientSecret: SPOTIFY_CLIENT_SECRET,
+      label: "primary",
+    });
+  }
+  if (SPOTIFY_BACKUP_CLIENT_ID && SPOTIFY_BACKUP_CLIENT_SECRET) {
+    pool.push({
+      clientId: SPOTIFY_BACKUP_CLIENT_ID,
+      clientSecret: SPOTIFY_BACKUP_CLIENT_SECRET,
+      label: "backup",
+    });
+  }
+  return pool;
+}
 
 // --- Initialize SQLite database and repositories (SSOT) --------------------
 const db = initDb();
@@ -267,6 +293,10 @@ let cooldownSeconds = savedSettings.cooldownSeconds ?? 15;
 const QUEUE_LIMIT_STEPS = [5, 10, 15, 20];
 let queueLimitOn = savedSettings.queueLimitOn ?? false;
 let queueLimit = QUEUE_LIMIT_STEPS.includes(savedSettings.queueLimit) ? savedSettings.queueLimit : 10;
+const USER_QUEUE_LIMIT_STEPS = [5, 10, 15];
+let userQueueLimitOn = savedSettings.userQueueLimitOn ?? false;
+let userQueueLimit = USER_QUEUE_LIMIT_STEPS.includes(savedSettings.userQueueLimit) ? savedSettings.userQueueLimit : 5;
+
 let requireName = savedSettings.requireName ?? false;
 let feedbackOn = savedSettings.feedbackOn ?? true;
 let chatOn = savedSettings.chatOn ?? true;
@@ -346,6 +376,8 @@ function saveSettings() {
     cooldownSeconds,
     queueLimitOn,
     queueLimit,
+    userQueueLimitOn,
+    userQueueLimit,
     requireName,
     feedbackOn,
     chatOn,
@@ -374,6 +406,8 @@ function settingsSnapshot() {
     cooldownSeconds,
     queueLimitOn,
     queueLimit,
+    userQueueLimitOn,
+    userQueueLimit,
     requireName,
     feedbackOn,
     chatOn,
@@ -397,6 +431,8 @@ function restoreSettings(snapshot) {
     cooldownSeconds,
     queueLimitOn,
     queueLimit,
+    userQueueLimitOn,
+    userQueueLimit,
     requireName,
     feedbackOn,
     chatOn,
@@ -431,6 +467,10 @@ app.use((_req, res, next) => {
 const TRUST_PROXY = parseTrustProxy(process.env.TRUST_PROXY || "false");
 app.set("trust proxy", TRUST_PROXY);
 app.use(express.json({ limit: "32kb" }));
+app.use((req, res, next) => {
+  ensureDeviceId(req, res);
+  next();
+});
 app.use(createAuthMiddleware(db));
 app.use(
   "/avatars",
@@ -584,6 +624,7 @@ app.post("/api/auth/register", registerIpLimit, registerGlobalLimit, async (req,
         pointsBalance: user.points_balance,
         currentStreak: user.current_streak,
         unreadNotificationCount: notificationRepo.getUnreadCount(user.id),
+        hasCheckedInToday: false,
         rank: publicRank(user.id),
       },
     });
@@ -616,6 +657,9 @@ app.post("/api/auth/login", loginIpLimit, loginUsernameLimit, async (req, res) =
     sessionRepo.create(user.id, token, expiresAt);
     setSessionCookie(res, token, req);
 
+    const today = getLocalDate();
+    const hasCheckedInToday = user.last_checkin_date === today;
+
     res.json({
       ok: true,
       user: {
@@ -627,6 +671,7 @@ app.post("/api/auth/login", loginIpLimit, loginUsernameLimit, async (req, res) =
         pointsBalance: user.points_balance,
         currentStreak: user.current_streak,
         unreadNotificationCount: notificationRepo.getUnreadCount(user.id),
+        hasCheckedInToday,
         rank: publicRank(user.id),
       },
     });
@@ -976,6 +1021,8 @@ app.get("/api/info", async (_req, res) => {
       moderationConfigured: moderationConfigured(),
       queueLimitOn,
       queueLimit,
+      userQueueLimitOn,
+      userQueueLimit,
       requireName,
       feedbackOn,
       chatOn,
@@ -1000,24 +1047,116 @@ function durationSeconds(d) {
 
 app.get("/api/browse", publicReadLimit, async (req, res) => {
   const q = (req.query.q || "").toString().trim().slice(0, 100);
-  if (!q) return res.json({ results: [] });
-  const hit = browseCache.get(q);
+  const artistParam = (req.query.artist || "").toString().trim().slice(0, 100);
+  if (!q && !artistParam) return res.json({ results: [] });
+  const platform = (req.query.platform || "youtube").toString().toLowerCase().trim();
+  const offset = Math.max(0, parseInt(req.query.offset, 10) || 0);
+
+  let targetArtist = artistParam;
+  let targetSq = "";
+  let artistPage = 0;
+  if (q.startsWith("artist:::")) {
+    const parts = q.split(":::");
+    targetArtist = (parts[1] || "").replace(/[:\s]+$/, "");
+    targetSq = (parts[2] || "").replace(/[:\s]+$/, "");
+    artistPage = parseInt(parts[3], 10) || 0;
+  }
+
+  const cacheKey = `${platform}:${targetArtist ? `artist:${targetArtist}:${targetSq}:${artistPage}` : (offset > 0 ? `${q}:${offset}` : q)}`;
+  const hit = browseCache.get(cacheKey);
   if (hit && Date.now() - hit.at < BROWSE_TTL_MS) return res.json({ results: hit.results });
+
   try {
-    const fetched =
-      q === "__vn_hits"
-        ? await fetchVietnamChartHits({ limit: 40 })
-        : await searchYouTube(q, { limit: 40, mode: "songs" });
-    const results = fetched
-      .filter((r) => durationSeconds(r.duration) <= MAX_SINGLE_SECONDS)
-      .slice(0, 20);
-    browseCache.set(q, { at: Date.now(), results });
-    if (browseCache.size > 200) browseCache.delete(browseCache.keys().next().value);
+    let results = [];
+
+    if (platform === "spotify") {
+      const pool = getSpotifyCredentialsPool();
+      if (pool.length === 0) {
+        return res.status(503).json({ error: "Spotify chưa được cấu hình Client ID / Secret trên hệ thống." });
+      }
+      let accessToken = "";
+      try {
+        accessToken = await getValidSpotifyAccessToken();
+      } catch {}
+
+      if (targetArtist) {
+        const fetched = await searchSpotifyArtistTracks(targetArtist, {
+          searchQuery: targetSq || undefined,
+          credentialsPool: pool,
+          accessToken,
+          limit: 10,
+          offset: artistPage * 10,
+          market: "VN",
+        });
+
+        results = fetched
+          .filter((r) => durationSeconds(r.duration) <= MAX_SINGLE_SECONDS)
+          .slice(0, 10);
+      } else {
+        const spotifyQuery = q === "__vn_hits" ? "top hits vietnam" : q;
+        const fetched = await searchSpotifyTracks(spotifyQuery, {
+          credentialsPool: pool,
+          accessToken,
+          limit: 10,
+          offset,
+          market: "VN",
+        });
+
+        results = fetched
+          .filter((r) => durationSeconds(r.duration) <= MAX_SINGLE_SECONDS)
+          .slice(0, 10);
+      }
+    } else {
+      const ytQuery = targetArtist ? (targetSq || targetArtist) : q;
+      const fetched =
+        ytQuery === "__vn_hits"
+          ? await fetchVietnamChartHits({ limit: 40 })
+          : await searchYouTube(ytQuery, { limit: 40, mode: "songs" });
+      results = fetched
+        .filter((r) => durationSeconds(r.duration) <= MAX_SINGLE_SECONDS)
+        .slice(0, 20);
+    }
+
+    if (results.length > 0) {
+      browseCache.set(cacheKey, { at: Date.now(), results });
+      if (browseCache.size > 1000) browseCache.delete(browseCache.keys().next().value);
+    }
     res.json({ results });
   } catch (err) {
     console.error("[browse]", err.message);
-    res.status(502).json({ error: "Không thể tải danh sách bài hát. Vui lòng thử lại." });
+    if (hit && hit.results && hit.results.length > 0) {
+      return res.json({ results: hit.results });
+    }
+    const isRateLimited = Boolean(err?.message && (err.message.includes("429") || err.message.includes("Too Many Requests")));
+    if (isRateLimited) {
+      console.warn("[browse] Spotify rate limited (429), auto-falling back to YouTube for:", q || targetArtist);
+      try {
+        const ytQuery = targetArtist ? (targetSq || targetArtist) : (q === "__vn_hits" ? "top hits vietnam" : q);
+        const fetched = ytQuery === "__vn_hits"
+          ? await fetchVietnamChartHits({ limit: 40 })
+          : await searchYouTube(ytQuery, { limit: 40, mode: "songs" });
+        const ytResults = fetched
+          .filter((r) => durationSeconds(r.duration) <= MAX_SINGLE_SECONDS)
+          .slice(0, 10);
+        return res.json({
+          results: ytResults,
+          fallback: "youtube",
+          notice: "Spotify đang tạm quá tải lượt yêu cầu trong ngày. Hệ thống đã tự động tải bài hát từ YouTube để bạn chọn bài ngay."
+        });
+      } catch (ytErr) {
+        console.error("[browse] YouTube fallback failed:", ytErr.message);
+      }
+    }
+    res.status(isRateLimited ? 429 : 502).json({
+      error: isRateLimited
+        ? "Spotify đang tạm giới hạn lượt yêu cầu. Bạn có thể chuyển sang tìm kiếm YouTube để nghe nhạc ngay."
+        : "Không thể tải danh sách bài hát. Vui lòng thử lại."
+    });
   }
+});
+
+app.get("/api/artist-avatars", publicReadLimit, (_req, res) => {
+  res.json(ARTIST_AVATARS);
 });
 
 app.get("/api/history", requireAuth, publicReadLimit, (req, res) => {
@@ -1035,7 +1174,44 @@ app.get("/api/history", requireAuth, publicReadLimit, (req, res) => {
     finishedAt: item.finished_at || null,
     finishReason: item.finish_reason || "ended",
     playedSeconds: item.played_seconds || null,
+    provider: item.provider || "youtube",
   }));
+  res.json({
+    ok: true,
+    page,
+    limit,
+    offset,
+    total: result.total,
+    hasMore: offset + items.length < result.total,
+    items,
+  });
+});
+
+app.get("/api/history/all", publicReadLimit, (req, res) => {
+  const { page, limit, offset } = parsePagination(req.query, { defaultLimit: 20, maxLimit: 50 });
+  const result = queueRepo.getAllPlaybackHistory("default_event", { limit, offset });
+  const items = result.items.map((item) => {
+    const rank = item.added_by_user_id ? publicRank(item.added_by_user_id) : null;
+    const avatarUrl = item.avatar_file
+      ? avatarPublicUrl(item.avatar_file)
+      : (item.added_by_user_id ? avatarPublicUrl(userRepo.findById(item.added_by_user_id)?.avatar_file) : null);
+    return {
+      id: item.id,
+      videoId: item.video_id,
+      title: item.title,
+      channel: item.channel || "",
+      duration: item.duration || "3:30",
+      thumbnail: sanitizeThumbnail(item.thumbnail),
+      addedBy: item.added_by || "",
+      voteScore: item.vote_score || 0,
+      finishedAt: item.finished_at || null,
+      finishReason: item.finish_reason || "ended",
+      playedSeconds: item.played_seconds || null,
+      provider: item.provider || "youtube",
+      avatarUrl,
+      ...(rank ? { rank } : {}),
+    };
+  });
   res.json({
     ok: true,
     page,
@@ -1056,35 +1232,73 @@ function pruneLastRequestAt() {
   }
 }
 
+const searchCache = new Map();
+const SEARCH_CACHE_TTL_MS = 15 * 60 * 1000;
 const MAX_QUEUE_LENGTH = 50;
 
 app.get("/api/search", publicReadLimit, async (req, res) => {
   const q = (req.query.q || "").toString().trim().slice(0, 100);
   if (!q) return res.json({ results: [] });
   const platform = (req.query.platform || "youtube").toString().toLowerCase().trim();
+  const offset = Math.max(0, parseInt(req.query.offset, 10) || 0);
+
+  const cacheKey = `${platform}:${q.toLowerCase()}:${offset}`;
+  const hit = searchCache.get(cacheKey);
+  if (hit && Date.now() - hit.at < SEARCH_CACHE_TTL_MS) {
+    return res.json(hit.data);
+  }
 
   try {
     if (platform === "spotify") {
-      if (!SPOTIFY_CLIENT_ID || !SPOTIFY_CLIENT_SECRET) {
+      const pool = getSpotifyCredentialsPool();
+      if (pool.length === 0) {
         return res.status(400).json({ error: "Spotify chưa được cấu hình Client ID / Secret trên hệ thống." });
       }
       let accessToken = "";
       try {
         accessToken = await getValidSpotifyAccessToken();
       } catch {}
-      const results = await searchSpotifyTracks(q, {
-        clientId: SPOTIFY_CLIENT_ID,
-        clientSecret: SPOTIFY_CLIENT_SECRET,
-        accessToken,
-      });
-      return res.json({ results });
+
+      try {
+        const results = await searchSpotifyTracks(q, {
+          credentialsPool: pool,
+          accessToken,
+          limit: 10,
+          offset,
+        });
+        const data = { results };
+        searchCache.set(cacheKey, { at: Date.now(), data });
+        if (searchCache.size > 500) searchCache.delete(searchCache.keys().next().value);
+        return res.json(data);
+      } catch (spotifyErr) {
+        const isRateLimited = Boolean(spotifyErr?.message && (spotifyErr.message.includes("429") || spotifyErr.message.includes("Too Many Requests")));
+        if (isRateLimited) {
+          console.warn("[search] Spotify rate limited (429), auto-falling back to YouTube for:", q);
+          const ytResults = await searchYouTubeByMode(q, { mode: searchMode, limit: 10, offset });
+          const fallbackData = {
+            results: ytResults,
+            fallback: "youtube",
+            notice: "Spotify đang tạm quá tải lượt yêu cầu trong ngày. Hệ thống đã tự động tìm trên YouTube để bạn có thể chọn bài ngay."
+          };
+          return res.json(fallbackData);
+        }
+        throw spotifyErr;
+      }
     }
 
-    const results = await searchYouTubeByMode(q, { mode: searchMode });
-    res.json({ results });
+    const results = await searchYouTubeByMode(q, { mode: searchMode, limit: 10, offset });
+    const data = { results };
+    searchCache.set(cacheKey, { at: Date.now(), data });
+    if (searchCache.size > 500) searchCache.delete(searchCache.keys().next().value);
+    res.json(data);
   } catch (err) {
     console.error("[search]", err.message);
-    res.status(502).json({ error: "Tìm kiếm thất bại. Vui lòng thử lại." });
+    const isRateLimited = Boolean(err?.message && (err.message.includes("429") || err.message.includes("Too Many Requests")));
+    res.status(isRateLimited ? 429 : 502).json({
+      error: isRateLimited
+        ? "Spotify đang tạm giới hạn lượt yêu cầu. Bạn có thể chuyển sang tìm kiếm YouTube để nghe nhạc ngay."
+        : "Tìm kiếm thất bại. Vui lòng thử lại."
+    });
   }
 });
 
@@ -1102,6 +1316,9 @@ app.post("/api/youtube/resolve", publicReadLimit, async (req, res) => {
     spotifyConfig: {
       clientId: SPOTIFY_CLIENT_ID,
       clientSecret: SPOTIFY_CLIENT_SECRET,
+      backupClientId: SPOTIFY_BACKUP_CLIENT_ID,
+      backupClientSecret: SPOTIFY_BACKUP_CLIENT_SECRET,
+      credentialsPool: getSpotifyCredentialsPool(),
       accessToken: spotifyAccessToken,
     },
   });
@@ -1116,7 +1333,8 @@ app.post("/api/youtube/resolve", publicReadLimit, async (req, res) => {
 app.get("/api/spotify/status", (req, res) => {
   res.json({
     connected: !!spotifySettings?.refreshToken,
-    configured: !!(SPOTIFY_CLIENT_ID && SPOTIFY_CLIENT_SECRET),
+    configured: getSpotifyCredentialsPool().length > 0,
+    hasBackup: !!(SPOTIFY_BACKUP_CLIENT_ID && SPOTIFY_BACKUP_CLIENT_SECRET),
   });
 });
 
@@ -1219,18 +1437,27 @@ app.get("/api/lyrics", async (req, res) => {
   const title = (req.query.title || "").toString().trim();
   const artist = (req.query.artist || "").toString().trim();
   const durationSec = parseFloat(req.query.duration);
+  let artists = [];
+  if (req.query.artists) {
+    try {
+      artists = JSON.parse(req.query.artists);
+    } catch {
+      artists = (req.query.artists || "").toString().split(",").map((s) => s.trim()).filter(Boolean);
+    }
+  }
 
   if (!title) {
     return res.status(400).json({ ok: false, error: "title_required" });
   }
 
-  const result = await fetchLyrics(title, artist, Number.isFinite(durationSec) ? durationSec : null);
+  const result = await fetchLyrics(title, artist, Number.isFinite(durationSec) ? durationSec : null, {
+    artists,
+  });
   res.json(result);
 });
 
-app.get("/api/host-token", requireHostAuth, (req, res) => {
-  const isAdminSession = req.user?.role === "admin" && req.user?.status === "active";
-  res.json({ token: HOST_PASSWORD && !isAdminSession ? hostToken : "" });
+app.get("/api/host-token", requireHostAuth, (_req, res) => {
+  res.json({ token: hostToken });
 });
 
 app.post("/api/request", songRequestIpLimit, async (req, res) => {
@@ -1305,6 +1532,23 @@ app.post("/api/request", songRequestIpLimit, async (req, res) => {
     return res.json({ ok: false, reason: "Hàng đợi đã đầy — vui lòng thử lại sau khi phát bớt bài." });
   }
 
+  if (userQueueLimitOn) {
+    const userSongCount = countUserQueuedSongs(state.queue, {
+      userId: req.user?.id || null,
+      deviceId: req.deviceId || null,
+      clientId: requesterId || null,
+      requesterIp,
+    });
+    if (userSongCount >= userQueueLimit) {
+      return res.json({
+        ok: false,
+        reason: `Bạn đã đạt giới hạn tối đa ${userQueueLimit} bài trong hàng đợi. Vui lòng chờ phát bớt bài để thêm tiếp!`,
+        userQueueLimitReached: true,
+        userQueueLimit,
+      });
+    }
+  }
+
   if (state.has(videoId)) {
     return res.json({ ok: false, reason: "Bài hát này đã có trong hàng đợi!" });
   }
@@ -1334,8 +1578,7 @@ app.post("/api/request", songRequestIpLimit, async (req, res) => {
       let accessToken = "";
       try { accessToken = await getValidSpotifyAccessToken(); } catch {}
       const meta = await fetchSpotifyTrackMetadata(videoId, {
-        clientId: SPOTIFY_CLIENT_ID,
-        clientSecret: SPOTIFY_CLIENT_SECRET,
+        credentialsPool: getSpotifyCredentialsPool(),
         accessToken,
       });
       if (!meta) return res.status(502).json({ ok: false, reason: "Không thể lấy thông tin bài hát từ Spotify. Vui lòng thử lại." });
@@ -1374,6 +1617,22 @@ app.post("/api/request", songRequestIpLimit, async (req, res) => {
     if (state.queue.length >= MAX_QUEUE_LENGTH || (queueLimitOn && state.queue.length >= queueLimit)) {
       return res.json({ ok: false, reason: "Hàng đợi đã đầy — vui lòng thử lại sau khi phát bớt bài." });
     }
+    if (userQueueLimitOn) {
+      const userSongCount = countUserQueuedSongs(state.queue, {
+        userId: req.user?.id || null,
+        deviceId: req.deviceId || null,
+        clientId: requesterId || null,
+        requesterIp,
+      });
+      if (userSongCount >= userQueueLimit) {
+        return res.json({
+          ok: false,
+          reason: `Bạn đã đạt giới hạn tối đa ${userQueueLimit} bài trong hàng đợi. Vui lòng chờ phát bớt bài để thêm tiếp!`,
+          userQueueLimitReached: true,
+          userQueueLimit,
+        });
+      }
+    }
     if (state.has(videoId)) {
       return res.json({ ok: false, reason: "Bài hát này đã có trong hàng đợi!" });
     }
@@ -1382,13 +1641,30 @@ app.post("/api/request", songRequestIpLimit, async (req, res) => {
       videoId,
       title: canonical.title,
       channel: canonical.channel,
+      artists: canonical.artists || [],
       duration: canonical.duration,
       thumbnail: canonical.thumbnail,
       addedBy: requesterName,
       requesterId,
       userId: req.user?.id || null,
       provider: cleanProvider,
+      requesterIp,
+      deviceId: req.deviceId || null,
     });
+
+    if (cleanProvider === "spotify" || (Array.isArray(canonical.artists) && canonical.artists.length > 0)) {
+      const durSec = parseDurationSeconds(canonical.duration);
+      prefetchLyricsForTrack({
+        title: canonical.title,
+        artist: canonical.channel,
+        artists: canonical.artists || [],
+        durationSec: Number.isFinite(durSec) ? durSec : null,
+        trackId: videoId,
+      }).catch((err) => {
+        console.warn("[lyrics-prefetch] Background prefetch warning:", err?.message || err);
+      });
+    }
+
     res.json({ ok: true, reason: "Đã thêm!", position, id: item.id });
   } catch (err) {
     console.error("[request]", err);
@@ -2062,6 +2338,8 @@ function stateMessage() {
     eventContext,
     queueLimitOn,
     queueLimit,
+    userQueueLimitOn,
+    userQueueLimit,
     requireName,
     feedbackOn,
     chatOn,
@@ -2429,7 +2707,7 @@ wss.on("connection", (ws, request) => {
       const currentSession = refreshSocketIdentity(ws, sessionRepo);
 
       if (msg.type === "auth") {
-        if (!HOST_PASSWORD || msg.token === hostToken) ws.hostAuthenticated = true;
+        if (!HOST_PASSWORD || (msg.token && msg.token === hostToken)) ws.hostAuthenticated = true;
         return;
       }
       if (msg.type === "chatSend") {
@@ -2531,6 +2809,32 @@ wss.on("connection", (ws, request) => {
         return;
       }
 
+      if (msg.type === "registerOrderNetworkHost") {
+        if (!(HOST_PASSWORD && ws.hostAuthenticated) && currentSession?.role !== "admin") {
+          if (ws.readyState === 1) {
+            ws.send(JSON.stringify({ type: "orderNetworkHostError", reason: "Hãy xác thực trang Host trước khi cập nhật mạng." }));
+          }
+          return;
+        }
+        const nextHostIp = ws.__jukeboxClientIp;
+        if (nextHostIp !== orderNetworkLockIp) {
+          const previous = settingsSnapshot();
+          orderNetworkLockIp = nextHostIp;
+          try {
+            saveSettings();
+          } catch (err) {
+            restoreSettings(previous);
+            console.error(`[settings] unable to save: ${err.message}`);
+            if (ws.readyState === 1) {
+              ws.send(JSON.stringify({ type: "orderNetworkHostError", reason: "Không thể lưu cài đặt lúc này. Vui lòng thử lại." }));
+            }
+            return;
+          }
+        }
+        ws.send(JSON.stringify({ type: "orderNetworkHostUpdated" }));
+        return;
+      }
+
       if (!canUseHostControls(ws, currentSession)) return;
 
       switch (msg.type) {
@@ -2563,18 +2867,18 @@ wss.on("connection", (ws, request) => {
           if (typeof msg.playbackToken !== "string" || !msg.playbackToken) break;
           const activeItem = state.nowPlaying;
           const expectedVideoId = activeItem?.videoId;
-          if (msg.videoId !== undefined && msg.videoId !== null && msg.videoId !== expectedVideoId && !isValidYouTubeVideoId(msg.videoId)) break;
-          console.log(`[host] finished playing ${msg.videoId}`);
-          settleRankTransition(state.advance(msg.videoId || null, { finishReason: "ended", playbackToken: msg.playbackToken, playedSeconds: msg.playedSeconds }));
+          if (msg.videoId && expectedVideoId && msg.videoId !== expectedVideoId) break;
+          console.log(`[host] finished playing ${msg.videoId || expectedVideoId}`);
+          settleRankTransition(state.advance(msg.videoId || expectedVideoId || null, { finishReason: "ended", playbackToken: msg.playbackToken, playedSeconds: msg.playedSeconds }));
           break;
         case "error":
           latestSpotifyPlaybackTick = null;
           if (typeof msg.playbackToken !== "string" || !msg.playbackToken) break;
           const activeErrItem = state.nowPlaying;
           const expectedErrVideoId = activeErrItem?.videoId;
-          if (msg.videoId !== undefined && msg.videoId !== null && msg.videoId !== expectedErrVideoId && !isValidYouTubeVideoId(msg.videoId)) break;
-          console.warn(`[host] playback error ${msg.code} on ${msg.videoId} — skipping and refunding points`);
-          settleRankTransition(state.advance(msg.videoId || null, { isError: true, finishReason: "error", playbackToken: msg.playbackToken }));
+          if (msg.videoId && expectedErrVideoId && msg.videoId !== expectedErrVideoId) break;
+          console.warn(`[host] playback error ${msg.code} on ${msg.videoId || expectedErrVideoId} (${activeErrItem?.provider || "unknown"}) — skipping and refunding points`);
+          settleRankTransition(state.advance(msg.videoId || expectedErrVideoId || null, { isError: true, finishReason: "error", playbackToken: msg.playbackToken }));
           break;
         case "skip":
           latestSpotifyPlaybackTick = null;
@@ -2662,6 +2966,19 @@ wss.on("connection", (ws, request) => {
           broadcastState();
           break;
         }
+        case "setUserQueueLimit": {
+          const previous = settingsSnapshot();
+          const nextLimit = Number(msg.limit);
+          if (typeof msg.on === "boolean") userQueueLimitOn = msg.on;
+          if (USER_QUEUE_LIMIT_STEPS.includes(nextLimit)) userQueueLimit = nextLimit;
+          try { saveSettings(); } catch (err) {
+            restoreSettings(previous);
+            reportSettingsPersistenceFailure(ws, err);
+            break;
+          }
+          broadcastState();
+          break;
+        }
         case "setRequireName":
           {
             const previous = settingsSnapshot();
@@ -2674,32 +2991,7 @@ wss.on("connection", (ws, request) => {
           }
           broadcastState();
           break;
-        case "registerOrderNetworkHost":
-          if (!(HOST_PASSWORD && ws.hostAuthenticated) && currentSession?.role !== "admin") {
-            if (ws.readyState === 1) {
-              ws.send(JSON.stringify({ type: "orderNetworkHostError", reason: "Hãy xác thực trang Host trước khi cập nhật mạng." }));
-            }
-            break;
-          }
-          {
-            const nextHostIp = ws.__jukeboxClientIp;
-            if (nextHostIp !== orderNetworkLockIp) {
-              const previous = settingsSnapshot();
-              orderNetworkLockIp = nextHostIp;
-              try {
-                saveSettings();
-              } catch (err) {
-                restoreSettings(previous);
-                console.error(`[settings] unable to save: ${err.message}`);
-                if (ws.readyState === 1) {
-                  ws.send(JSON.stringify({ type: "orderNetworkHostError", reason: "Không thể lưu cài đặt lúc này. Vui lòng thử lại." }));
-                }
-                break;
-              }
-            }
-          }
-          ws.send(JSON.stringify({ type: "orderNetworkHostUpdated" }));
-          break;
+
       }
     } catch (err) {
       console.error("[ws] message handling failed", err);

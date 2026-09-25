@@ -62,6 +62,39 @@ export function parseCookies(cookieHeader) {
   return cookies;
 }
 
+export const DEVICE_COOKIE_NAME = "jukebox_device_id";
+export const DEVICE_COOKIE_MAX_AGE_SEC = 365 * 24 * 60 * 60; // 1 year
+
+export function ensureDeviceId(req, res) {
+  const cookies = parseCookies(req?.headers?.cookie);
+  let deviceId = cookies[DEVICE_COOKIE_NAME];
+  if (!deviceId || typeof deviceId !== "string" || deviceId.length < 10) {
+    deviceId = randomBytes(16).toString("hex");
+    const isSecure = req?.secure === true;
+    const cookieParts = [
+      `${DEVICE_COOKIE_NAME}=${encodeURIComponent(deviceId)}`,
+      "HttpOnly",
+      "SameSite=Lax",
+      "Path=/",
+      `Max-Age=${DEVICE_COOKIE_MAX_AGE_SEC}`,
+    ];
+    if (isSecure) cookieParts.push("Secure");
+    const cookieStr = cookieParts.join("; ");
+    if (res && typeof res.getHeader === "function" && typeof res.setHeader === "function") {
+      const existing = res.getHeader("Set-Cookie");
+      if (!existing) {
+        res.setHeader("Set-Cookie", cookieStr);
+      } else if (Array.isArray(existing)) {
+        res.setHeader("Set-Cookie", [...existing, cookieStr]);
+      } else {
+        res.setHeader("Set-Cookie", [existing, cookieStr]);
+      }
+    }
+  }
+  if (req) req.deviceId = deviceId;
+  return deviceId;
+}
+
 export function getSessionTokenFromCookieHeader(cookieHeader) {
   return parseCookies(cookieHeader)[SESSION_COOKIE_NAME] || null;
 }

@@ -50,6 +50,7 @@
   async function fetchLyricsClient({
     title: rawTitle,
     artist: rawArtist = "",
+    artists = [],
     durationSec = null,
     fetchImpl = global.fetch || fetch,
     timeoutMs = 6000,
@@ -60,6 +61,9 @@
     // 1. Try local backend /api/lyrics first
     try {
       const params = new URLSearchParams({ title, artist });
+      if (Array.isArray(artists) && artists.length > 0) {
+        params.set("artists", JSON.stringify(artists));
+      }
       if (durationSec && Number.isFinite(durationSec)) {
         params.set("duration", Math.round(durationSec));
       }
@@ -77,8 +81,13 @@
 
     // 2. Direct browser fallback to LRCLIB API with smart queries
     try {
-      const primaryArtist = artist ? artist.split(/[,;]/)[0].replace(/["']/g, "").trim() : "";
+      const targetArtists = Array.isArray(artists) && artists.length > 0
+        ? artists
+        : (artist ? [artist.split(/[,;]/)[0].trim()] : []);
+      const primaryArtist = targetArtists[0] || (artist ? artist.split(/[,;]/)[0].replace(/["']/g, "").trim() : "");
+      const featuredStr = targetArtists.slice(1).join(" ");
       const searchQueries = [
+        primaryArtist && featuredStr ? `${primaryArtist} ${featuredStr} ${title}` : null,
         primaryArtist ? `${primaryArtist} ${title}` : (artist ? `${artist} ${title}` : null),
         artist && artist !== primaryArtist ? `${artist} ${title}` : null,
         title,
@@ -96,11 +105,25 @@
         if (res.ok) {
           const list = await res.json();
           if (Array.isArray(list) && list.length > 0) {
-            const found = list.find((it) => Boolean(it.syncedLyrics));
+            // Find candidate that matches primary artist and doesn't mismatch duration
+            const valid = list.filter((it) => {
+              if (!it) return false;
+              const text = `${it.trackName || ""} ${it.artistName || ""}`.toLowerCase();
+              const normText = text.normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/đ/g, "d");
+              const normArtist = (primaryArtist || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/đ/g, "d");
+              if (primaryArtist && !text.includes(primaryArtist.toLowerCase()) && !normText.includes(normArtist)) return false;
+              if (durationSec && Number.isFinite(durationSec) && it.duration) {
+                if (Math.abs(it.duration - durationSec) > 35) return false;
+              }
+              if (text.includes("cover") && !title.toLowerCase().includes("cover")) return false;
+              return true;
+            });
+
+            const found = valid.find((it) => Boolean(it.syncedLyrics)) || valid[0];
             if (found) {
               lrclibData = found;
               break;
-            } else if (!lrclibData) {
+            } else if (!lrclibData && list[0]) {
               lrclibData = list[0];
             }
           }

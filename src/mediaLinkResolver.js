@@ -55,6 +55,9 @@ export async function resolveMediaLink(
     const song = await fetchSpotifyTrackMetadata(trackId, {
       clientId: spotifyConfig.clientId,
       clientSecret: spotifyConfig.clientSecret,
+      backupClientId: spotifyConfig.backupClientId,
+      backupClientSecret: spotifyConfig.backupClientSecret,
+      credentialsPool: spotifyConfig.credentialsPool,
       accessToken: spotifyConfig.accessToken,
       fetchImpl,
     });

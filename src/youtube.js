@@ -103,9 +103,12 @@ function isWebMusicResult(renderer, byline) {
   return /^(bài hát|song)$/i.test(kind || "") || musicVideoType(renderer) === "MUSIC_VIDEO_TYPE_OMV";
 }
 
-export function parseSearchResults(data, { limit = 12, webLike = false } = {}) {
+export function parseSearchResults(data, { limit = 12, offset = 0, webLike = false } = {}) {
   const results = [];
   const seen = new Set();
+  let skipped = 0;
+  const skipCount = Math.max(0, parseInt(offset, 10) || 0);
+
   const visit = (renderer) => {
     if (results.length >= limit) return;
     const videoId =
@@ -125,6 +128,10 @@ export function parseSearchResults(data, { limit = 12, webLike = false } = {}) {
     const title = cols[0]?.map((run) => run.text).join("") || "(không có tiêu đề)";
     const channel = artistRun?.text || accessibilityArtist(renderer, title) || byline[0]?.text;
     seen.add(videoId);
+    if (skipped < skipCount) {
+      skipped++;
+      return;
+    }
     results.push({
       videoId,
       title,
@@ -179,11 +186,13 @@ function textValue(value) {
   return value?.runs?.map((run) => run.text || "").join("") || value?.simpleText || "";
 }
 
-export function parseYouTubeWebResults(data, { limit = 12 } = {}) {
+export function parseYouTubeWebResults(data, { limit = 12, offset = 0 } = {}) {
   const sections = data?.contents?.twoColumnSearchResultsRenderer?.primaryContents
     ?.sectionListRenderer?.contents || [];
   const results = [];
   const seen = new Set();
+  let skipped = 0;
+  const skipCount = Math.max(0, parseInt(offset, 10) || 0);
 
   for (const section of sections) {
     for (const item of section?.itemSectionRenderer?.contents || []) {
@@ -191,6 +200,10 @@ export function parseYouTubeWebResults(data, { limit = 12 } = {}) {
       const videoId = renderer?.videoId;
       if (!isValidYouTubeVideoId(videoId) || seen.has(videoId)) continue;
       seen.add(videoId);
+      if (skipped < skipCount) {
+        skipped++;
+        continue;
+      }
       results.push({
         videoId,
         title: textValue(renderer.title) || "(không có tiêu đề)",
@@ -206,7 +219,7 @@ export function parseYouTubeWebResults(data, { limit = 12 } = {}) {
 
 export async function searchYouTubeWeb(
   query,
-  { limit = 12, timeoutMs = 8000, fetchImpl = globalThis.fetch } = {}
+  { limit = 12, offset = 0, timeoutMs = 8000, fetchImpl = globalThis.fetch } = {}
 ) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -220,7 +233,7 @@ export async function searchYouTubeWeb(
       signal: controller.signal,
     });
     if (!res.ok) throw new Error(`YouTube Web phản hồi ${res.status}`);
-    return parseYouTubeWebResults(parseInitialData(await res.text()), { limit });
+    return parseYouTubeWebResults(parseInitialData(await res.text()), { limit, offset });
   } finally {
     clearTimeout(timer);
   }
@@ -231,17 +244,18 @@ export async function searchYouTubeByMode(
   {
     mode = "youtube-web",
     limit = 12,
+    offset = 0,
     timeoutMs = 8000,
     webSearch = searchYouTubeWeb,
     legacySearch = searchYouTube,
   } = {}
 ) {
-  if (mode === "youtube-music") return legacySearch(query, { limit, timeoutMs });
+  if (mode === "youtube-music") return legacySearch(query, { limit, offset, timeoutMs });
   try {
-    const results = await webSearch(query, { limit, timeoutMs });
+    const results = await webSearch(query, { limit, offset, timeoutMs });
     if (results.length) return results;
   } catch {}
-  return legacySearch(query, { limit, timeoutMs });
+  return legacySearch(query, { limit, offset, timeoutMs });
 }
 
 // Accept only common YouTube video-link formats. Search, channel, and playlist
@@ -362,18 +376,18 @@ async function fetchSearchData(query, { mode, timeoutMs, fetchImpl = globalThis.
 
 export async function searchYouTube(
   query,
-  { limit = 12, timeoutMs = 8000, mode = "web", fetchImpl = globalThis.fetch } = {}
+  { limit = 12, offset = 0, timeoutMs = 8000, mode = "web", fetchImpl = globalThis.fetch } = {}
 ) {
   if (mode === "songs") {
     const data = await fetchSearchData(query, { mode, timeoutMs, fetchImpl });
-    return parseSearchResults(data, { limit });
+    return parseSearchResults(data, { limit, offset });
   }
 
   let primaryResults = [];
   let primaryError;
   try {
     const data = await fetchSearchData(query, { mode: "web", timeoutMs, fetchImpl });
-    primaryResults = parseSearchResults(data, { limit, webLike: true });
+    primaryResults = parseSearchResults(data, { limit, offset, webLike: true });
   } catch (err) {
     primaryError = err;
   }
@@ -382,7 +396,7 @@ export async function searchYouTube(
 
   try {
     const fallbackData = await fetchSearchData(query, { mode: "songs", timeoutMs, fetchImpl });
-    const fallbackResults = parseSearchResults(fallbackData, { limit });
+    const fallbackResults = parseSearchResults(fallbackData, { limit, offset });
     return mergeSearchResults(primaryResults, fallbackResults, limit);
   } catch {
     if (primaryError && primaryResults.length === 0) throw primaryError;

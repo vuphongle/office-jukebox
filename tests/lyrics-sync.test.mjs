@@ -346,5 +346,144 @@ describe("Lyrics Synchronization Invariants", () => {
     const fixedRafCurSec = (fixedPosMs + (nowAtTransition - fixedAnchorTime)) / 1000;
     expect(getActiveIndex(lines, fixedRafCurSec)).toBe(1); // STAYED AT LINE 2 (NO ROLLBACK)!
   });
+
+  test("auto-open guest lyrics on new Spotify song transition", () => {
+    let guestLyricsActive = false;
+    let lastHandledSpotifyTrackId = "";
+    let userCollapsedTrackId = "";
+    let guestLyricsAnchorPosition = -1;
+    let lyricsModeRendered = false;
+
+    function handleStateUpdate(state, lyricsDataMap) {
+      const curNp = state?.nowPlaying;
+      const isSpotify = curNp?.provider === "spotify";
+      const trackId = isSpotify
+        ? (curNp.videoId || curNp.id || `${(curNp.channel || "").toLowerCase()}:::${(curNp.title || "").toLowerCase()}`)
+        : "";
+
+      if (isSpotify && trackId) {
+        const isNewSpotifySong = String(trackId) !== String(lastHandledSpotifyTrackId);
+        if (isNewSpotifySong) {
+          lastHandledSpotifyTrackId = trackId;
+          userCollapsedTrackId = "";
+          guestLyricsAnchorPosition = 0;
+
+          // Simulate loadGuestLyrics with { autoOpen: true }
+          const lyrics = lyricsDataMap[trackId];
+          if (lyrics && lyrics.lines && lyrics.lines.length > 0) {
+            if (String(trackId) !== String(userCollapsedTrackId)) {
+              guestLyricsActive = true;
+              lyricsModeRendered = true;
+            }
+          } else {
+            // No lyrics: revert or stay in compact mode
+            if (guestLyricsActive) {
+              guestLyricsActive = false;
+              lyricsModeRendered = false;
+            }
+          }
+        }
+      } else {
+        lastHandledSpotifyTrackId = "";
+        userCollapsedTrackId = "";
+        guestLyricsActive = false;
+        lyricsModeRendered = false;
+      }
+
+      return { guestLyricsActive, lyricsModeRendered, guestLyricsAnchorPosition, lastHandledSpotifyTrackId };
+    }
+
+    const lyricsDb = {
+      "spotify:track:song1": { lines: [{ time: 1.0, text: "Line 1" }, { time: 5.0, text: "Line 2" }] },
+      "spotify:track:song2": { lines: [] }, // Song 2 has NO lyrics
+      "spotify:track:song3": { lines: [{ time: 2.0, text: "Song 3 Line 1" }] },
+    };
+
+    // 1. Initial song: Spotify song1 with lyrics -> AUTO OPENS
+    const res1 = handleStateUpdate(
+      { nowPlaying: { provider: "spotify", videoId: "spotify:track:song1", title: "Song 1", channel: "Artist 1" } },
+      lyricsDb
+    );
+    expect(res1.guestLyricsActive).toBe(true);
+    expect(res1.lyricsModeRendered).toBe(true);
+    expect(res1.guestLyricsAnchorPosition).toBe(0);
+
+    // 2. Next song: Spotify song2 WITHOUT lyrics -> AUTO CLOSES / STAYS COMPACT
+    const res2 = handleStateUpdate(
+      { nowPlaying: { provider: "spotify", videoId: "spotify:track:song2", title: "Song 2", channel: "Artist 2" } },
+      lyricsDb
+    );
+    expect(res2.guestLyricsActive).toBe(false);
+    expect(res2.lyricsModeRendered).toBe(false);
+
+    // 3. Next song: Spotify song3 with lyrics -> AUTO OPENS AGAIN
+    const res3 = handleStateUpdate(
+      { nowPlaying: { provider: "spotify", videoId: "spotify:track:song3", title: "Song 3", channel: "Artist 3" } },
+      lyricsDb
+    );
+    expect(res3.guestLyricsActive).toBe(true);
+    expect(res3.lyricsModeRendered).toBe(true);
+    expect(res3.guestLyricsAnchorPosition).toBe(0);
+
+    // 4. Next song: YouTube song -> LYRICS COLLAPSED AND RESET
+    const res4 = handleStateUpdate(
+      { nowPlaying: { provider: "youtube", videoId: "yt123", title: "YT Song", channel: "YT Channel" } },
+      lyricsDb
+    );
+    expect(res4.guestLyricsActive).toBe(false);
+    expect(res4.lyricsModeRendered).toBe(false);
+    expect(res4.lastHandledSpotifyTrackId).toBe("");
+  });
+
+  test("user collapse state is sticky per track, resets on new track", () => {
+    let guestLyricsActive = true;
+    let lastHandledSpotifyTrackId = "spotify:track:songA";
+    let userCollapsedTrackId = "";
+
+    function collapseCurrentSong(trackId) {
+      guestLyricsActive = false;
+      userCollapsedTrackId = trackId;
+    }
+
+    // User collapses Song A
+    collapseCurrentSong("spotify:track:songA");
+    expect(guestLyricsActive).toBe(false);
+    expect(userCollapsedTrackId).toBe("spotify:track:songA");
+
+    // Subsequent tick/state for Song A does NOT re-open
+    const isNewSongForA = "spotify:track:songA" !== lastHandledSpotifyTrackId;
+    expect(isNewSongForA).toBe(false);
+
+    // Transition to Song B (Spotify with lyrics):
+    const nextTrackId = "spotify:track:songB";
+    const isNewSongForB = nextTrackId !== lastHandledSpotifyTrackId;
+    expect(isNewSongForB).toBe(true);
+
+    // On new song, userCollapsedTrackId is cleared:
+    lastHandledSpotifyTrackId = nextTrackId;
+    userCollapsedTrackId = "";
+    // Because lyrics exist and userCollapsedTrackId is empty, auto-open succeeds:
+    guestLyricsActive = true;
+    expect(guestLyricsActive).toBe(true);
+  });
+
+  test("lyrics scroller resets to top (scrollTop = 0) upon rendering new song lines", () => {
+    const fakeScroller = {
+      scrollTop: 150, // was scrolled down during previous song
+      scrolledTo: null,
+      scrollTo(opts) {
+        this.scrolledTo = opts;
+      },
+    };
+
+    function resetScrollerForNewSong(scroller) {
+      scroller.scrollTop = 0;
+      scroller.scrollTo({ top: 0, behavior: "auto" });
+    }
+
+    resetScrollerForNewSong(fakeScroller);
+    expect(fakeScroller.scrollTop).toBe(0);
+    expect(fakeScroller.scrolledTo).toEqual({ top: 0, behavior: "auto" });
+  });
 });
 

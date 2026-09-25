@@ -67,8 +67,8 @@
               </div>
               <button type="button" class="spotify-lyrics-close" id="spotify-lyrics-close" title="Đóng lời bài hát (Esc)">✕</button>
             </div>
-            <div class="spotify-lyrics-scroller" id="spotify-lyrics-scroller">
-              <div class="spotify-lyrics-content" id="spotify-lyrics-content">
+            <div class="spotify-lyrics-scroller is-loading" id="spotify-lyrics-scroller">
+              <div class="spotify-lyrics-content is-loading" id="spotify-lyrics-content">
                 <div class="spotify-lyrics-loading">Đang tải lời bài hát…</div>
               </div>
             </div>
@@ -218,6 +218,7 @@
         <button id="spotify-connect-btn" class="pill" title="Trạng thái liên kết Spotify của Host">Kết nối Spotify</button>
         <button id="cooldown-toggle" class="pill" title="Thời gian chờ giữa các yêu cầu của từng khách — nhấp để thay đổi">Thời gian chờ</button>
         <button id="queue-limit-toggle" class="pill" title="Giới hạn số bài sắp phát — nhấp để chuyển Tắt, 5, 10, 15, 20">Hàng đợi</button>
+        <button id="user-queue-limit-toggle" class="pill" title="Giới hạn số bài mỗi người có thể order cùng lúc — nhấp để chuyển: Tắt, 5, 10, 15 bài">Mỗi người: Tắt</button>
         <button id="require-name-toggle" class="pill" title="Bắt buộc khách nhập tên order">Tên order</button>
         <button id="order-network-host" class="pill" title="IP Internet tự cập nhật khi Host bắt đầu phát, kết nối lại và mỗi 15 phút. Nhấp để cập nhật ngay.">Cập nhật ngay</button>
         <span id="order-network-host-status" class="filter-hint hidden" role="status"></span>
@@ -237,17 +238,43 @@
     </section>
 
     <aside class="sidebar">
-      <div class="qr-card">
-        <div class="qr-title">Quét mã để chọn bài</div>
-        <div class="qr-sub">Quét để thêm bài hát</div>
-        <div class="qr-frame"><img id="qr" alt="Mã QR" /></div>
-        <div id="guest-url" class="guest-url"></div>
+      <div class="qr-card" id="qr-card">
+        <div class="qr-header">
+          <div class="qr-title-group">
+            <span class="qr-title">Quét mã để chọn bài</span>
+            <span class="qr-sub">Quét để thêm bài hát</span>
+          </div>
+          <button type="button" class="qr-toggle-btn" id="qr-toggle-btn" title="Thu gọn mã QR" aria-expanded="true">
+            <span class="qr-toggle-text">Thu gọn</span>
+            <svg class="qr-toggle-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="m18 15-6-6-6 6"/>
+            </svg>
+          </button>
+        </div>
+        <div class="qr-body" id="qr-body">
+          <div class="qr-frame"><img id="qr" alt="Mã QR" /></div>
+          <div id="guest-url" class="guest-url"></div>
+        </div>
       </div>
       <div class="queue-card">
-        <div class="queue-head">
-          Hàng đợi <small>Sắp phát · Kéo để sắp xếp</small> <span id="queue-count" class="count">0</span>
+        <div class="queue-card-tabs">
+          <button type="button" class="queue-card-tab active" id="tab-btn-queue">
+            <span>Hàng đợi</span>
+            <span id="queue-count" class="count">0</span>
+          </button>
+          <button type="button" class="queue-card-tab" id="tab-btn-history">
+            <span>Lịch sử phát</span>
+            <span id="host-history-count" class="count hidden">0</span>
+          </button>
         </div>
-        <ul id="queue"></ul>
+        <div id="queue-panel" class="queue-tab-panel">
+          <ul id="queue"></ul>
+        </div>
+        <div id="host-history-panel" class="queue-tab-panel hidden">
+          <ul id="host-history-list"></ul>
+          <div id="host-history-empty" class="q-empty hidden">Chưa có bài hát nào được phát xong.</div>
+          <div id="host-history-loading" class="q-empty hidden">Đang tải lịch sử…</div>
+        </div>
       </div>
     </aside>
   </main>
