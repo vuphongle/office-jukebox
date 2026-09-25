@@ -32,3 +32,30 @@ export function getClientIp(request, trustProxy = false) {
   const chain = [remoteAddress, ...forwarded.slice().reverse()];
   return chain[Math.min(trustedHops, chain.length - 1)] || remoteAddress;
 }
+
+export function isPrivateIp(ip) {
+  if (!ip || typeof ip !== "string") return false;
+  const cleanIp = ip.replace(/^::ffff:/i, "").trim().toLowerCase();
+  if (cleanIp === "127.0.0.1" || cleanIp === "::1" || cleanIp === "localhost") return true;
+  if (/^10\./.test(cleanIp)) return true;
+  if (/^172\.(1[6-9]|2\d|3[01])\./.test(cleanIp)) return true;
+  if (/^192\.168\./.test(cleanIp)) return true;
+  if (/^169\.254\./.test(cleanIp)) return true;
+  if (/^f[cd][0-9a-f]{2}:/i.test(cleanIp)) return true;
+  if (/^fe80:/i.test(cleanIp)) return true;
+  return false;
+}
+
+export function isDedicatedMachineIp(ip) {
+  if (!ip || typeof ip !== "string") return false;
+  const cleanIp = ip.replace(/^::ffff:/i, "").trim().toLowerCase();
+  // Loopback / localhost is a reverse proxy or local machine host, never a dedicated client machine
+  if (cleanIp === "127.0.0.1" || cleanIp === "::1" || cleanIp === "localhost") return false;
+  // Public IP is the WAN / Wi-Fi router IP shared by all devices in the venue
+  if (!isPrivateIp(cleanIp)) return false;
+  // Network gateway / router addresses (.1 or .254) are shared Wi-Fi router/AP interfaces
+  if (/\.(1|254)$/.test(cleanIp)) return false;
+  return true;
+}
+
+
