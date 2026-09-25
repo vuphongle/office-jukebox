@@ -1,7 +1,10 @@
-import { test, describe, expect } from "bun:test";
-import { searchSpotifyTracks } from "../src/spotify.js";
+import { test, describe, expect, beforeEach } from "bun:test";
+import { searchSpotifyTracks, resetSpotifyRateLimits } from "../src/spotify.js";
 
 describe("searchSpotifyTracks", () => {
+  beforeEach(() => {
+    resetSpotifyRateLimits();
+  });
   test("returns empty array when query is empty or whitespace", async () => {
     const res1 = await searchSpotifyTracks("");
     expect(res1).toEqual([]);
@@ -71,7 +74,9 @@ describe("searchSpotifyTracks", () => {
       videoId: "4cOdK2wGLETKBW3PvgPWqT",
       title: "Chung Ta Cua Tuong Lai",
       channel: "Son Tung M-TP",
+      artists: ["Son Tung M-TP"],
       duration: "4:14",
+      durationMs: 254000,
       thumbnail: "https://i.scdn.co/image/ab67616d0000b273thumb1",
       provider: "spotify",
     });
@@ -80,7 +85,9 @@ describe("searchSpotifyTracks", () => {
       videoId: "11dFghVXANMlKmJXsNCbNl",
       title: "Cat Doi Noi Sau",
       channel: "Tang Duy Tan, Drum7",
+      artists: ["Tang Duy Tan", "Drum7"],
       duration: "3:00",
+      durationMs: 180000,
       thumbnail: "https://i.scdn.co/image/catdoi",
       provider: "spotify",
     });
@@ -151,4 +158,166 @@ describe("searchSpotifyTracks", () => {
     expect(results).toHaveLength(1);
     expect(results[0].title).toBe("Fallback Track");
   });
+
+  test("respects limit option capped at 10 tracks for search API safety", async () => {
+    let capturedUrl = "";
+    const mockFetch = async (url) => {
+      capturedUrl = url;
+      return {
+        ok: true,
+        json: async () => ({ tracks: { items: [] } }),
+      };
+    };
+
+    await searchSpotifyTracks("v-pop", {
+      accessToken: "mock_token",
+      limit: 10,
+      fetchImpl: mockFetch,
+    });
+
+    expect(capturedUrl).toContain("limit=10");
+
+    await searchSpotifyTracks("v-pop", {
+      accessToken: "mock_token",
+      limit: 50,
+      fetchImpl: mockFetch,
+    });
+    // Values above 10 are capped at 10 to prevent Spotify API 400 Invalid limit error
+    expect(capturedUrl).toContain("limit=10");
+  });
+
+  test("supports offset parameter for pagination", async () => {
+    let capturedUrl = "";
+    const mockFetch = async (url) => {
+      capturedUrl = url;
+      return {
+        ok: true,
+        json: async () => ({ tracks: { items: [] } }),
+      };
+    };
+
+    await searchSpotifyTracks("v-pop", {
+      accessToken: "mock_token",
+      offset: 20,
+      fetchImpl: mockFetch,
+    });
+
+    expect(capturedUrl).toContain("offset=20");
+  });
+
+  test("automatically falls back to backup credentials when primary credential hits 429 rate limit", async () => {
+    const primaryAuth = Buffer.from("primary_id:primary_secret").toString("base64");
+    const backupAuth = Buffer.from("backup_id:backup_secret").toString("base64");
+    const attemptedTokens = [];
+
+    const mockFetch = async (url, options = {}) => {
+      if (url.includes("accounts.spotify.com/api/token")) {
+        const auth = options.headers?.Authorization;
+        if (auth === `Basic ${primaryAuth}`) {
+          return {
+            ok: true,
+            json: async () => ({ access_token: "token_primary", expires_in: 3600 }),
+          };
+        }
+        if (auth === `Basic ${backupAuth}`) {
+          return {
+            ok: true,
+            json: async () => ({ access_token: "token_backup", expires_in: 3600 }),
+          };
+        }
+        return { ok: false, status: 400, text: async () => "bad credentials" };
+      }
+
+      if (url.includes("api.spotify.com/v1/search")) {
+        const token = options.headers?.Authorization;
+        attemptedTokens.push(token);
+
+        if (token === "Bearer token_primary") {
+          return {
+            ok: false,
+            status: 429,
+            headers: new Headers({ "retry-after": "3600" }),
+            text: async () => "Too Many Requests (Quota Exceeded)",
+          };
+        }
+
+        if (token === "Bearer token_backup") {
+          return {
+            ok: true,
+            status: 200,
+            json: async () => ({
+              tracks: {
+                items: [
+                  {
+                    id: "4cOdK2wGLETKBW3PvgPWqT",
+                    name: "Backup Track Found",
+                    artists: [{ name: "Backup Artist" }],
+                    duration_ms: 210000,
+                    album: { images: [] },
+                  },
+                ],
+              },
+            }),
+          };
+        }
+      }
+
+      throw new Error("unexpected URL " + url);
+    };
+
+    const results = await searchSpotifyTracks("query test", {
+      clientId: "primary_id",
+      clientSecret: "primary_secret",
+      backupClientId: "backup_id",
+      backupClientSecret: "backup_secret",
+      fetchImpl: mockFetch,
+    });
+
+    expect(attemptedTokens).toContain("Bearer token_primary");
+    expect(attemptedTokens).toContain("Bearer token_backup");
+    expect(results).toHaveLength(1);
+    expect(results[0].title).toBe("Backup Track Found");
+  });
+
+  test("throws 429 when both primary and backup credentials hit rate limit", async () => {
+    const primaryAuth = Buffer.from("primary_id:primary_secret").toString("base64");
+    const backupAuth = Buffer.from("backup_id:backup_secret").toString("base64");
+
+    const mockFetch = async (url, options = {}) => {
+      if (url.includes("accounts.spotify.com/api/token")) {
+        const auth = options.headers?.Authorization;
+        if (auth === `Basic ${primaryAuth}`) {
+          return { ok: true, json: async () => ({ access_token: "token_primary", expires_in: 3600 }) };
+        }
+        if (auth === `Basic ${backupAuth}`) {
+          return { ok: true, json: async () => ({ access_token: "token_backup", expires_in: 3600 }) };
+        }
+      }
+
+      if (url.includes("api.spotify.com/v1/search")) {
+        return {
+          ok: false,
+          status: 429,
+          headers: new Headers({ "retry-after": "3600" }),
+          text: async () => "Too Many Requests",
+        };
+      }
+
+      throw new Error("unexpected URL " + url);
+    };
+
+    await expect(
+      searchSpotifyTracks("test", {
+        clientId: "primary_id",
+        clientSecret: "primary_secret",
+        credentialsPool: [
+          { clientId: "primary_id", clientSecret: "primary_secret", label: "primary" },
+          { clientId: "backup_id", clientSecret: "backup_secret", label: "backup" },
+        ],
+        fetchImpl: mockFetch,
+      })
+    ).rejects.toThrow(/429/);
+  });
 });
+
+
