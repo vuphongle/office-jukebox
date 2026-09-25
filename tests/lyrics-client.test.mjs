@@ -134,4 +134,26 @@ describe("JukeboxLyrics Client Module", () => {
     expect(resFallback?.lines[0].text).toBe("Fallback line from LRCLIB");
     expect(resFallback?.lines[0].time).toBe(8);
   });
+
+  test("fetchLyricsClient sends artists parameter to backend /api/lyrics", async () => {
+    let requestedUrl = "";
+    const mockFetch = async (url) => {
+      requestedUrl = url;
+      return {
+        ok: true,
+        json: async () => ({ ok: true, lines: [{ time: 1, text: "Lyrics" }] }),
+      };
+    };
+
+    await JukeboxLyrics.fetchLyricsClient({
+      title: "Ngáo Ngơ",
+      artist: "HIEUTHUHAI, ERIK",
+      artists: ["HIEUTHUHAI", "ERIK"],
+      durationSec: 215,
+      fetchImpl: mockFetch,
+    });
+
+    expect(requestedUrl).toContain("artists=");
+    expect(requestedUrl).toContain("HIEUTHUHAI");
+  });
 });
