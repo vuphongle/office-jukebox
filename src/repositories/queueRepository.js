@@ -20,7 +20,7 @@ export class QueueRepository {
     return (row?.maxSeq || 0) + 1;
   }
 
-  createItem({ videoId, title, channel, duration, thumbnail, addedBy, requesterId, addedByUserId = null, eventId = "default_event", provider = "youtube" }) {
+  createItem({ videoId, title, channel, duration, thumbnail, addedBy, requesterId, addedByUserId = null, eventId = "default_event", provider = "youtube", requesterIp = null, deviceId = null }) {
     const tx = this.db.transaction(() => {
       const id = randomUUID();
       const now = Date.now();
@@ -30,9 +30,10 @@ export class QueueRepository {
         `INSERT INTO queue_items (
           id, event_id, video_id, title, channel, duration, thumbnail,
           added_by, requester_id, added_by_user_id, queue_sequence,
-          vote_score, pinned, pinned_order, status, added_at, provider
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, 0, 'queued', ?, ?)`,
-        [id, eventId, videoId, title, channel || "", duration || "3:30", thumbnail || null, addedBy || "", requesterId || "", addedByUserId, seq, now, provider || "youtube"]
+          vote_score, pinned, pinned_order, status, added_at, provider,
+          requester_ip, device_id
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, 0, 'queued', ?, ?, ?, ?)`,
+        [id, eventId, videoId, title, channel || "", duration || "3:30", thumbnail || null, addedBy || "", requesterId || "", addedByUserId, seq, now, provider || "youtube", requesterIp || null, deviceId || null]
       );
 
       return this.findById(id);
@@ -98,6 +99,27 @@ export class QueueRepository {
          ORDER BY finished_at DESC, rowid DESC LIMIT ? OFFSET ?`
       )
       .all(eventId, userId, boundedLimit, boundedOffset);
+    return { total, limit: boundedLimit, offset: boundedOffset, items };
+  }
+
+  getAllPlaybackHistory(eventId = "default_event", { limit = 20, offset = 0 } = {}) {
+    const boundedLimit = Math.min(100, Math.max(1, Number(limit) || 20));
+    const boundedOffset = Math.max(0, Number(offset) || 0);
+    const countRow = this.db
+      .query("SELECT COUNT(*) AS total FROM queue_items WHERE event_id = ? AND status = 'played'")
+      .get(eventId);
+    const total = countRow?.total || 0;
+    const items = this.db
+      .query(
+        `SELECT qi.id, qi.video_id, qi.title, qi.channel, qi.duration, qi.thumbnail, qi.added_by, qi.added_by_user_id,
+                qi.vote_score, qi.finished_at, qi.finish_reason, qi.played_seconds, qi.provider,
+                u.avatar_file
+         FROM queue_items qi
+         LEFT JOIN users u ON qi.added_by_user_id = u.id
+         WHERE qi.event_id = ? AND qi.status = 'played'
+         ORDER BY qi.finished_at DESC, qi.rowid DESC LIMIT ? OFFSET ?`
+      )
+      .all(eventId, boundedLimit, boundedOffset);
     return { total, limit: boundedLimit, offset: boundedOffset, items };
   }
 
@@ -363,7 +385,7 @@ export class QueueRepository {
           [finalStatus, finishedAt, resolvedFinishReason, playedSeconds, finishedId]
         );
         if (finalStatus === "error") {
-          refunds = this._refundVotesUnsafe(finishedId, refundReason || "Lỗi phát video YouTube");
+          refunds = this._refundVotesUnsafe(finishedId, refundReason || "Lỗi phát bài hát");
         }
       }
       if (nextId) {

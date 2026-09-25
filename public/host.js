@@ -54,6 +54,9 @@ let scReady = false;
 let scIsPlaying = false;
 let tiktokAudio = null;
 let tiktokIsPlaying = false;
+let tiktokResumeTime = 0;
+let tiktokRetryCount = 0;
+let tiktokRetryTimer = null;
 let filterOn = false;
 let moderationMode = "default"; // "default" | "strict" (protocol values)
 let moderationConfigured = false;
@@ -61,6 +64,12 @@ let cooldownSeconds = 15;
 let eventContext = "";
 let queueLimitOn = false;
 let queueLimit = 10;
+let userQueueLimitOn = false;
+let userQueueLimit = 5;
+const USER_QUEUE_LIMIT_STEPS = [5, 10, 15];
+let hostActiveTab = "queue";
+let hostHistoryItems = [];
+let hostHistoryLoading = false;
 let requireName = false;
 let voteSortOn = true;
 let hostToken = null; // null until Host authentication has been verified
@@ -87,30 +96,36 @@ function sendAuth() {
   if (hostToken && ws && ws.readyState === 1) ws.send(JSON.stringify({ type: "auth", token: hostToken }));
 }
 
-function setOrderNetworkHostStatus(message) {
+function setOrderNetworkHostStatus(message, type = "info") {
   const status = document.getElementById("order-network-host-status");
-  status.textContent = message;
-  status.classList.remove("hidden");
-  if (message.includes("Đã lưu") || message.includes("thành công") || message.includes("đã cập nhật")) {
-    status.classList.add("ok");
-    status.classList.remove("bad");
-  } else {
-    status.classList.add("bad");
-    status.classList.remove("ok");
-  }
+  if (!status) return;
   clearTimeout(orderNetworkHostStatusTimer);
-  orderNetworkHostStatusTimer = setTimeout(() => status.classList.add("hidden"), 5000);
+  if (!message) {
+    status.textContent = "";
+    status.classList.remove("loading", "ok", "bad", "info");
+    status.classList.add("hidden");
+    return;
+  }
+  status.textContent = message;
+  status.classList.remove("hidden", "loading", "ok", "bad", "info");
+  status.classList.add(type);
+  const timeoutMs = type === "loading" ? 12000 : 4000;
+  orderNetworkHostStatusTimer = setTimeout(() => {
+    status.classList.add("hidden");
+    status.classList.remove("loading", "ok", "bad", "info");
+  }, timeoutMs);
 }
 
 function registerOrderNetworkHost({ manual = false } = {}) {
   // Only the projector that has started playback can refresh automatically.
   if (!manual && (hostToken === null || !started)) return false;
+  if (manual) sendAuth();
   if (!send({ type: "registerOrderNetworkHost" })) {
-    if (manual) setOrderNetworkHostStatus("Mất kết nối Host. Vui lòng thử lại.");
+    if (manual) setOrderNetworkHostStatus("Mất kết nối Host. Vui lòng thử lại.", "bad");
     return false;
   }
   orderNetworkHostUpdateIsManual = manual;
-  if (manual) setOrderNetworkHostStatus("Đang cập nhật mạng host…");
+  if (manual) setOrderNetworkHostStatus("Đang cập nhật IP mạng Host...", "loading");
   return true;
 }
 
@@ -132,7 +147,13 @@ function reportIfEnded() {
       ended = true;
       playedSeconds = player.getCurrentTime ? player.getCurrentTime() : null;
     } else if (activePlayerProvider === "spotify" && spotifyPlayerState) {
-      if (spotifyPlayerState.paused && spotifyPlayerState.position === 0 && spotifyWasPlaying) {
+      if (
+        spotifyPlayerState.paused &&
+        spotifyPlayerState.position === 0 &&
+        spotifyWasPlaying &&
+        spotifyPlayerState.duration > 0 &&
+        spotifyAnchorPos >= Math.max(1000, spotifyPlayerState.duration - 4000)
+      ) {
         ended = true;
         playedSeconds = spotifyPlayerState.duration ? spotifyPlayerState.duration / 1000 : null;
       }
@@ -175,22 +196,19 @@ function connectWs() {
     }
     if (!msg || typeof msg !== "object" || Array.isArray(msg)) return;
     if (msg.type === "orderNetworkHostUpdated") {
-      const button = document.getElementById("order-network-host");
       if (orderNetworkHostUpdateIsManual) {
-        button.textContent = "Mạng host đã cập nhật";
-        button.classList.add("on");
-        setTimeout(() => {
-          button.textContent = "Cập nhật ngay";
-          button.classList.remove("on");
-        }, 2500);
-      } else {
-        setOrderNetworkHostStatus("Mạng Internet của Host đã được tự động cập nhật.");
+        setOrderNetworkHostStatus("Đã cập nhật IP mạng Host thành công!", "ok");
       }
       orderNetworkHostUpdateIsManual = false;
       return;
     }
     if (msg.type === "orderNetworkHostError") {
-      setOrderNetworkHostStatus(msg.reason || "Không thể cập nhật mạng host.");
+      if (orderNetworkHostUpdateIsManual) {
+        setOrderNetworkHostStatus(msg.reason || "Không thể cập nhật IP mạng Host.", "bad");
+      } else {
+        console.warn("[host] Lỗi cập nhật IP mạng Host tự động:", msg.reason);
+      }
+      orderNetworkHostUpdateIsManual = false;
       return;
     }
     if (msg.type === "state" && msg.state && typeof msg.state === "object") {
@@ -201,6 +219,8 @@ function connectWs() {
       if (typeof msg.eventContext === "string") eventContext = msg.eventContext;
       if (typeof msg.queueLimitOn === "boolean") queueLimitOn = msg.queueLimitOn;
       if (typeof msg.queueLimit === "number") queueLimit = msg.queueLimit;
+      if (typeof msg.userQueueLimitOn === "boolean") userQueueLimitOn = msg.userQueueLimitOn;
+      if (typeof msg.userQueueLimit === "number") userQueueLimit = msg.userQueueLimit;
       if (typeof msg.requireName === "boolean") requireName = msg.requireName;
       if (typeof msg.voteSortOn === "boolean") voteSortOn = msg.voteSortOn;
       render();
@@ -208,8 +228,10 @@ function connectWs() {
       renderCooldown();
       renderContext();
       renderQueueLimit();
+      renderUserQueueLimit();
       renderRequireName();
       renderVoteSort();
+      if (hostActiveTab === "history") loadHostHistory();
       syncPlayer();
     }
   };
@@ -334,7 +356,7 @@ let currentLyricsActiveIndex = -1;
 let isLyricsMode = false;
 let currentLyricsTrackKey = "";
 
-async function loadLyrics(rawTitle, rawArtist, duration) {
+async function loadLyrics(rawTitle, rawArtist, duration, artists = []) {
   const lyricsClient = window.JukeboxLyrics;
   const cleaned = lyricsClient
     ? lyricsClient.cleanLyricsQuery(rawTitle, rawArtist)
@@ -348,8 +370,15 @@ async function loadLyrics(rawTitle, rawArtist, duration) {
   currentLyricsActiveIndex = -1;
 
   const contentEl = document.getElementById("spotify-lyrics-content");
+  const scrollerEl = document.getElementById("spotify-lyrics-scroller");
   if (contentEl) {
+    contentEl.classList.add("is-loading");
+    contentEl.classList.remove("is-empty");
     contentEl.innerHTML = `<div class="spotify-lyrics-loading">Đang tải lời bài hát đồng bộ…</div>`;
+  }
+  if (scrollerEl) {
+    scrollerEl.classList.add("is-loading");
+    scrollerEl.classList.remove("is-empty");
   }
 
   let durSec = null;
@@ -361,7 +390,15 @@ async function loadLyrics(rawTitle, rawArtist, duration) {
   }
 
   const data = lyricsClient
-    ? await lyricsClient.fetchLyricsClient({ title: rawTitle, artist: rawArtist, durationSec: durSec })
+    ? await lyricsClient.fetchLyricsClient({
+        title: rawTitle,
+        artist: rawArtist,
+        artists: Array.isArray(artists) ? artists : [],
+        durationSec: durSec,
+      }).catch((err) => {
+        console.warn("fetchLyricsClient error:", err);
+        return null;
+      })
     : null;
 
   if (trackKey !== currentLyricsTrackKey) return;
@@ -369,7 +406,13 @@ async function loadLyrics(rawTitle, rawArtist, duration) {
   if (!data || !data.lines || data.lines.length === 0) {
     currentLyrics = null;
     if (contentEl) {
+      contentEl.classList.remove("is-loading");
+      contentEl.classList.add("is-empty");
       contentEl.innerHTML = `<div class="spotify-lyrics-empty"><span>🎵</span><span>Chưa có lời bài hát đồng bộ cho bài hát này.</span></div>`;
+    }
+    if (scrollerEl) {
+      scrollerEl.classList.remove("is-loading");
+      scrollerEl.classList.add("is-empty");
     }
     return;
   }
@@ -380,7 +423,12 @@ async function loadLyrics(rawTitle, rawArtist, duration) {
 
 function renderLyricsLines(lines) {
   const contentEl = document.getElementById("spotify-lyrics-content");
+  const scrollerEl = document.getElementById("spotify-lyrics-scroller");
   if (!contentEl) return;
+  contentEl.classList.remove("is-loading", "is-empty");
+  if (scrollerEl) {
+    scrollerEl.classList.remove("is-loading", "is-empty");
+  }
   contentEl.innerHTML = "";
 
   const frag = document.createDocumentFragment();
@@ -390,13 +438,19 @@ function renderLyricsLines(lines) {
     lineEl.dataset.index = idx;
     lineEl.dataset.time = line.time;
     lineEl.textContent = line.text;
-    lineEl.addEventListener("click", () => {
+    lineEl.addEventListener("click", (e) => {
+      e.stopPropagation();
       seekSpotifyTo(line.time);
       syncLyricsPosition(line.time, true);
     });
     frag.appendChild(lineEl);
   });
   contentEl.appendChild(frag);
+
+  if (scrollerEl) {
+    scrollerEl.scrollTop = 0;
+    scrollerEl.scrollTo({ top: 0, behavior: "auto" });
+  }
 
   // Sync with current player position immediately
   const curPos = (spotifyPlayerState?.position || 0) / 1000;
@@ -472,8 +526,15 @@ function resetLyrics() {
   currentLyricsActiveIndex = -1;
   currentLyricsTrackKey = "";
   const contentEl = document.getElementById("spotify-lyrics-content");
+  const scrollerEl = document.getElementById("spotify-lyrics-scroller");
   if (contentEl) {
+    contentEl.classList.add("is-loading");
+    contentEl.classList.remove("is-empty");
     contentEl.innerHTML = `<div class="spotify-lyrics-loading">Đang tải lời bài hát…</div>`;
+  }
+  if (scrollerEl) {
+    scrollerEl.classList.add("is-loading");
+    scrollerEl.classList.remove("is-empty");
   }
 }
 
@@ -670,13 +731,25 @@ window.onSpotifyWebPlaybackSDKReady = function () {
     console.log("[spotify] Player ready with device ID:", device_id);
     updateSpotifyStatus();
     if (activePlayerProvider === "spotify" && started && latestState?.nowPlaying?.videoId === currentVideoId) {
-      playSpotify(currentVideoId);
+      const resumePosMs = Math.max(
+        0,
+        Math.floor(spotifyAnchorPos || spotifyPlayerState?.position || 0)
+      );
+      playSpotify(currentVideoId, resumePosMs);
     }
   });
 
   spotifyPlayer.addListener("not_ready", ({ device_id }) => {
     console.warn("[spotify] Device ID is offline:", device_id);
     spotifyReady = false;
+    if (activePlayerProvider === "spotify") {
+      const curPos = getInterpolatedSpotifyPosition();
+      if (curPos > 0) {
+        spotifyAnchorPos = Math.floor(curPos);
+        spotifyAnchorTime = performance.now();
+      }
+      stopSpotifySync();
+    }
   });
 
   spotifyPlayer.addListener("player_state_changed", (state) => {
@@ -685,7 +758,22 @@ window.onSpotifyWebPlaybackSDKReady = function () {
     if (activePlayerProvider === "spotify") {
       updatePlayPauseIcon();
 
-      if (isSeekPending) {
+      const prevAnchorPos = spotifyAnchorPos;
+
+      // Check whether this is a genuine end-of-track:
+      // track paused, position 0, was playing, and was previously near the end of track.
+      const isSongFinished = Boolean(
+        !isSeekPending &&
+        state.paused &&
+        state.position === 0 &&
+        spotifyWasPlaying &&
+        state.duration > 0 &&
+        prevAnchorPos >= Math.max(1000, state.duration - 2500)
+      );
+
+      if (state.position === 0 && !isSongFinished && prevAnchorPos > 0 && spotifyWasPlaying) {
+        // Network drop or pause without seek: preserve prevAnchorPos so we can resume
+      } else if (isSeekPending) {
         const diff = Math.abs((state.position || 0) - seekTargetMs);
         if (diff < 1000) {
           isSeekPending = false;
@@ -708,9 +796,7 @@ window.onSpotifyWebPlaybackSDKReady = function () {
         spotifyWasPlaying = true;
         startSpotifySync();
       } else if (
-        state.paused &&
-        state.position === 0 &&
-        spotifyWasPlaying &&
+        isSongFinished &&
         latestState?.nowPlaying?.videoId === currentVideoId &&
         currentPlaybackToken &&
         terminalReportedForToken !== currentPlaybackToken
@@ -729,10 +815,20 @@ window.onSpotifyWebPlaybackSDKReady = function () {
 
   spotifyPlayer.addListener("initialization_error", ({ message }) => {
     console.error("[spotify] Init error:", message);
+    if (activePlayerProvider === "spotify" && currentPlaybackToken && terminalReportedForToken !== currentPlaybackToken) {
+      if (send({ type: "error", videoId: currentVideoId, playbackToken: currentPlaybackToken, code: "initialization_error" })) {
+        terminalReportedForToken = currentPlaybackToken;
+      }
+    }
   });
   spotifyPlayer.addListener("authentication_error", ({ message }) => {
     console.error("[spotify] Auth error:", message);
     updateSpotifyStatus();
+    if (activePlayerProvider === "spotify" && currentPlaybackToken && terminalReportedForToken !== currentPlaybackToken) {
+      if (send({ type: "error", videoId: currentVideoId, playbackToken: currentPlaybackToken, code: "authentication_error" })) {
+        terminalReportedForToken = currentPlaybackToken;
+      }
+    }
   });
   spotifyPlayer.addListener("account_error", ({ message }) => {
     console.error("[spotify] Account error (Spotify Premium required):", message);
@@ -743,18 +839,14 @@ window.onSpotifyWebPlaybackSDKReady = function () {
     }
   });
   spotifyPlayer.addListener("playback_error", ({ message }) => {
-    console.error("[spotify] Playback error:", message);
-    if (activePlayerProvider === "spotify" && currentPlaybackToken && terminalReportedForToken !== currentPlaybackToken) {
-      if (send({ type: "error", videoId: currentVideoId, playbackToken: currentPlaybackToken, code: "playback_error" })) {
-        terminalReportedForToken = currentPlaybackToken;
-      }
-    }
+    console.warn("[spotify] Playback warning:", message);
+    showPlaybackRecovery();
   });
 
   spotifyPlayer.connect();
 };
 
-async function playSpotify(trackId) {
+async function playSpotify(trackId, positionMs = 0) {
   if (!started) return;
   if (!spotifyDeviceId) {
     console.warn("[spotify] Device ID is not ready yet");
@@ -765,23 +857,41 @@ async function playSpotify(trackId) {
     const tokenData = await tokenRes.json();
     if (!tokenData.ok || !tokenData.access_token) {
       console.warn("[spotify] No valid token available");
+      if (tokenData && tokenData.configured === false) {
+        if (activePlayerProvider === "spotify" && currentPlaybackToken && terminalReportedForToken !== currentPlaybackToken) {
+          if (send({ type: "error", videoId: currentVideoId, playbackToken: currentPlaybackToken, code: "spotify_not_configured" })) {
+            terminalReportedForToken = currentPlaybackToken;
+          }
+        }
+        return;
+      }
       showPlaybackRecovery();
       return;
     }
     const token = tokenData.access_token;
     spotifyWasPlaying = false;
-    spotifyAnchorPos = 0;
+    let startPos = Math.max(0, Math.floor(positionMs || 0));
+    if (spotifyPlayerState?.duration > 0 && startPos >= spotifyPlayerState.duration - 1000) {
+      startPos = Math.max(0, spotifyPlayerState.duration - 1000);
+    }
+    spotifyAnchorPos = startPos;
     spotifyAnchorTime = performance.now();
     isSeekPending = false;
+
+    const playBody = {
+      uris: [`spotify:track:${trackId}`],
+    };
+    if (startPos > 0) {
+      playBody.position_ms = startPos;
+    }
+
     const playRes = await fetch(`https://api.spotify.com/v1/me/player/play?device_id=${spotifyDeviceId}`, {
       method: "PUT",
       headers: {
         "Authorization": `Bearer ${token}`,
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({
-        uris: [`spotify:track:${trackId}`],
-      }),
+      body: JSON.stringify(playBody),
     });
     if (!playRes.ok && playRes.status !== 204) {
       await fetch("https://api.spotify.com/v1/me/player", {
@@ -792,14 +902,22 @@ async function playSpotify(trackId) {
         },
         body: JSON.stringify({ device_ids: [spotifyDeviceId], play: true }),
       });
-      await fetch(`https://api.spotify.com/v1/me/player/play?device_id=${spotifyDeviceId}`, {
+      const retryRes = await fetch(`https://api.spotify.com/v1/me/player/play?device_id=${spotifyDeviceId}`, {
         method: "PUT",
         headers: {
           "Authorization": `Bearer ${token}`,
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({ uris: [`spotify:track:${trackId}`] }),
+        body: JSON.stringify(playBody),
       });
+      if (!retryRes.ok && retryRes.status !== 204) {
+        console.warn(`[spotify] Play request failed (${retryRes.status})`);
+        if (activePlayerProvider === "spotify" && currentPlaybackToken && terminalReportedForToken !== currentPlaybackToken) {
+          if (send({ type: "error", videoId: currentVideoId, playbackToken: currentPlaybackToken, code: `spotify_http_${retryRes.status}` })) {
+            terminalReportedForToken = currentPlaybackToken;
+          }
+        }
+      }
     }
   } catch (err) {
     console.error("[spotify] Failed to start Spotify playback:", err);
@@ -855,6 +973,15 @@ window.initSoundCloudWidget = initSoundCloudWidget;
 
 function playSoundCloud(url) {
   if (!started) return;
+  if (!url || typeof url !== "string" || !url.trim()) {
+    console.warn("[soundcloud] Missing or invalid SoundCloud URL");
+    if (activePlayerProvider === "soundcloud" && currentPlaybackToken && terminalReportedForToken !== currentPlaybackToken) {
+      if (send({ type: "error", videoId: currentVideoId, playbackToken: currentPlaybackToken, code: "invalid_soundcloud_url" })) {
+        terminalReportedForToken = currentPlaybackToken;
+      }
+    }
+    return;
+  }
   initSoundCloudWidget();
   scIsPlaying = false;
 
@@ -905,6 +1032,8 @@ function initTikTokPlayer() {
 
   tiktokAudio.addEventListener("play", () => {
     tiktokIsPlaying = true;
+    tiktokRetryCount = 0;
+    clearTimeout(tiktokRetryTimer);
     clearTimeout(playbackWatchdog);
     hidePlaybackRecovery();
     updatePlayPauseIcon();
@@ -918,6 +1047,7 @@ function initTikTokPlayer() {
   tiktokAudio.addEventListener("timeupdate", () => {
     if (!tiktokAudio) return;
     const cur = tiktokAudio.currentTime || 0;
+    if (cur > 0) tiktokResumeTime = cur;
     const dur = tiktokAudio.duration || 0;
     const curEl = document.getElementById("tiktok-time-cur");
     const totalEl = document.getElementById("tiktok-time-total");
@@ -933,6 +1063,8 @@ function initTikTokPlayer() {
 
   tiktokAudio.addEventListener("ended", () => {
     tiktokIsPlaying = false;
+    tiktokRetryCount = 0;
+    clearTimeout(tiktokRetryTimer);
     updatePlayPauseIcon();
     if (activePlayerProvider === "tiktok" && currentPlaybackToken && terminalReportedForToken !== currentPlaybackToken) {
       if (send({
@@ -950,15 +1082,33 @@ function initTikTokPlayer() {
     console.warn("[tiktok] audio playback error:", e);
     tiktokIsPlaying = false;
     updatePlayPauseIcon();
-    if (activePlayerProvider === "tiktok" && currentPlaybackToken && terminalReportedForToken !== currentPlaybackToken) {
-      if (send({
-        type: "error",
-        videoId: currentVideoId,
-        playbackToken: currentPlaybackToken,
-        code: "tiktok_playback_error",
-      })) {
-        terminalReportedForToken = currentPlaybackToken;
-      }
+    if (activePlayerProvider !== "tiktok" || !currentPlaybackToken || terminalReportedForToken === currentPlaybackToken) {
+      return;
+    }
+
+    const isNetworkIssue = typeof navigator !== "undefined" && !navigator.onLine;
+    const isNetworkError = tiktokAudio.error && tiktokAudio.error.code === 2; // MEDIA_ERR_NETWORK
+    const wasPlaying = tiktokResumeTime > 0;
+
+    if ((isNetworkIssue || isNetworkError || wasPlaying) && tiktokRetryCount < 3) {
+      tiktokRetryCount++;
+      console.warn(`[tiktok] Lỗi mạng gián đoạn — thử tiếp tục phát từ ${tiktokResumeTime.toFixed(1)}s (lần ${tiktokRetryCount}/3)`);
+      clearTimeout(tiktokRetryTimer);
+      tiktokRetryTimer = setTimeout(() => {
+        if (activePlayerProvider === "tiktok" && started && latestState?.nowPlaying?.videoId === currentVideoId) {
+          playTikTok(currentVideoId, tiktokResumeTime);
+        }
+      }, 2000);
+      return;
+    }
+
+    if (send({
+      type: "error",
+      videoId: currentVideoId,
+      playbackToken: currentPlaybackToken,
+      code: "tiktok_playback_error",
+    })) {
+      terminalReportedForToken = currentPlaybackToken;
     }
   });
 
@@ -1005,14 +1155,36 @@ function toggleTikTokPlay() {
   }
 }
 
-function playTikTok(url) {
+function playTikTok(url, resumeTime = 0) {
   if (!started) return;
+  if (!url || typeof url !== "string" || !url.trim()) {
+    console.warn("[tiktok] Missing or invalid TikTok URL");
+    if (activePlayerProvider === "tiktok" && currentPlaybackToken && terminalReportedForToken !== currentPlaybackToken) {
+      if (send({ type: "error", videoId: currentVideoId, playbackToken: currentPlaybackToken, code: "invalid_tiktok_url" })) {
+        terminalReportedForToken = currentPlaybackToken;
+      }
+    }
+    return;
+  }
   initTikTokPlayer();
   if (!tiktokAudio) return;
 
   tiktokIsPlaying = false;
+  const targetTime = Math.max(0, resumeTime || 0);
+  tiktokResumeTime = targetTime;
   // Endpoint /api/tiktok/stream auto-refreshes stream and 302 redirects to active MP3
   tiktokAudio.src = `/api/tiktok/stream?url=${encodeURIComponent(url)}`;
+  if (targetTime > 0) {
+    const onLoaded = () => {
+      tiktokAudio.removeEventListener("loadedmetadata", onLoaded);
+      try {
+        tiktokAudio.currentTime = targetTime;
+      } catch (err) {
+        console.warn("[tiktok] could not seek to resumeTime:", err);
+      }
+    };
+    tiktokAudio.addEventListener("loadedmetadata", onLoaded);
+  }
   tiktokAudio.play().catch((err) => {
     console.warn("[tiktok] autoplay prevented:", err);
     showPlaybackRecovery();
@@ -1042,6 +1214,9 @@ function syncPlayer() {
     spotifyWasPlaying = false;
     scIsPlaying = false;
     tiktokIsPlaying = false;
+    tiktokResumeTime = 0;
+    tiktokRetryCount = 0;
+    clearTimeout(tiktokRetryTimer);
     if (player?.stopVideo) player.stopVideo();
     if (spotifyPlayer?.pause) spotifyPlayer.pause();
     if (scWidget?.pause) { try { scWidget.pause(); } catch {} }
@@ -1075,6 +1250,10 @@ function syncPlayer() {
     terminalReportedForToken = null;
     spotifyWasPlaying = false;
     scIsPlaying = false;
+    tiktokIsPlaying = false;
+    tiktokResumeTime = 0;
+    tiktokRetryCount = 0;
+    clearTimeout(tiktokRetryTimer);
     const eventVideoId = np.videoId;
     const eventPlaybackToken = np.playbackToken || null;
     let terminalReported = false;
@@ -1172,7 +1351,7 @@ function syncPlayer() {
       if (totalEl) totalEl.textContent = np.duration || "0:00";
 
       updateSpotifyPlayPauseUI(false);
-      loadLyrics(np.title, np.channel, np.duration);
+      loadLyrics(np.title, np.channel, np.duration, np.artists || []);
       playSpotify(np.videoId);
       armPlaybackWatchdog(np.videoId, currentPlaybackToken);
     } else if (provider === "soundcloud") {
@@ -1265,8 +1444,8 @@ function armPlaybackWatchdog(videoId, playbackToken) {
         return;
       }
     } else if (activePlayerProvider === "spotify") {
-      if (spotifyWasPlaying || (spotifyPlayerState && !spotifyPlayerState.paused)) return;
-      if (document.hidden) {
+      if (spotifyWasPlaying || spotifyPlayerState || spotifyAnchorPos > 0 || isLyricsMode) return;
+      if (!spotifyReady || !spotifyDeviceId || document.hidden) {
         armPlaybackWatchdog(videoId, playbackToken);
         return;
       }
@@ -1344,6 +1523,19 @@ window.addEventListener("resize", () => {
   document.querySelectorAll(".marquee-title").forEach(updateMarqueeTitle);
 });
 
+function getPlatformIconBadge(provider) {
+  if (provider === "spotify") {
+    return `<span class="platform-icon-badge spotify" title="Spotify" aria-label="Spotify"><svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0C5.4 0 0 5.4 0 12s5.4 12 12 12 12-5.4 12-12S18.66 0 12 0zm5.521 17.34c-.24.359-.66.48-1.021.24-2.82-1.74-6.36-2.101-10.561-1.141-.418.122-.779-.179-.899-.539-.12-.421.18-.78.54-.9 4.56-1.021 8.52-.6 11.64 1.32.42.18.479.659.301 1.02zm1.44-3.3c-.301.42-.841.6-1.262.3-3.239-1.98-8.159-2.58-11.939-1.38-.479.12-1.02-.12-1.14-.6-.12-.48.12-1.021.6-1.141C9.6 9.9 15 10.561 18.72 12.84c.361.181.54.78.241 1.2zm.12-3.36C15.24 8.4 8.82 8.16 5.16 9.301c-.6.179-1.2-.181-1.38-.721-.18-.601.18-1.2.72-1.381 4.26-1.26 11.28-1.02 15.721 1.621.539.3.719 1.02.419 1.56-.299.421-1.02.599-1.559.3z"/></svg></span>`;
+  }
+  if (provider === "soundcloud") {
+    return `<span class="platform-icon-badge soundcloud" title="SoundCloud" aria-label="SoundCloud"><svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><path d="M11.56 8.87V17h8.79a3.65 3.65 0 0 0 3.65-3.65c0-1.89-1.42-3.44-3.26-3.62a4.99 4.99 0 0 0-4.93-4.14 5.06 5.06 0 0 0-4.25 2.28zm-1.42.92v7.21h.71V9.79zm-1.42 1.34v5.87h.71v-5.87zm-1.42 1.05v4.82h.71V12.18zm-1.42.95v3.87h.71v-3.87zm-1.42 1.05v2.82h.71v-2.82zm-1.42.94v1.88h.71v-1.88zm-1.42.47v1.41h.71V16.4zm-1.42.47v.94h.71v-.94z"/></svg></span>`;
+  }
+  if (provider === "tiktok") {
+    return `<span class="platform-icon-badge tiktok" title="TikTok" aria-label="TikTok"><svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M19.59 6.69a4.83 4.83 0 0 1-3.77-4.25V2h-3.45v13.67a2.89 2.89 0 0 1-5.2 1.74 2.89 2.89 0 0 1 2.31-4.64c.29 0 .58.04.86.12V9.42a6.34 6.34 0 0 0-6.61 6.32 6.34 6.34 0 0 0 6.34 6.34 6.34 6.34 0 0 0 6.34-6.34V9.08a8.28 8.28 0 0 0 4.82 1.54V7.17a4.85 4.85 0 0 1-1.64-.48z"/></svg></span>`;
+  }
+  return `<span class="platform-icon-badge youtube" title="YouTube" aria-label="YouTube"><svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M23.498 6.186a3.016 3.016 0 0 0-2.122-2.136C19.505 3.545 12 3.545 12 3.545s-7.505 0-9.377.505A3.017 3.017 0 0 0 .502 6.186C0 8.07 0 12 0 12s0 3.93.502 5.814a3.016 3.016 0 0 0 2.122 2.136c1.871.505 9.376.505 9.376.505s7.505 0 9.377-.505a3.015 3.015 0 0 0 2.122-2.136C24 15.93 24 12 24 12s0-3.93-.502-5.814zM9.545 15.568V8.432L15.818 12l-6.273 3.568z"/></svg></span>`;
+}
+
 function render() {
   const np = latestState.nowPlaying;
   document.getElementById("now-label").classList.toggle("hidden", !np);
@@ -1371,31 +1563,27 @@ function render() {
     li.className = "q-item";
     li.dataset.id = item.id;
     li.draggable = true;
-    const thumb = `<img src="${safeImageUrl(item.thumbnail)}" alt="" referrerpolicy="no-referrer" />`;
+    const thumb = `<img class="q-thumb" src="${safeImageUrl(item.thumbnail)}" alt="" referrerpolicy="no-referrer" />`;
 
     const isPinned = item.pinned === true;
     const voteScore = item.voteScore || 0;
-    const providerBadge = item.provider === "spotify"
-      ? '<span class="q-platform-badge spotify" title="Spotify Direct Playback">Spotify</span>'
-      : item.provider === "soundcloud"
-        ? '<span class="q-platform-badge soundcloud" title="SoundCloud">SoundCloud</span>'
-        : item.provider === "tiktok"
-          ? '<span class="q-platform-badge tiktok" title="TikTok Direct Audio">TikTok</span>'
-          : '';
+    const providerBadge = getPlatformIconBadge(item.provider);
 
     li.innerHTML = `
       <span class="q-drag-handle" title="Kéo để sắp xếp" aria-hidden="true">⠿</span>
       ${thumb}
       <div class="q-meta">
         <div class="q-title-row">
-          <div class="q-title"></div>
+          <span class="q-title"></span>
           ${providerBadge}
           ${isPinned ? '<span class="q-pinned-badge" title="Bài do host ghim vị trí">📌 Ghim</span>' : ''}
           ${voteScore > 0 ? `<span class="q-vote-badge" title="${voteScore} lượt vote">❤️ ${voteScore}</span>` : ''}
         </div>
         <div class="q-sub">
-          <span class="q-requester-avatar"></span>
-          <span class="q-sub-label"></span>
+          <span class="q-requester-row">
+            <span class="q-requester-avatar"></span>
+            <span class="q-sub-label"></span>
+          </span>
         </div>
       </div>
       ${isPinned ? '<button class="q-unpin" title="Bỏ ghim">✕ Ghim</button>' : ''}
@@ -1413,7 +1601,7 @@ function render() {
       rank.className = "q-rank-badge";
       rank.textContent = `${item.rank.badge} ${item.rank.name || ""}`.trim();
       rank.title = item.rank.name || "Hạng hoạt động";
-      li.querySelector(".q-sub").append(" ", rank);
+      li.querySelector(".q-requester-row")?.append(" ", rank);
     }
 
     if (isPinned) {
@@ -1469,6 +1657,127 @@ function renderVoteSort() {
   if (!btn) return;
   btn.innerHTML = `<span>Xếp theo vote: ${voteSortOn ? "Bật" : "Tắt"}</span>`;
   btn.classList.toggle("on", voteSortOn);
+}
+
+function renderUserQueueLimit() {
+  const btn = document.getElementById("user-queue-limit-toggle");
+  if (!btn) return;
+  btn.innerHTML = `<span>Mỗi người: ${userQueueLimitOn ? userQueueLimit + " bài" : "Tắt"}</span>`;
+  btn.classList.toggle("on", userQueueLimitOn);
+}
+
+function setHostTab(tab) {
+  hostActiveTab = tab;
+  const queueBtn = document.getElementById("tab-btn-queue");
+  const histBtn = document.getElementById("tab-btn-history");
+  const queuePanel = document.getElementById("queue-panel");
+  const histPanel = document.getElementById("host-history-panel");
+
+  if (tab === "history") {
+    queueBtn?.classList.remove("active");
+    histBtn?.classList.add("active");
+    queuePanel?.classList.add("hidden");
+    histPanel?.classList.remove("hidden");
+    loadHostHistory();
+  } else {
+    queueBtn?.classList.add("active");
+    histBtn?.classList.remove("active");
+    queuePanel?.classList.remove("hidden");
+    histPanel?.classList.add("hidden");
+  }
+}
+
+async function loadHostHistory() {
+  const listEl = document.getElementById("host-history-list");
+  const emptyEl = document.getElementById("host-history-empty");
+  const loadingEl = document.getElementById("host-history-loading");
+  const countEl = document.getElementById("host-history-count");
+  if (!listEl) return;
+
+  hostHistoryLoading = true;
+  loadingEl?.classList.remove("hidden");
+  emptyEl?.classList.add("hidden");
+
+  try {
+    const res = await fetch("/api/history/all?limit=50");
+    if (!res.ok) throw new Error("HTTP " + res.status);
+    const data = await res.json();
+    hostHistoryItems = Array.isArray(data.items) ? data.items : [];
+    if (countEl) {
+      countEl.textContent = hostHistoryItems.length;
+      countEl.classList.toggle("hidden", hostHistoryItems.length === 0);
+    }
+    renderHostHistory();
+  } catch (err) {
+    console.error("[host] Không thể tải lịch sử phát:", err);
+  } finally {
+    hostHistoryLoading = false;
+    loadingEl?.classList.add("hidden");
+  }
+}
+
+function renderHostHistory() {
+  const listEl = document.getElementById("host-history-list");
+  const emptyEl = document.getElementById("host-history-empty");
+  if (!listEl) return;
+  listEl.innerHTML = "";
+
+  if (hostHistoryItems.length === 0) {
+    emptyEl?.classList.remove("hidden");
+    return;
+  }
+  emptyEl?.classList.add("hidden");
+
+  for (const item of hostHistoryItems) {
+    const li = document.createElement("li");
+    li.className = "q-item host-history-item";
+    const thumb = `<img class="q-thumb" src="${safeImageUrl(item.thumbnail)}" alt="" referrerpolicy="no-referrer" />`;
+    const providerBadge = getPlatformIconBadge(item.provider);
+    const voteScore = item.voteScore || 0;
+    let timeLabel = "";
+    if (item.finishedAt) {
+      const d = new Date(item.finishedAt);
+      if (!isNaN(d.getTime())) {
+        timeLabel = d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+      }
+    }
+
+    li.innerHTML = `
+      ${thumb}
+      <div class="q-meta">
+        <div class="q-title-row">
+          <span class="q-title"></span>
+          ${providerBadge}
+          ${voteScore > 0 ? `<span class="q-vote-badge" title="${voteScore} lượt vote">❤️ ${voteScore}</span>` : ''}
+        </div>
+        <div class="q-sub">
+          <span class="q-requester-row">
+            <span class="q-requester-avatar"></span>
+            <span class="q-sub-label"></span>
+          </span>
+          ${timeLabel ? `<span class="host-history-time" title="Phát lúc ${timeLabel}">${timeLabel}</span>` : ''}
+        </div>
+      </div>
+    `;
+
+    li.querySelector(".q-title").textContent = item.title;
+    updateMarqueeTitle(li.querySelector(".q-title"));
+    li.querySelector(".q-sub-label").textContent = item.addedBy ? `Yêu cầu: ${item.addedBy}` : (item.channel || "Không rõ");
+    window.JukeboxAvatars?.apply(li.querySelector(".q-requester-avatar"), {
+      avatarUrl: item.avatarUrl,
+      name: item.addedBy,
+      fallback: false,
+    });
+    if (item.rank?.badge) {
+      const rank = document.createElement("span");
+      rank.className = "q-rank-badge";
+      rank.textContent = `${item.rank.badge} ${item.rank.name || ""}`.trim();
+      rank.title = item.rank.name || "Hạng hoạt động";
+      li.querySelector(".q-requester-row")?.append(" ", rank);
+    }
+
+    listEl.appendChild(li);
+  }
 }
 
 const PAUSE_SVG =
@@ -1588,7 +1897,6 @@ function wireControls() {
     send({ type: "skip", playedSeconds: Number.isFinite(playedSeconds) ? playedSeconds : null });
   };
   wireSpotifyConnect();
-  wireSpotifyInteractiveControls();
   // Cycle the filter: off → on (normal) → strict (family-safe only) → off.
   document.getElementById("filter-toggle").onclick = () => {
     if (!filterOn) send({ type: "setFilter", on: true, mode: "default" });
@@ -1611,6 +1919,24 @@ function wireControls() {
     if (i === QUEUE_LIMIT_STEPS.length - 1) send({ type: "setQueueLimit", on: false, limit: queueLimit });
     else send({ type: "setQueueLimit", on: true, limit: QUEUE_LIMIT_STEPS[Math.max(0, i + 1)] });
   };
+  const userQueueLimitBtn = document.getElementById("user-queue-limit-toggle");
+  if (userQueueLimitBtn) {
+    userQueueLimitBtn.onclick = () => {
+      if (!userQueueLimitOn) {
+        send({ type: "setUserQueueLimit", on: true, limit: USER_QUEUE_LIMIT_STEPS[0] });
+        return;
+      }
+      const i = USER_QUEUE_LIMIT_STEPS.indexOf(userQueueLimit);
+      if (i === -1 || i === USER_QUEUE_LIMIT_STEPS.length - 1) {
+        send({ type: "setUserQueueLimit", on: false, limit: userQueueLimit });
+      } else {
+        send({ type: "setUserQueueLimit", on: true, limit: USER_QUEUE_LIMIT_STEPS[i + 1] });
+      }
+    };
+  }
+  document.getElementById("tab-btn-queue")?.addEventListener("click", () => setHostTab("queue"));
+  document.getElementById("tab-btn-history")?.addEventListener("click", () => setHostTab("history"));
+  wireQrCollapse();
   document.getElementById("require-name-toggle").onclick = () => {
     send({ type: "setRequireName", on: !requireName });
   };
@@ -1658,6 +1984,35 @@ function wireControls() {
   });
 
   wireSpotifyInteractiveControls();
+}
+
+function wireQrCollapse() {
+  const qrCard = document.getElementById("qr-card");
+  const toggleBtn = document.getElementById("qr-toggle-btn");
+  if (!qrCard || !toggleBtn) return;
+
+  const toggleText = toggleBtn.querySelector(".qr-toggle-text");
+  const applyState = (collapsed) => {
+    qrCard.classList.toggle("collapsed", collapsed);
+    toggleBtn.setAttribute?.("aria-expanded", String(!collapsed));
+    toggleBtn.title = collapsed ? "Mở rộng mã QR" : "Thu gọn mã QR";
+    if (toggleText) toggleText.textContent = collapsed ? "Hiện QR" : "Thu gọn";
+  };
+
+  let saved = false;
+  try {
+    saved = localStorage.getItem("host_qr_collapsed") === "1";
+  } catch (_) {}
+  applyState(saved);
+
+  toggleBtn.onclick = () => {
+    const isCollapsed = qrCard.classList.contains("collapsed");
+    const nextState = !isCollapsed;
+    applyState(nextState);
+    try {
+      localStorage.setItem("host_qr_collapsed", nextState ? "1" : "0");
+    } catch (_) {}
+  };
 }
 
 function seekSpotifyTo(targetSec) {
@@ -1951,7 +2306,9 @@ function wireSpotifyInteractiveControls() {
   const btnLyrics = document.getElementById("spotify-btn-lyrics");
   if (btnLyrics) {
     btnLyrics.onclick = (e) => {
+      e.preventDefault();
       e.stopPropagation();
+      btnLyrics.blur();
       toggleLyricsMode();
     };
   }
@@ -1959,7 +2316,9 @@ function wireSpotifyInteractiveControls() {
   const btnLyricsClose = document.getElementById("spotify-lyrics-close");
   if (btnLyricsClose) {
     btnLyricsClose.onclick = (e) => {
+      e.preventDefault();
       e.stopPropagation();
+      btnLyricsClose.blur();
       toggleLyricsMode(false);
     };
   }
@@ -1976,9 +2335,12 @@ async function loadInfo() {
     moderationConfigured = !!info.moderationConfigured;
     queueLimitOn = !!info.queueLimitOn;
     if (typeof info.queueLimit === "number") queueLimit = info.queueLimit;
+    userQueueLimitOn = !!info.userQueueLimitOn;
+    if (typeof info.userQueueLimit === "number") userQueueLimit = info.userQueueLimit;
     requireName = !!info.requireName;
     renderFilter();
     renderQueueLimit();
+    renderUserQueueLimit();
     renderRequireName();
     updateSpotifyStatus();
   } catch (err) {
@@ -2011,6 +2373,48 @@ document.getElementById("start-btn").onclick = () => {
 document.addEventListener("visibilitychange", () => {
   if (!document.hidden && activePlayerProvider === "spotify") {
     reAnchorFromSdk();
+  }
+});
+
+window.addEventListener("offline", () => {
+  console.warn("[network] Trình duyệt mất kết nối mạng (offline)");
+  if (activePlayerProvider === "spotify") {
+    const curPos = getInterpolatedSpotifyPosition();
+    if (curPos > 0) {
+      spotifyAnchorPos = Math.floor(curPos);
+      spotifyAnchorTime = performance.now();
+    }
+    stopSpotifySync();
+  }
+});
+
+window.addEventListener("online", () => {
+  console.log("[network] Trình duyệt đã kết nối mạng trở lại (online)");
+  if (!started || !latestState?.nowPlaying) return;
+
+  if (activePlayerProvider === "spotify" && latestState.nowPlaying.videoId === currentVideoId) {
+    if (spotifyReady && spotifyDeviceId) {
+      if (!spotifyPlayerState || spotifyPlayerState.paused) {
+        const resumePosMs = Math.max(0, Math.floor(spotifyAnchorPos || spotifyPlayerState?.position || 0));
+        playSpotify(currentVideoId, resumePosMs);
+      }
+    } else if (spotifyPlayer?.connect) {
+      spotifyPlayer.connect();
+    }
+  } else if (activePlayerProvider === "tiktok" && latestState.nowPlaying.videoId === currentVideoId) {
+    if (tiktokAudio && (tiktokAudio.paused || tiktokAudio.error)) {
+      const resumeSec = tiktokAudio.currentTime || tiktokResumeTime || 0;
+      playTikTok(currentVideoId, resumeSec);
+    }
+  } else if (activePlayerProvider === "youtube" && playerReady && player?.getPlayerState) {
+    const s = player.getPlayerState();
+    if (s === YT.PlayerState.PAUSED || s === -1) {
+      player.playVideo();
+    }
+  } else if (activePlayerProvider === "soundcloud" && scWidget?.play) {
+    if (!scIsPlaying) {
+      try { scWidget.play(); } catch {}
+    }
   }
 });
 

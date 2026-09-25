@@ -1,10 +1,11 @@
 // Queue state — managed in memory with SQLite as the SSOT.
 // Supports multi-tier ordering: pinned DESC, pinned_order ASC, vote_score DESC,
 // vote_rank_sequence ASC, queue_sequence ASC.
-// Refunds 100% of votes when a song is removed or hits a YouTube playback error (101/150).
+// Refunds 100% of votes when a song is removed or encounters a playback error across all providers.
 
 import { randomUUID } from "node:crypto";
 import { QueueRepository } from "./repositories/queueRepository.js";
+import { parseArtistListFromString } from "./spotify.js";
 
 const DEFAULT_DURATION_SECONDS = 3 * 60 + 30;
 const DEFAULT_DURATION = "3:30";
@@ -37,11 +38,14 @@ export class JukeboxState {
           provider: active.provider || "youtube",
           title: active.title,
           channel: active.channel || "",
+          artists: parseArtistListFromString(active.channel || ""),
           duration: normalizeDuration(active.duration),
           thumbnail: active.thumbnail || null,
           addedBy: active.added_by || "",
           requesterId: active.requester_id || "",
           addedByUserId: active.added_by_user_id || null,
+          requesterIp: active.requester_ip || "",
+          deviceId: active.device_id || "",
           queueSequence: active.queue_sequence,
           voteScore: active.vote_score || 0,
           voteRankSequence: active.vote_rank_sequence || 0,
@@ -60,11 +64,14 @@ export class JukeboxState {
         provider: row.provider || "youtube",
         title: row.title,
         channel: row.channel || "",
+        artists: parseArtistListFromString(row.channel || ""),
         duration: normalizeDuration(row.duration),
         thumbnail: row.thumbnail || null,
         addedBy: row.added_by || "",
         requesterId: row.requester_id || "",
         addedByUserId: row.added_by_user_id || null,
+        requesterIp: row.requester_ip || "",
+        deviceId: row.device_id || "",
         queueSequence: row.queue_sequence,
         voteScore: row.vote_score || 0,
         voteRankSequence: row.vote_rank_sequence || 0,
@@ -105,11 +112,19 @@ export class JukeboxState {
 
   _publicItem(item, extra = {}) {
     if (!item) return null;
-    const { requesterId: _requesterId, startedAt: _startedAt, addedByUserId: _addedByUserId, ...publicItem } = item;
+    const {
+      requesterId: _requesterId,
+      startedAt: _startedAt,
+      addedByUserId: _addedByUserId,
+      requesterIp: _requesterIp,
+      deviceId: _deviceId,
+      ...publicItem
+    } = item;
     return {
       ...publicItem,
       voteScore: item.voteScore || 0,
       pinned: !!item.pinned,
+      artists: item.artists || (item.channel ? parseArtistListFromString(item.channel) : []),
       ...extra,
     };
   }
@@ -189,7 +204,7 @@ export class JukeboxState {
   }
 
   // Add a moderated/approved song and return the created item with its position.
-  add({ videoId, title, channel, duration, thumbnail, addedBy, requesterId, userId = null, provider = "youtube" }) {
+  add({ videoId, title, channel, duration, thumbnail, addedBy, requesterId, userId = null, provider = "youtube", requesterIp = "", deviceId = "", artists = [] }) {
     let dbItem = null;
     if (this.queueRepo) {
       dbItem = this.queueRepo.createItem({
@@ -202,8 +217,14 @@ export class JukeboxState {
         requesterId,
         addedByUserId: userId,
         provider: provider || "youtube",
+        requesterIp,
+        deviceId,
       });
     }
+
+    const resolvedArtists = Array.isArray(artists) && artists.length > 0
+      ? artists
+      : (channel ? parseArtistListFromString(channel) : []);
 
     const item = {
       id: dbItem ? dbItem.id : randomUUID(),
@@ -211,11 +232,14 @@ export class JukeboxState {
       provider: dbItem?.provider || provider || "youtube",
       title,
       channel: channel || "",
+      artists: resolvedArtists,
       duration: normalizeDuration(duration),
       thumbnail: thumbnail || null,
       addedBy: (addedBy || "").slice(0, 40),
       requesterId: (requesterId || "").toString().slice(0, 64),
       addedByUserId: userId,
+      requesterIp: (requesterIp || "").toString().slice(0, 64),
+      deviceId: (deviceId || "").toString().slice(0, 64),
       queueSequence: dbItem ? dbItem.queue_sequence : (this.queue.length ? Math.max(...this.queue.map(q => q.queueSequence || 0)) + 1 : 1),
       voteScore: 0,
       voteRankSequence: 0,
@@ -281,6 +305,7 @@ export class JukeboxState {
       ? this.queueRepo.getVoters(finishedItem.id)
       : [];
     let refunds = [];
+    const providerLabel = getProviderDisplayName(finishedItem?.provider);
     if (this.queueRepo) {
       refunds = this.queueRepo.finishAndStart({
         finishedId: finishedItem?.id || null,
@@ -290,7 +315,7 @@ export class JukeboxState {
         startedAt: transitionedAt,
         finishReason: resolvedFinishReason,
         playedSeconds: resolvedPlayedSeconds,
-        refundReason: "Lỗi phát video YouTube",
+        refundReason: isError ? `Lỗi phát bài hát (${providerLabel})` : "",
       });
       this._emitNotificationChanges(this.queueRepo.takeNotificationEvents());
     }
@@ -303,7 +328,11 @@ export class JukeboxState {
     this.nowPlaying = this.queue.shift() || null;
     if (this.nowPlaying) this.nowPlaying.startedAt = transitionedAt;
     this._emit();
-    this._emitBalanceChanges(refunds, "Hoàn điểm do lỗi phát video YouTube");
+    if (isError) {
+      this._emitBalanceChanges(refunds, `Hoàn điểm do lỗi phát bài hát (${providerLabel})`);
+    } else {
+      this._emitBalanceChanges(refunds, "Hoàn điểm do bài hát kết thúc có hoàn điểm");
+    }
     return {
       finishedItem,
       nextItem: this.nowPlaying,
@@ -502,3 +531,18 @@ function normalizeDuration(duration) {
     ? DEFAULT_DURATION
     : normalized;
 }
+
+export function getProviderDisplayName(provider) {
+  switch ((provider || "").toLowerCase()) {
+    case "spotify":
+      return "Spotify";
+    case "soundcloud":
+      return "SoundCloud";
+    case "tiktok":
+      return "TikTok";
+    case "youtube":
+    default:
+      return "YouTube";
+  }
+}
+
