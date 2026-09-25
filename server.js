@@ -2670,7 +2670,7 @@ wss.on("connection", (ws, request) => {
   ws.isAlive = true;
   ws.on("pong", () => { ws.isAlive = true; });
   ws.sessionToken = getSessionTokenFromCookieHeader(request.headers.cookie);
-  ws.hostAuthenticated = false;
+  ws.hostAuthenticated = !HOST_PASSWORD;
   refreshSocketIdentity(ws, sessionRepo);
 
   ws.send(stateMessage());
@@ -2707,7 +2707,7 @@ wss.on("connection", (ws, request) => {
       const currentSession = refreshSocketIdentity(ws, sessionRepo);
 
       if (msg.type === "auth") {
-        if (msg.token && msg.token === hostToken) ws.hostAuthenticated = true;
+        if (!HOST_PASSWORD || (msg.token && msg.token === hostToken)) ws.hostAuthenticated = true;
         return;
       }
       if (msg.type === "chatSend") {
@@ -2806,6 +2806,32 @@ wss.on("connection", (ws, request) => {
             }));
           }
         }
+        return;
+      }
+
+      if (msg.type === "registerOrderNetworkHost") {
+        if (!(HOST_PASSWORD && ws.hostAuthenticated) && currentSession?.role !== "admin") {
+          if (ws.readyState === 1) {
+            ws.send(JSON.stringify({ type: "orderNetworkHostError", reason: "Hãy xác thực trang Host trước khi cập nhật mạng." }));
+          }
+          return;
+        }
+        const nextHostIp = ws.__jukeboxClientIp;
+        if (nextHostIp !== orderNetworkLockIp) {
+          const previous = settingsSnapshot();
+          orderNetworkLockIp = nextHostIp;
+          try {
+            saveSettings();
+          } catch (err) {
+            restoreSettings(previous);
+            console.error(`[settings] unable to save: ${err.message}`);
+            if (ws.readyState === 1) {
+              ws.send(JSON.stringify({ type: "orderNetworkHostError", reason: "Không thể lưu cài đặt lúc này. Vui lòng thử lại." }));
+            }
+            return;
+          }
+        }
+        ws.send(JSON.stringify({ type: "orderNetworkHostUpdated" }));
         return;
       }
 
@@ -2965,32 +2991,7 @@ wss.on("connection", (ws, request) => {
           }
           broadcastState();
           break;
-        case "registerOrderNetworkHost":
-          if (!ws.hostAuthenticated && currentSession?.role !== "admin") {
-            if (ws.readyState === 1) {
-              ws.send(JSON.stringify({ type: "orderNetworkHostError", reason: "Hãy xác thực trang Host trước khi cập nhật mạng." }));
-            }
-            break;
-          }
-          {
-            const nextHostIp = ws.__jukeboxClientIp;
-            if (nextHostIp !== orderNetworkLockIp) {
-              const previous = settingsSnapshot();
-              orderNetworkLockIp = nextHostIp;
-              try {
-                saveSettings();
-              } catch (err) {
-                restoreSettings(previous);
-                console.error(`[settings] unable to save: ${err.message}`);
-                if (ws.readyState === 1) {
-                  ws.send(JSON.stringify({ type: "orderNetworkHostError", reason: "Không thể lưu cài đặt lúc này. Vui lòng thử lại." }));
-                }
-                break;
-              }
-            }
-          }
-          ws.send(JSON.stringify({ type: "orderNetworkHostUpdated" }));
-          break;
+
       }
     } catch (err) {
       console.error("[ws] message handling failed", err);
