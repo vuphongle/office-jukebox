@@ -1,6 +1,6 @@
 // Lyrics service using LRCLIB API for synchronized time-stamped lyrics.
 
-import { scoreLyricsCandidate } from "./lyricsMatcher.js";
+import { scoreLyricsCandidate, detectTargetLanguage, analyzeScripts } from "./lyricsMatcher.js";
 import { parseArtistListFromString } from "./spotify.js";
 
 const LRCLIB_BASE = "https://lrclib.net/api";
@@ -172,9 +172,19 @@ export async function fetchLyrics(
           targetArtists,
           targetDurationSec: durationSec,
         });
-        if (scored.isAcceptable && scored.allArtistsMatched) {
-          // Early return on perfect exact multi-artist match
-          return saveAndReturnLyrics(cacheKey, exactFull, title, fullArtistsStr);
+        if (scored.isAcceptable && scored.allArtistsMatched && scored.score >= 100) {
+          const targetLang = detectTargetLanguage({ targetTitle: title, targetArtists });
+          const scripts = analyzeScripts(exactFull.syncedLyrics);
+          const needsScriptCheck = targetLang === "korean" || targetLang === "vietnamese" || targetLang === "japanese";
+          const hasNativeScript =
+            targetLang === "korean" ? scripts.hangul > 10 :
+            targetLang === "vietnamese" ? scripts.vietnamese > 5 :
+            targetLang === "japanese" ? scripts.kana > 10 : true;
+
+          if (!needsScriptCheck || hasNativeScript) {
+            // Early return on perfect exact multi-artist match with authentic script
+            return saveAndReturnLyrics(cacheKey, exactFull, title, fullArtistsStr);
+          }
         }
       }
     }
@@ -188,8 +198,18 @@ export async function fetchLyrics(
           targetArtists,
           targetDurationSec: durationSec,
         });
-        if (scored.isAcceptable && scored.allArtistsMatched) {
-          return saveAndReturnLyrics(cacheKey, exactPrimary, title, primaryArtist);
+        if (scored.isAcceptable && scored.allArtistsMatched && scored.score >= 100) {
+          const targetLang = detectTargetLanguage({ targetTitle: title, targetArtists });
+          const scripts = analyzeScripts(exactPrimary.syncedLyrics);
+          const needsScriptCheck = targetLang === "korean" || targetLang === "vietnamese" || targetLang === "japanese";
+          const hasNativeScript =
+            targetLang === "korean" ? scripts.hangul > 10 :
+            targetLang === "vietnamese" ? scripts.vietnamese > 5 :
+            targetLang === "japanese" ? scripts.kana > 10 : true;
+
+          if (!needsScriptCheck || hasNativeScript) {
+            return saveAndReturnLyrics(cacheKey, exactPrimary, title, primaryArtist);
+          }
         }
       }
     }
@@ -204,12 +224,17 @@ export async function fetchLyrics(
 
     for (const q of searchQueries) {
       await trySearchQuery(q);
-      // If we already found an acceptable candidate with all artists matched and synced lyrics, stop searching
+      // If we already found a high-confidence candidate with all artists matched and synced lyrics, stop searching
       const candidates = Array.from(candidateMap.values());
       const hasPerfectMatch = candidates.some((cand) => {
         if (!cand.syncedLyrics) return false;
-        const s = scoreLyricsCandidate(cand, { targetTitle: title, targetArtists, targetDurationSec: durationSec });
-        return s.isAcceptable && s.allArtistsMatched;
+        const s = scoreLyricsCandidate(cand, {
+          targetTitle: title,
+          targetArtists,
+          targetDurationSec: durationSec,
+          candidateHints: candidates,
+        });
+        return s.isAcceptable && s.allArtistsMatched && s.score >= 120;
       });
       if (hasPerfectMatch) break;
     }
@@ -228,6 +253,7 @@ export async function fetchLyrics(
           targetTitle: title,
           targetArtists,
           targetDurationSec: durationSec,
+          candidateHints: allCandidates,
         }),
       }))
       .filter((item) => item.result.isAcceptable)

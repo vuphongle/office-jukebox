@@ -81,6 +81,11 @@
 
     // 2. Direct browser fallback to LRCLIB API with smart queries
     try {
+      const baseTitle = title
+        .replace(/\([^)]*(?:ver(?:sion)?|edition|tour|cut)[^)]*\)/gi, "")
+        .replace(/-.*(?:ver(?:sion)?|edition|tour|cut).*$/gi, "")
+        .trim();
+
       const targetArtists = Array.isArray(artists) && artists.length > 0
         ? artists
         : (artist ? [artist.split(/[,;]/)[0].trim()] : []);
@@ -89,44 +94,113 @@
       const searchQueries = [
         primaryArtist && featuredStr ? `${primaryArtist} ${featuredStr} ${title}` : null,
         primaryArtist ? `${primaryArtist} ${title}` : (artist ? `${artist} ${title}` : null),
+        baseTitle && baseTitle !== title && primaryArtist ? `${primaryArtist} ${baseTitle}` : null,
         artist && artist !== primaryArtist ? `${artist} ${title}` : null,
         title,
+        baseTitle && baseTitle !== title ? baseTitle : null,
       ].filter(Boolean);
 
-      let lrclibData = null;
+      function analyzeScriptsSimple(text) {
+        if (!text) return { hangul: 0, kana: 0, vietnamese: 0 };
+        const hangul = (text.match(/[\uAC00-\uD7AF\u1100-\u11FF\u3130-\u318F]/g) || []).length;
+        const kana = (text.match(/[\u3040-\u309F\u30A0-\u30FF]/g) || []).length;
+        const vietnamese = (text.match(/[àáảãạăắằẳẵặâấầẩẫậèéẻẽẹêếềểễệìíỉĩịòóỏõọôốồổỗộơớờởỡợùúủũụưứừửữựỳýỷỹỵđĐ]/gi) || []).length;
+        return { hangul, kana, vietnamese };
+      }
+
+      const wantsJapanese = /japan(?:ese)?|jp\s+ver|日本語/i.test(title);
+      const wantsKorean = /korea(?:n)?|kr\s+ver|한국어/i.test(title);
+      const wantsEnglish = /english|eng\s+ver/i.test(title);
+      const hasHangul = /[\uAC00-\uD7AF]/.test(title + " " + primaryArtist);
+      const isKpopArtist = /\b(ikon|bts|blackpink|twice|newjeans|seventeen|stray kids|exo|red velvet|aespa|itzy|txt|enhypen|le sserafim|ive|bigbang|iu|taeyeon)\b/i.test(primaryArtist);
+      const isTargetKorean = (hasHangul || isKpopArtist || wantsKorean) && !wantsJapanese && !wantsEnglish;
+      const isTargetVietnamese = /[àáảãạăắằẳẵặâấầẩẫậèéẻẽẹêếềểễệìíỉĩịòóỏõọôốồổỗộơớờởỡợùúủũụưứừửữựỳýỷỹỵđĐ]/i.test(title + " " + primaryArtist);
+
+      const candidateMap = new Map();
+      const addCandidate = (cand) => {
+        if (!cand || typeof cand !== "object") return;
+        const idKey = cand.id != null ? `id_${cand.id}` : `${cand.artistName || ""}:::${cand.trackName || ""}`;
+        if (!candidateMap.has(idKey)) {
+          candidateMap.set(idKey, cand);
+        }
+      };
+
       for (const q of searchQueries) {
-        if (lrclibData && lrclibData.syncedLyrics) break;
         const controller = new AbortController();
         const timer = setTimeout(() => controller.abort(), 4000);
-        const res = await fetchImpl(`https://lrclib.net/api/search?q=${encodeURIComponent(q)}`, {
-          signal: controller.signal,
-        });
-        clearTimeout(timer);
-        if (res.ok) {
-          const list = await res.json();
-          if (Array.isArray(list) && list.length > 0) {
-            // Find candidate that matches primary artist and doesn't mismatch duration
-            const valid = list.filter((it) => {
-              if (!it) return false;
-              const text = `${it.trackName || ""} ${it.artistName || ""}`.toLowerCase();
-              const normText = text.normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/đ/g, "d");
-              const normArtist = (primaryArtist || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/đ/g, "d");
-              if (primaryArtist && !text.includes(primaryArtist.toLowerCase()) && !normText.includes(normArtist)) return false;
-              if (durationSec && Number.isFinite(durationSec) && it.duration) {
-                if (Math.abs(it.duration - durationSec) > 35) return false;
+        try {
+          const res = await fetchImpl(`https://lrclib.net/api/search?q=${encodeURIComponent(q)}`, {
+            signal: controller.signal,
+          });
+          clearTimeout(timer);
+          if (res.ok) {
+            const list = await res.json();
+            if (Array.isArray(list)) {
+              for (const it of list) {
+                addCandidate(it);
               }
-              if (text.includes("cover") && !title.toLowerCase().includes("cover")) return false;
-              return true;
-            });
-
-            const found = valid.find((it) => Boolean(it.syncedLyrics)) || valid[0];
-            if (found) {
-              lrclibData = found;
-              break;
-            } else if (!lrclibData && list[0]) {
-              lrclibData = list[0];
             }
           }
+        } catch {
+          clearTimeout(timer);
+        }
+      }
+
+      const allList = Array.from(candidateMap.values());
+      let lrclibData = null;
+
+      if (allList.length > 0) {
+        const valid = allList.filter((it) => {
+          if (!it) return false;
+          const text = `${it.trackName || ""} ${it.artistName || ""}`.toLowerCase();
+          const normText = text.normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/đ/g, "d");
+          const normArtist = (primaryArtist || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/đ/g, "d");
+          if (primaryArtist && !text.includes(primaryArtist.toLowerCase()) && !normText.includes(normArtist)) return false;
+          if (durationSec && Number.isFinite(durationSec) && it.duration) {
+            if (Math.abs(it.duration - durationSec) > 35) return false;
+          }
+          if (text.includes("cover") && !title.toLowerCase().includes("cover")) return false;
+
+          // Reject unwanted localized versions
+          const candTitleLower = `${it.trackName || ""} ${it.albumName || ""}`.toLowerCase();
+          if (!wantsJapanese && /japan(?:ese)?(?:\s+ver|\s+edition|\s+tour)?|jp\s+ver|日本語/i.test(candTitleLower)) return false;
+
+          const lyrics = it.syncedLyrics || it.plainLyrics || "";
+          const scripts = analyzeScriptsSimple(lyrics);
+
+          // Reject Japanese lyrics when target is Korean / Vietnamese
+          if (isTargetKorean && scripts.kana > 10 && scripts.hangul === 0) return false;
+          if (isTargetVietnamese && (scripts.kana > 10 || scripts.hangul > 10) && scripts.vietnamese === 0) return false;
+
+          return true;
+        });
+
+        const scored = valid.map((it) => {
+          let score = 0;
+          if (it.syncedLyrics) score += 30;
+          if (durationSec && Number.isFinite(durationSec) && it.duration) {
+            const diff = Math.abs(it.duration - durationSec);
+            if (diff <= 2) score += 20;
+            else if (diff <= 5) score += 10;
+          }
+          const tNorm = title.toLowerCase();
+          const cNorm = (it.trackName || "").toLowerCase();
+          if (cNorm === tNorm) score += 25;
+          else if (cNorm.includes(tNorm) || tNorm.includes(cNorm)) score += 20;
+
+          const lyrics = it.syncedLyrics || it.plainLyrics || "";
+          const scripts = analyzeScriptsSimple(lyrics);
+          if (isTargetKorean && scripts.hangul > 10) score += 30;
+          if (isTargetVietnamese && scripts.vietnamese > 5) score += 30;
+          if (wantsJapanese && scripts.kana > 10) score += 30;
+
+          return { it, score };
+        }).sort((a, b) => b.score - a.score);
+
+        if (scored.length > 0) {
+          lrclibData = scored[0].it;
+        } else if (allList[0]) {
+          lrclibData = allList[0];
         }
       }
 

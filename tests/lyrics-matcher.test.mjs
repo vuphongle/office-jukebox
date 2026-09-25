@@ -85,4 +85,175 @@ describe("Lyrics Matcher & Candidate Scoring", () => {
     assert.equal(containsArtist("Anh Tú Atus", "An"), false);
     assert.equal(containsArtist("An ft. Anh Tú", "An"), true);
   });
+
+  test("Rejects unrequested Japanese localized version when track is Korean (LOVE SCENARIO iKON)", () => {
+    const targetKpop = {
+      targetTitle: "LOVE SCENARIO",
+      targetArtists: ["iKON"],
+      targetDurationSec: 209,
+    };
+
+    const japaneseCandidate = {
+      id: 3674254,
+      trackName: "LOVE SCENARIO",
+      artistName: "iKON",
+      duration: 209,
+      syncedLyrics: "[00:03.04] 恋に落ちた僕たちは\n[00:08.01] 消えはしない思い出になる\n[00:10.06] 感動のメロドラマは",
+    };
+
+    const koreanCandidate = {
+      id: 12866360,
+      trackName: "사랑을 했다 (LOVE SCENARIO)",
+      artistName: "iKON",
+      duration: 209,
+      syncedLyrics: "[00:02.15] 사랑을 했다 우리가 만나\n[00:05.79] 지우지 못할 추억이 됐다\n[00:09.14] 볼만한 멜로드라마",
+    };
+
+    const pool = [japaneseCandidate, koreanCandidate];
+
+    const scoreJp = scoreLyricsCandidate(japaneseCandidate, {
+      ...targetKpop,
+      candidateHints: pool,
+    });
+    const scoreKr = scoreLyricsCandidate(koreanCandidate, {
+      ...targetKpop,
+      candidateHints: pool,
+    });
+
+    assert.equal(scoreJp.isAcceptable, false);
+    assert.equal(scoreJp.reason, "unwanted_japanese_version");
+    assert.equal(scoreKr.isAcceptable, true);
+    assert.ok(scoreKr.score > scoreJp.score);
+    assert.ok(scoreKr.score >= 120);
+  });
+
+  test("Supports multilingual K-Pop songs with Korean verses and English chorus/rap without penalty", () => {
+    const targetMultilingual = {
+      targetTitle: "How You Like That",
+      targetArtists: ["BLACKPINK"],
+      targetDurationSec: 182,
+    };
+
+    const candidate = {
+      trackName: "How You Like That",
+      artistName: "BLACKPINK",
+      duration: 182,
+      syncedLyrics: "[00:01.00] 보란 듯이 무너졌어\n[00:04.00] 바닥을 뚫고 저 지하까지\n[00:15.00] How you like that, that-that-that-that\n[00:20.00] Now look at you, now look at me",
+    };
+
+    const res = scoreLyricsCandidate(candidate, targetMultilingual);
+    assert.equal(res.isAcceptable, true);
+    assert.equal(res.allArtistsMatched, true);
+    assert.ok(res.score >= 120);
+  });
+
+  test("Supports 100% English songs by Korean artists (BTS Dynamite) without false rejection", () => {
+    const targetEnglish = {
+      targetTitle: "Dynamite",
+      targetArtists: ["BTS"],
+      targetDurationSec: 199,
+    };
+
+    const candidate = {
+      trackName: "Dynamite",
+      artistName: "BTS",
+      duration: 199,
+      syncedLyrics: "[00:00.10] 'Cause I, I, I'm in the stars tonight\n[00:04.02] So, watch me bring the fire and set the night alight",
+    };
+
+    const res = scoreLyricsCandidate(candidate, {
+      ...targetEnglish,
+      candidateHints: [candidate],
+    });
+    assert.equal(res.isAcceptable, true);
+    assert.ok(res.score >= 100);
+  });
+
+  test("Supports Japanese original songs by Korean artists (BTS Film Out) where no Korean version exists", () => {
+    const targetJapanese = {
+      targetTitle: "Film out",
+      targetArtists: ["BTS"],
+      targetDurationSec: 214,
+    };
+
+    const candidate = {
+      trackName: "Film out",
+      artistName: "BTS",
+      duration: 214,
+      syncedLyrics: "[00:00.56] 浮かび上がる君は\n[00:06.62] あまりに鮮やかで Oh-oh\n[00:12.42] まるでそこにいるかと",
+    };
+
+    const res = scoreLyricsCandidate(candidate, {
+      ...targetJapanese,
+      candidateHints: [candidate],
+    });
+    assert.equal(res.isAcceptable, true);
+    assert.ok(res.score >= 100);
+  });
+
+  test("Respects explicit language version when user requests Japanese Ver", () => {
+    const targetExplicit = {
+      targetTitle: "LOVE SCENARIO (Japanese Ver.)",
+      targetArtists: ["iKON"],
+      targetDurationSec: 209,
+    };
+
+    const japaneseCandidate = {
+      id: 3674254,
+      trackName: "LOVE SCENARIO",
+      artistName: "iKON",
+      duration: 209,
+      syncedLyrics: "[00:03.04] 恋に落ちた僕たちは\n[00:08.01] 消えはしない思い出になる",
+    };
+
+    const koreanCandidate = {
+      id: 12866360,
+      trackName: "사랑을 했다 (LOVE SCENARIO)",
+      artistName: "iKON",
+      duration: 209,
+      syncedLyrics: "[00:02.15] 사랑을 했다 우리가 만나\n[00:05.79] 지우지 못할 추억이 됐다",
+    };
+
+    const scoreJp = scoreLyricsCandidate(japaneseCandidate, targetExplicit);
+    const scoreKr = scoreLyricsCandidate(koreanCandidate, targetExplicit);
+
+    assert.equal(scoreJp.isAcceptable, true);
+    assert.ok(scoreJp.score > scoreKr.score);
+  });
+
+  test("Prefers authentic Japanese Kana over unrequested English translation for Japanese artists", () => {
+    const targetJpop = {
+      targetTitle: "Idol",
+      targetArtists: ["YOASOBI"],
+      targetDurationSec: 213,
+    };
+
+    const japaneseCandidate = {
+      trackName: "Idol",
+      artistName: "YOASOBI",
+      duration: 226,
+      syncedLyrics: "[00:00.89] 無敵の笑顔で荒らすメディア\n[00:03.78] 知りたいその秘密ミステリアス",
+    };
+
+    const englishCandidate = {
+      trackName: "Idol",
+      artistName: "YOASOBI",
+      duration: 213,
+      syncedLyrics: "[00:00.58] Couldn't beat her smile; it stirred up all the media\n[00:03.54] Secret side, I wanna know it",
+    };
+
+    const pool = [japaneseCandidate, englishCandidate];
+
+    const scoreJp = scoreLyricsCandidate(japaneseCandidate, {
+      ...targetJpop,
+      candidateHints: pool,
+    });
+    const scoreEn = scoreLyricsCandidate(englishCandidate, {
+      ...targetJpop,
+      candidateHints: pool,
+    });
+
+    assert.ok(scoreJp.score > scoreEn.score);
+  });
 });
+
