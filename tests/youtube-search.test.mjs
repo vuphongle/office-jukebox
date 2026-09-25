@@ -331,6 +331,21 @@ test("YouTube Web parsing preserves the visible video order and removes duplicat
   ]);
 });
 
+test("YouTube Web parsing respects offset for pagination", () => {
+  const results = youtube.parseYouTubeWebResults(
+    webSearchResponse([
+      webVideo({ videoId: "firstVideo1", title: "Bài 1", channel: "Ca sĩ A" }),
+      webVideo({ videoId: "secondVideo", title: "Bài 2", channel: "Ca sĩ B" }),
+      webVideo({ videoId: "thirdVideo3", title: "Bài 3", channel: "Ca sĩ C" }),
+    ]),
+    { limit: 10, offset: 1 }
+  );
+
+  assert.equal(results.length, 2);
+  assert.equal(results[0].videoId, "secondVideo");
+  assert.equal(results[1].videoId, "thirdVideo3");
+});
+
 test("YouTube Web search extracts ytInitialData without an API key", async () => {
   const data = webSearchResponse([webVideo({ videoId: "webResult01", title: "Bài từ YouTube", channel: "Official" })]);
   const results = await youtube.searchYouTubeWeb("bài hát", {
