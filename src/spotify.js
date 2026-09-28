@@ -65,6 +65,56 @@ export function markCredentialRateLimited(clientId, retryAfterSeconds = 3600) {
   credentialRateLimits.set(clientId, Date.now() + sec * 1000);
 }
 
+export function getSpotifyRateLimitStatus(pool = []) {
+  if (!Array.isArray(pool) || pool.length === 0) {
+    return {
+      configured: false,
+      isRateLimited: false,
+      resetAt: null,
+      retryAfterSeconds: 0,
+    };
+  }
+
+  const now = Date.now();
+  for (const [id, until] of credentialRateLimits.entries()) {
+    if (until <= now) {
+      credentialRateLimits.delete(id);
+    }
+  }
+
+  const nonLimited = pool.filter((c) => !isCredentialRateLimited(c.clientId));
+  const isRateLimited = nonLimited.length === 0;
+
+  if (!isRateLimited) {
+    return {
+      configured: true,
+      isRateLimited: false,
+      resetAt: null,
+      retryAfterSeconds: 0,
+    };
+  }
+
+  let minUntil = Infinity;
+  for (const c of pool) {
+    const until = credentialRateLimits.get(c.clientId) || 0;
+    if (until > 0 && until < minUntil) {
+      minUntil = until;
+    }
+  }
+
+  if (minUntil === Infinity) {
+    minUntil = now + 3600_000;
+  }
+
+  const retryAfterSeconds = Math.max(1, Math.ceil((minUntil - now) / 1000));
+  return {
+    configured: true,
+    isRateLimited: true,
+    resetAt: minUntil,
+    retryAfterSeconds,
+  };
+}
+
 function getHeader(res, headerName) {
   if (!res || !res.headers) return null;
   if (typeof res.headers.get === "function") {

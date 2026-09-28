@@ -18,6 +18,10 @@ describe("Lyrics Service & LRC Parser", () => {
     const q4 = cleanLyricsQuery("LAVIEM (feat. Quang Hùng MasterD, CAPTAIN BOY, Pháp Kiều, CoolKid & Danny Chung...)", "TINH HÀ \"SAY HI\", Quang Hùng MasterD");
     expect(q4.title).toBe("LAVIEM");
     expect(q4.artist).toContain("TINH HÀ");
+
+    const q5 = cleanLyricsQuery("HIEUTHUHAI - Người Im Lặng Gặp Người Hay Nói (prod. by Kewtiie) l Official Music Video", "HIEUTHUHAI");
+    expect(q5.title).toBe("Người Im Lặng Gặp Người Hay Nói");
+    expect(q5.artist).toBe("HIEUTHUHAI");
   });
 
   it("parses standard LRC strings into sorted time-stamped array", () => {
@@ -71,4 +75,25 @@ describe("Lyrics Service & LRC Parser", () => {
     expect(res.lines[0].text).toBe("Hello world");
     expect(res.lines[1].time).toBe(20);
   });
+
+  it("rejects mismatched version candidates when duration or artist differs significantly", async () => {
+    // When LRCLIB only has a 147s remix by another artist
+    const mockFetch = async () => ({
+      ok: true,
+      json: async () => [
+        {
+          id: 1,
+          trackName: "Tình Anh Bán Chiếu",
+          artistName: "Thanh Duy",
+          duration: 147,
+          syncedLyrics: "[00:10.00]Remix version",
+        },
+      ],
+    });
+
+    const res = await fetchLyrics("Tình Anh Bán Chiếu", "Út Trà Ôn", 390, { fetchImpl: mockFetch });
+    expect(res.ok).toBe(false);
+    expect(res.error).toBe("no_matching_version");
+  });
 });
+

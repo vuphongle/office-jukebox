@@ -2002,12 +2002,132 @@ function initSearchPlatformTabs() {
       }
     });
   });
+
+  fetch("/api/spotify/status")
+    .then((r) => (r.ok ? r.json() : null))
+    .then((data) => {
+      if (data?.rateLimit) {
+        updateSpotifyStatusUI(data.rateLimit);
+      }
+    })
+    .catch(() => {});
 }
 
 window.switchToYouTubePlatform = function() {
   const ytTab = document.querySelector('.platform-tab[data-platform="youtube"]');
   if (ytTab) ytTab.click();
 };
+
+window.switchToSpotifyPlatform = function() {
+  const spotifyTab = document.querySelector('.platform-tab[data-platform="spotify"]');
+  if (spotifyTab) {
+    spotifyTab.click();
+    if (qEl) {
+      qEl.focus();
+    }
+  }
+};
+
+let spotifyRateLimitState = {
+  configured: false,
+  isRateLimited: false,
+  resetAt: null,
+  retryAfterSeconds: 0,
+};
+let spotifyCountdownInterval = null;
+let spotifyPulseTimeout = null;
+
+function updateSpotifyStatusUI(status, { justReset = false } = {}) {
+  if (!status || typeof status !== "object") return;
+  const dot = document.getElementById("spotify-tab-dot");
+  const wasRateLimited = spotifyRateLimitState.isRateLimited;
+  spotifyRateLimitState = { ...spotifyRateLimitState, ...status };
+
+  if (!dot) return;
+
+  if (status.configured === false) {
+    dot.classList.add("hidden");
+    return;
+  }
+  dot.classList.remove("hidden");
+
+  if (status.isRateLimited) {
+    if (spotifyPulseTimeout) {
+      clearTimeout(spotifyPulseTimeout);
+      spotifyPulseTimeout = null;
+    }
+    dot.classList.remove("online", "pulsing");
+    dot.classList.add("limited");
+    startSpotifyCountdownTimer(status.resetAt);
+  } else {
+    stopSpotifyCountdownTimer();
+    dot.classList.remove("limited");
+    dot.classList.add("online");
+
+    const isReset = justReset || (wasRateLimited && !status.isRateLimited);
+    if (isReset) {
+      dot.classList.add("pulsing");
+      dot.title = "Spotify vừa mở lại lượt tìm kiếm!";
+      dot.setAttribute("aria-label", dot.title);
+      if (spotifyPulseTimeout) clearTimeout(spotifyPulseTimeout);
+      spotifyPulseTimeout = setTimeout(() => {
+        dot.classList.remove("pulsing");
+        dot.title = "Spotify sẵn sàng tìm kiếm";
+        dot.setAttribute("aria-label", dot.title);
+      }, 60000);
+
+      showSpotifyResetToast();
+    } else if (!dot.classList.contains("pulsing")) {
+      dot.title = "Spotify sẵn sàng tìm kiếm";
+      dot.setAttribute("aria-label", dot.title);
+    }
+  }
+}
+
+function startSpotifyCountdownTimer(resetAt) {
+  stopSpotifyCountdownTimer();
+  const updateCountdown = () => {
+    const now = Date.now();
+    const diffMs = (resetAt || 0) - now;
+    const dot = document.getElementById("spotify-tab-dot");
+    if (diffMs <= 0) {
+      stopSpotifyCountdownTimer();
+      updateSpotifyStatusUI({ configured: true, isRateLimited: false }, { justReset: true });
+      return;
+    }
+    const totalSec = Math.ceil(diffMs / 1000);
+    const min = Math.floor(totalSec / 60);
+    const sec = totalSec % 60;
+    const timeStr = `${min}:${sec < 10 ? "0" : ""}${sec}`;
+    if (dot) {
+      dot.title = `Spotify tạm hết lượt search (Mở lại sau ${timeStr})`;
+      dot.setAttribute("aria-label", dot.title);
+    }
+  };
+  updateCountdown();
+  spotifyCountdownInterval = setInterval(updateCountdown, 1000);
+}
+
+function stopSpotifyCountdownTimer() {
+  if (spotifyCountdownInterval) {
+    clearInterval(spotifyCountdownInterval);
+    spotifyCountdownInterval = null;
+  }
+}
+
+function showSpotifyResetToast() {
+  const t = toast("ok", "🟢", "Spotify đã mở lại lượt tìm kiếm!", {
+    persist: false,
+    sub: "Nhấn để chuyển sang tìm kiếm Spotify ngay ⚡",
+  });
+  if (t?.el) {
+    t.el.classList.add("interactive");
+    t.el.addEventListener("click", () => {
+      window.switchToSpotifyPlatform();
+      t.dismiss();
+    }, { once: true });
+  }
+}
 
 // ---- Search & Search Pagination ------------------------------------------
 const searchState = {
@@ -2543,6 +2663,8 @@ async function loadGuestLyrics(np, { autoOpen = false } = {}) {
           artist: rawArtist,
           artists: Array.isArray(np.artists) ? np.artists : [],
           durationSec: durSec,
+          platform: np.platform || np.provider || "",
+          videoId: np.videoId || np.id || "",
         })
       : null;
   } catch (err) {
@@ -2584,9 +2706,11 @@ async function loadGuestLyrics(np, { autoOpen = false } = {}) {
       return;
     }
     guestLyricsActive = true;
+    const curNp = lastQueueState?.nowPlaying;
+    const isYt = curNp && (curNp.provider === "youtube" || curNp.provider === "yt");
     guestLyricsAnchorPosition = 0;
     guestLyricsAnchorTime = performance.now();
-    guestLyricsPaused = false;
+    guestLyricsPaused = isYt ? true : false;
     if (lastQueueState) renderQueue(lastQueueState);
     startGuestLyricsSyncLoop();
     if (queueWs && queueWs.readyState === WebSocket.OPEN) {
@@ -2654,7 +2778,7 @@ function syncGuestLyricsPosition(curSec, forceScroll = false) {
 
   let activeIdx = -1;
   for (let i = 0; i < lines.length; i++) {
-    if (lines[i].time <= curSec + 0.25) {
+    if (lines[i].time <= curSec) {
       activeIdx = i;
     } else {
       break;
@@ -2753,8 +2877,9 @@ function startGuestLyricsSyncLoop() {
     } else {
       // While paused, hold position
       syncGuestLyricsPosition(guestLyricsAnchorPosition / 1000);
-      // If room state says Spotify is currently playing, check with server if paused state ended
-      if (curNp && curNp.provider === "spotify" && now - lastAutoTickRequestTime > 4000) {
+      // If room state says Spotify or YouTube is currently playing, check with server if paused state ended
+      const hasTickSupport = curNp && (curNp.provider === "spotify" || curNp.provider === "youtube" || curNp.provider === "yt");
+      if (hasTickSupport && now - lastAutoTickRequestTime > 4000) {
         lastAutoTickRequestTime = now;
         if (queueWs && queueWs.readyState === WebSocket.OPEN) {
           queueWs.send(JSON.stringify({ type: "requestPlaybackTick" }));
@@ -2786,7 +2911,8 @@ function toggleGuestLyrics(active) {
     userCollapsedTrackId = "";
   }
 
-  if (guestLyricsActive && (!np || np.provider !== "spotify")) {
+  const isSupportedProvider = np && (np.provider === "spotify" || np.provider === "youtube" || np.provider === "yt");
+  if (guestLyricsActive && !isSupportedProvider) {
     guestLyricsActive = false;
     return;
   }
@@ -2801,7 +2927,8 @@ function toggleGuestLyrics(active) {
   }
 
   if (guestLyricsActive && np) {
-    guestLyricsPaused = false;
+    const isYt = np.provider === "youtube" || np.provider === "yt";
+    guestLyricsPaused = isYt ? true : false;
     if (queueWs && queueWs.readyState === WebSocket.OPEN) {
       queueWs.send(JSON.stringify({ type: "requestPlaybackTick" }));
     }
@@ -2860,7 +2987,14 @@ function connectWs() {
     }
     if (!msg || typeof msg !== "object" || Array.isArray(msg)) return;
     window.JukeboxNotifications?.handleSocketMessage(msg);
+    if (msg.type === "spotifyRateLimitStatus") {
+      updateSpotifyStatusUI(msg, { justReset: Boolean(msg.justReset) });
+      return;
+    }
     if (msg.type === "state" && msg.state && typeof msg.state === "object") {
+      if (msg.spotifyStatus) {
+        updateSpotifyStatusUI(msg.spotifyStatus);
+      }
       lastQueueState = msg.state;
       if (typeof msg.queueLimitOn === "boolean") queueLimitOn = msg.queueLimitOn;
       if (typeof msg.queueLimit === "number") queueLimit = msg.queueLimit;
@@ -2877,19 +3011,22 @@ function connectWs() {
       renderQueue(msg.state);
 
       const curNp = msg.state?.nowPlaying;
-      const isSpotify = curNp?.provider === "spotify";
-      const trackId = isSpotify
+      const isLyricsSupported = Boolean(
+        curNp && (curNp.provider === "spotify" || curNp.provider === "youtube" || curNp.provider === "yt")
+      );
+      const trackId = isLyricsSupported
         ? (curNp.videoId || curNp.id || `${(curNp.channel || "").toLowerCase()}:::${(curNp.title || "").toLowerCase()}`)
         : "";
 
-      if (isSpotify && trackId) {
-        const isNewSpotifySong = String(trackId) !== String(lastHandledSpotifyTrackId);
-        if (isNewSpotifySong) {
+      if (isLyricsSupported && trackId) {
+        const isNewSong = String(trackId) !== String(lastHandledSpotifyTrackId);
+        const isYt = curNp && (curNp.provider === "youtube" || curNp.provider === "yt");
+        if (isNewSong) {
           lastHandledSpotifyTrackId = trackId;
           userCollapsedTrackId = "";
           guestLyricsAnchorPosition = 0;
           guestLyricsAnchorTime = performance.now();
-          guestLyricsPaused = false;
+          guestLyricsPaused = isYt ? true : false;
           loadGuestLyrics(curNp, { autoOpen: true });
           if (queueWs && queueWs.readyState === WebSocket.OPEN) {
             queueWs.send(JSON.stringify({ type: "requestPlaybackTick" }));
@@ -2897,7 +3034,7 @@ function connectWs() {
         } else if (guestLyricsActive && String(trackId) !== String(currentGuestLyricsTrackId)) {
           guestLyricsAnchorPosition = 0;
           guestLyricsAnchorTime = performance.now();
-          guestLyricsPaused = false;
+          guestLyricsPaused = isYt ? true : false;
           loadGuestLyrics(curNp, { autoOpen: true });
           if (queueWs && queueWs.readyState === WebSocket.OPEN) {
             queueWs.send(JSON.stringify({ type: "requestPlaybackTick" }));
@@ -2908,19 +3045,17 @@ function connectWs() {
         userCollapsedTrackId = "";
         if (guestLyricsActive) {
           toggleGuestLyrics(false);
-          if (curNp) {
-            toast("info", "🎵", "Bài hát Spotify đã kết thúc.");
-          }
         }
       }
     } else if (msg.type === "playbackTick") {
       if (guestLyricsActive) {
         const curNp = lastQueueState?.nowPlaying;
-        if (curNp && curNp.provider === "spotify" && (!msg.videoId || msg.videoId === curNp.videoId)) {
+        const isSupportedProvider = Boolean(
+          curNp && (curNp.provider === "spotify" || curNp.provider === "youtube" || curNp.provider === "yt")
+        );
+        if (isSupportedProvider && (!msg.videoId || msg.videoId === curNp.videoId)) {
           const isPaused = Boolean(msg.paused);
-          const rawDelay = typeof msg.serverTime === "number" ? Date.now() - msg.serverTime : 0;
-          const networkDelay = (!isPaused && rawDelay >= 0 && rawDelay <= 2000) ? rawDelay : 0;
-          const targetPosition = (typeof msg.position === "number" ? msg.position : 0) + networkDelay;
+          const targetPosition = typeof msg.position === "number" ? Math.max(0, msg.position) : 0;
 
           const now = performance.now();
           const currentExpectedPos = guestLyricsPaused
@@ -2928,11 +3063,11 @@ function connectWs() {
             : guestLyricsAnchorPosition + (guestLyricsAnchorTime > 0 ? (now - guestLyricsAnchorTime) : 0);
           const drift = targetPosition - currentExpectedPos;
 
-          if (msg.seek || guestLyricsPaused !== isPaused || Math.abs(drift) > 500 || guestLyricsAnchorTime === 0) {
+          if (msg.seek || guestLyricsPaused !== isPaused || Math.abs(drift) > 250 || drift < -50 || guestLyricsAnchorTime === 0) {
             guestLyricsAnchorPosition = targetPosition;
             guestLyricsAnchorTime = now;
           } else {
-            guestLyricsAnchorPosition = currentExpectedPos + drift * 0.3;
+            guestLyricsAnchorPosition = currentExpectedPos + drift * 0.5;
             guestLyricsAnchorTime = now;
           }
 
@@ -3074,8 +3209,12 @@ function renderQueue(state) {
   const myIds = loadMyRequestIds();
   if (np) {
     npEl.classList.remove("hidden");
+    const isYouTube = np.provider === "youtube" || np.provider === "yt";
     const isSpotify = np.provider === "spotify";
-    if (!isSpotify) {
+    const isSupportedLyrics = Boolean(isSpotify || isYouTube);
+    npEl.classList.toggle("provider-youtube", Boolean(isYouTube));
+    npEl.classList.toggle("provider-spotify", Boolean(isSpotify));
+    if (!isSupportedLyrics) {
       guestLyricsActive = false;
       if (guestLyricsRafId) {
         cancelAnimationFrame(guestLyricsRafId);
@@ -3083,7 +3222,7 @@ function renderQueue(state) {
       }
     }
 
-    if (guestLyricsActive && isSpotify) {
+    if (guestLyricsActive && isSupportedLyrics) {
       const trackId = np.videoId || np.id || `${(np.channel || "").toLowerCase()}:::${(np.title || "").toLowerCase()}`;
       const isSameTrack = npEl.classList.contains("lyrics-mode") && String(npEl.dataset.lyricsTrackId) === String(trackId);
 
@@ -3166,7 +3305,7 @@ function renderQueue(state) {
           <div class="np-sub"></div>
         </div>
         <div class="np-actions">
-          <button class="np-lyrics-btn${isSpotify ? "" : " hidden"}" id="np-lyrics-btn" type="button" title="Xem lời bài hát" aria-label="Xem lời bài hát">
+          <button class="np-lyrics-btn${isSupportedLyrics ? "" : " hidden"}${isYouTube ? " provider-youtube" : ""}" id="np-lyrics-btn" type="button" title="Xem lời bài hát" aria-label="Xem lời bài hát">
             <svg width="16" height="16" viewBox="0 0 256 256" fill="currentColor"><path d="M115.06 46.36a4 4 0 0 0-6.11.54A71.54 71.54 0 0 0 96 88a73.29 73.29 0 0 0 .63 9.42L27.12 192.22A15.93 15.93 0 0 0 28.71 213L43 227.29a15.93 15.93 0 0 0 20.78 1.59l94.81-69.53A73.29 73.29 0 0 0 168 160a71.54 71.54 0 0 0 41.09-12.93 4 4 0 0 0 .54-6.11Zm2.61 103.28-16 16a8 8 0 1 1-11.31-11.31l16-16a8 8 0 0 1 11.31 11.31Zm109.4-20.56a4 4 0 0 1-6.12.54L126.38 35.05a4 4 0 0 1 .54-6.12A71.93 71.93 0 0 1 227.07 129.08Z"/></svg>
           </button>
           <span class="np-favorite-slot"></span>
@@ -3186,7 +3325,7 @@ function renderQueue(state) {
     }
   } else {
     npEl.classList.add("hidden");
-    npEl.classList.remove("lyrics-mode");
+    npEl.classList.remove("lyrics-mode", "provider-youtube", "provider-spotify");
     guestLyricsActive = false;
     if (guestLyricsRafId) {
       cancelAnimationFrame(guestLyricsRafId);

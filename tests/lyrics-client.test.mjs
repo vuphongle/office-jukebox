@@ -41,6 +41,13 @@ describe("JukeboxLyrics Client Module", () => {
     const r4 = JukeboxLyrics.cleanLyricsQuery("Artist X - Track Y", "");
     expect(r4.title).toBe("Track Y");
     expect(r4.artist).toBe("Artist X");
+
+    const r5 = JukeboxLyrics.cleanLyricsQuery(
+      "HIEUTHUHAI - Người Im Lặng Gặp Người Hay Nói (prod. by Kewtiie) l Official Music Video",
+      "HIEUTHUHAI"
+    );
+    expect(r5.title).toBe("Người Im Lặng Gặp Người Hay Nói");
+    expect(r5.artist).toBe("HIEUTHUHAI");
   });
 
   test("parseLrc parses timestamps and sorts chronologically", () => {
@@ -156,4 +163,61 @@ describe("JukeboxLyrics Client Module", () => {
     expect(requestedUrl).toContain("artists=");
     expect(requestedUrl).toContain("HIEUTHUHAI");
   });
+
+  test("fetchLyricsClient sends platform and videoId parameters to backend /api/lyrics", async () => {
+    let requestedUrl = "";
+    const mockFetch = async (url) => {
+      requestedUrl = url;
+      return {
+        ok: true,
+        json: async () => ({ ok: true, lines: [{ time: 1, text: "Lyrics" }] }),
+      };
+    };
+
+    await JukeboxLyrics.fetchLyricsClient({
+      title: "Cắt Đôi Nỗi Sầu",
+      artist: "Tăng Duy Tân",
+      durationSec: 180,
+      platform: "youtube",
+      videoId: "dQw4w9WgXcQ",
+      fetchImpl: mockFetch,
+    });
+
+    expect(requestedUrl).toContain("platform=youtube");
+    expect(requestedUrl).toContain("videoId=dQw4w9WgXcQ");
+  });
+
+  test("fetchLyricsClient rejects mismatched candidate and returns null instead of falling back to list[0]", async () => {
+    const mockFetch = async (url) => {
+      if (url.startsWith("/api/lyrics")) {
+        return { ok: false, status: 404 };
+      }
+      if (url.includes("lrclib.net/api/search")) {
+        // Return a completely different version / artist
+        return {
+          ok: true,
+          json: async () => [
+            {
+              trackName: "Tình Anh Bán Chiếu",
+              artistName: "Thanh Duy",
+              duration: 147,
+              syncedLyrics: "[00:10.00]Tang tinh tang tang tinh",
+            },
+          ],
+        };
+      }
+      throw new Error("unexpected URL " + url);
+    };
+
+    const res = await JukeboxLyrics.fetchLyricsClient({
+      title: "Tình Anh Bán Chiếu",
+      artist: "Út Trà Ôn",
+      durationSec: 390,
+      fetchImpl: mockFetch,
+    });
+
+    // Must be null, NOT the wrong Thanh Duy 147s song!
+    expect(res).toBeNull();
+  });
 });
+
