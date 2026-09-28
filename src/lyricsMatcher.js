@@ -42,6 +42,27 @@ export function extractVersionTags(text) {
   });
 }
 
+export function detectTrackVersionType(rawTitle = "", rawArtist = "") {
+  const title = (rawTitle || "").trim();
+  const artist = (rawArtist || "").trim();
+
+  // 1. Official MV / Video clip / Short film / Phim ca nhạc
+  const isMv = /\b(?:official\s*(?:music\s*)?video|official\s*mv|\bmv\b|\bm\/v\b|music\s*video|video\s*clip|phim\s*ca\s*nh\u1ea1c|short\s*film)\b/i.test(title);
+
+  // 2. Live, Concert, Performance, Acoustic, Remix, Cover, Speed Up, Slowed
+  const isSpecialPerformance = /\b(?:live\s*(?:session|at|performance|acoustic)?|concert|performance\s*video|acoustic|remix|cover|dance\s*practice|speed\s*up|slowed)\b/i.test(title);
+
+  // 3. Audio / Visualizer / Lyric Video / Topic
+  const isAudioOrVisualizer = /\b(?:official\s*audio|audio\s*only|\baudio\b|official\s*visualizer|visualizer|lyric\s*video|video\s*lyric)\b/i.test(title) ||
+    artist.toLowerCase().endsWith(" - topic");
+
+  return {
+    isMv,
+    isSpecialPerformance,
+    isAudioOrVisualizer,
+  };
+}
+
 export function containsArtist(haystack, artistName) {
   if (!haystack || !artistName) return false;
   const hNorm = normalizeSearchText(haystack);
@@ -62,7 +83,10 @@ export function containsArtist(haystack, artistName) {
   return regexNoDia.test(hNoDia);
 }
 
-export function scoreLyricsCandidate(candidate, { targetTitle, targetArtists = [], targetDurationSec = null }) {
+export function scoreLyricsCandidate(
+  candidate,
+  { targetTitle, targetArtists = [], targetDurationSec = null, maxDurationDiff = 4, isStrictDuration = false } = {}
+) {
   if (!candidate || typeof candidate !== "object") {
     return {
       score: 0,
@@ -121,14 +145,14 @@ export function scoreLyricsCandidate(candidate, { targetTitle, targetArtists = [
     durationDiff = Math.abs(candidate.duration - targetDurationSec);
     if (durationDiff <= 2) {
       score += 20; // Excellent match
-    } else if (durationDiff <= 5) {
-      score += 10; // Acceptable tolerance
+    } else if (durationDiff <= 4) {
+      score += 10; // Acceptable tolerance (<= 4s)
+    } else if (durationDiff <= 8) {
+      score -= 20; // Minor difference
     } else if (durationDiff <= 15) {
-      score -= 10; // Minor difference
-    } else if (durationDiff <= 35) {
-      score -= 25; // Moderate difference (radio edit / single vs album cut)
+      score -= 45; // Moderate difference
     } else {
-      score -= 60; // Major difference
+      score -= 80; // Major difference (intro/outro/alternate cut)
     }
   }
 
@@ -160,7 +184,8 @@ export function scoreLyricsCandidate(candidate, { targetTitle, targetArtists = [
     reason = "artist_mismatch";
   }
 
-  if (durationDiff !== null && durationDiff > 35) {
+  const maxAllowedDiff = isStrictDuration ? (maxDurationDiff || 4) : 15;
+  if (durationDiff !== null && durationDiff > maxAllowedDiff) {
     isAcceptable = false;
     reason = "duration_mismatch";
   }

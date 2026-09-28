@@ -1,7 +1,9 @@
-// Lyrics service using LRCLIB API for synchronized time-stamped lyrics.
+// Lyrics service orchestrating multi-source lyrics (YouTube Creator Captions -> LRCLIB -> Zing MP3)
 
-import { scoreLyricsCandidate } from "./lyricsMatcher.js";
+import { scoreLyricsCandidate, detectTrackVersionType } from "./lyricsMatcher.js";
 import { parseArtistListFromString } from "./spotify.js";
+import { fetchYouTubeCreatorCaptions } from "./providers/youtubeCaptions.js";
+import { fetchZingMp3Lyrics } from "./providers/zingMp3Lyrics.js";
 
 const LRCLIB_BASE = "https://lrclib.net/api";
 const USER_AGENT = "OfficeJukebox/1.0 (https://github.com/laztar)";
@@ -10,6 +12,7 @@ const USER_AGENT = "OfficeJukebox/1.0 (https://github.com/laztar)";
 const lyricsCache = new Map();
 const negativeCache = new Map();
 const MAX_CACHE_SIZE = 150;
+const MAX_NEGATIVE_CACHE_SIZE = 500; // Prevent unbounded growth on bulk miss storms
 const NEGATIVE_CACHE_TTL_MS = 180_000; // 3 minutes
 
 export function clearLyricsCache() {
@@ -17,23 +20,36 @@ export function clearLyricsCache() {
   negativeCache.clear();
 }
 
+function setNegativeCache(key, entry) {
+  // Evict oldest entry when at capacity (FIFO is fine here — TTL handles freshness)
+  if (negativeCache.size >= MAX_NEGATIVE_CACHE_SIZE) {
+    const firstKey = negativeCache.keys().next().value;
+    negativeCache.delete(firstKey);
+  }
+  negativeCache.set(key, entry);
+}
+
 export function cleanLyricsQuery(rawTitle, rawArtist) {
   let title = (rawTitle || "").trim();
   let artist = (rawArtist || "").trim();
 
-  // If title is in format "Artist - Title", split it
-  if (!artist && title.includes(" - ")) {
+  // If title is in format "Artist - Title", split it or strip matching artist prefix
+  if (title.includes(" - ")) {
     const parts = title.split(" - ");
-    artist = parts[0].trim();
-    title = parts.slice(1).join(" - ").trim();
+    if (!artist) {
+      artist = parts[0].trim();
+      title = parts.slice(1).join(" - ").trim();
+    } else if (parts[0].trim().toLowerCase() === artist.toLowerCase()) {
+      title = parts.slice(1).join(" - ").trim();
+    }
   }
 
   // Strip noise patterns: [MV], (Official Audio), (prod. by...), etc.
   title = title
     .replace(/\[[^\]]*\]/g, "")
     .replace(/\([^)]*(?:official|video|audio|mv|prod\.|feat\.|ft\.)[^)]*\)/gi, "")
+    .replace(/\s*[\-–—|/l•]\s*(?:official|music\s*video|mv|audio|lyric\s*video|video\s*lyric|live\s*session).*$/gi, "")
     .replace(/\|.*$/g, "")
-    .replace(/-.*(?:official|mv|audio).*$/gi, "")
     .replace(/\s*(?:-\s*)?(?:feat\.|ft\.).*$/gi, "")
     .trim();
 
@@ -77,7 +93,13 @@ export async function fetchLyrics(
   rawTitle,
   rawArtist = "",
   durationSec = null,
-  { fetchImpl = globalThis.fetch, timeoutMs = 6000, artists = [] } = {}
+  {
+    fetchImpl = globalThis.fetch,
+    timeoutMs = 6000,
+    artists = [],
+    platform = "",
+    videoId = "",
+  } = {}
 ) {
   const { title, artist } = cleanLyricsQuery(rawTitle, rawArtist);
   if (!title) return { ok: false, error: "empty_title" };
@@ -90,7 +112,11 @@ export async function fetchLyrics(
   const cacheKey = `${artistKey}:::${title.toLowerCase()}`;
 
   if (lyricsCache.has(cacheKey)) {
-    return lyricsCache.get(cacheKey);
+    // LRU: move to end so recently-accessed entries survive eviction longer
+    const cached = lyricsCache.get(cacheKey);
+    lyricsCache.delete(cacheKey);
+    lyricsCache.set(cacheKey, cached);
+    return cached;
   }
 
   const now = Date.now();
@@ -102,7 +128,101 @@ export async function fetchLyrics(
     negativeCache.delete(cacheKey);
   }
 
+  const versionInfo = detectTrackVersionType(rawTitle, rawArtist);
+
+  // 1. YouTube Creator Captions (only for YouTube platform when videoId is provided)
+  if ((platform === "youtube" || platform === "yt") && videoId) {
+    try {
+      const ytResult = await fetchYouTubeCreatorCaptions(videoId, {
+        title,
+        artist,
+        fetchImpl,
+        timeoutMs: Math.min(timeoutMs, 3500),
+      });
+      if (ytResult?.ok && Array.isArray(ytResult.lines) && ytResult.lines.length > 0) {
+        const payload = {
+          ok: true,
+          synced: true,
+          source: "youtube_captions",
+          trackName: title,
+          artistName: artist || targetArtists[0] || "",
+          lines: ytResult.lines,
+          language: ytResult.language,
+        };
+        cachePayload(cacheKey, payload);
+        return payload;
+      }
+    } catch {}
+
+    // If YouTube video has NO creator captions:
+    // If it is an MV, Short Film, Live session, Remix, or Acoustic performance:
+    // Studio LRC does not match the video timeline (due to acting, intros, dialogue, or tempo changes).
+    // Never fall back to studio LRC for MV/Live without CC to avoid out-of-sync lyrics.
+    if (versionInfo.isMv || versionInfo.isSpecialPerformance) {
+      const payload = {
+        ok: false,
+        error: "mv_no_creator_captions",
+        reason: "Bản MV/Video không có phụ đề đồng bộ từ tác giả trên YouTube.",
+      };
+      setNegativeCache(cacheKey, { error: payload.error, expiresAt: now + NEGATIVE_CACHE_TTL_MS });
+      return payload;
+    }
+  }
+
+  // 2. LRCLIB (Primary synced lyrics source)
   const primaryArtist = targetArtists[0] || (artist ? artist.split(/[,;&]/)[0].replace(/["']/g, "").trim() : "");
+  let lrclibBest = null;
+
+  // For YouTube audio tracks falling back to studio LRC, enforce strict duration matching (<= 4s)
+  const isStrictDuration = (platform === "youtube" || platform === "yt");
+
+  try {
+    lrclibBest = await queryLrclib(title, artist, primaryArtist, targetArtists, durationSec, fetchImpl, timeoutMs, {
+      isStrictDuration,
+      maxDurationDiff: 4,
+    });
+  } catch {}
+
+  if (lrclibBest) {
+    return saveAndReturnLyrics(cacheKey, lrclibBest, title, artist || primaryArtist, "lrclib");
+  }
+
+  // 3. Fallback to Zing MP3 API (Secondary source, rich in Vietnamese/regional songs)
+  try {
+    const zingResult = await fetchZingMp3Lyrics(title, artist, durationSec, {
+      fetchImpl,
+      timeoutMs: Math.min(timeoutMs, 3500),
+      artists: targetArtists,
+    });
+    if (zingResult?.ok && Array.isArray(zingResult.lines) && zingResult.lines.length > 0) {
+      const payload = {
+        ok: true,
+        synced: true,
+        source: "zingmp3",
+        trackName: zingResult.trackName || title,
+        artistName: zingResult.artistName || artist || primaryArtist,
+        lines: zingResult.lines,
+      };
+      cachePayload(cacheKey, payload);
+      return payload;
+    }
+  } catch {}
+
+  // 4. Neither provider had an acceptable matching version
+  setNegativeCache(cacheKey, { error: "no_matching_version", expiresAt: now + NEGATIVE_CACHE_TTL_MS });
+  return { ok: false, error: "no_matching_version" };
+}
+
+async function queryLrclib(
+  title,
+  artist,
+  primaryArtist,
+  targetArtists,
+  durationSec,
+  fetchImpl,
+  timeoutMs,
+  { isStrictDuration = false, maxDurationDiff = 4 } = {}
+) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
 
@@ -171,10 +291,11 @@ export async function fetchLyrics(
           targetTitle: title,
           targetArtists,
           targetDurationSec: durationSec,
+          isStrictDuration,
+          maxDurationDiff,
         });
         if (scored.isAcceptable && scored.allArtistsMatched) {
-          // Early return on perfect exact multi-artist match
-          return saveAndReturnLyrics(cacheKey, exactFull, title, fullArtistsStr);
+          return exactFull;
         }
       }
     }
@@ -187,14 +308,16 @@ export async function fetchLyrics(
           targetTitle: title,
           targetArtists,
           targetDurationSec: durationSec,
+          isStrictDuration,
+          maxDurationDiff,
         });
         if (scored.isAcceptable && scored.allArtistsMatched) {
-          return saveAndReturnLyrics(cacheKey, exactPrimary, title, primaryArtist);
+          return exactPrimary;
         }
       }
     }
 
-    // 3. Fuzzy search queries in descending specificity
+    // 3. Fuzzy search queries
     const featuredArtists = targetArtists.slice(1).join(" ");
     const searchQueries = [
       primaryArtist && featuredArtists ? `${primaryArtist} ${featuredArtists} ${title}` : null,
@@ -204,21 +327,24 @@ export async function fetchLyrics(
 
     for (const q of searchQueries) {
       await trySearchQuery(q);
-      // If we already found an acceptable candidate with all artists matched and synced lyrics, stop searching
       const candidates = Array.from(candidateMap.values());
       const hasPerfectMatch = candidates.some((cand) => {
         if (!cand.syncedLyrics) return false;
-        const s = scoreLyricsCandidate(cand, { targetTitle: title, targetArtists, targetDurationSec: durationSec });
+        const s = scoreLyricsCandidate(cand, {
+          targetTitle: title,
+          targetArtists,
+          targetDurationSec: durationSec,
+          isStrictDuration,
+          maxDurationDiff,
+        });
         return s.isAcceptable && s.allArtistsMatched;
       });
       if (hasPerfectMatch) break;
     }
 
-    // 4. Score and rank all collected candidates
     const allCandidates = Array.from(candidateMap.values());
     if (allCandidates.length === 0) {
-      negativeCache.set(cacheKey, { error: "not_found", expiresAt: now + NEGATIVE_CACHE_TTL_MS });
-      return { ok: false, error: "not_found" };
+      return null;
     }
 
     const scoredList = allCandidates
@@ -228,27 +354,32 @@ export async function fetchLyrics(
           targetTitle: title,
           targetArtists,
           targetDurationSec: durationSec,
+          isStrictDuration,
+          maxDurationDiff,
         }),
       }))
       .filter((item) => item.result.isAcceptable)
       .sort((a, b) => b.result.score - a.result.score);
 
     if (scoredList.length === 0) {
-      // Candidates were found on LRCLIB, but all were disqualified (wrong cover, remix duration mismatch, etc.)
-      negativeCache.set(cacheKey, { error: "no_matching_version", expiresAt: now + NEGATIVE_CACHE_TTL_MS });
-      return { ok: false, error: "no_matching_version" };
+      return null;
     }
 
-    const best = scoredList[0].candidate;
-    return saveAndReturnLyrics(cacheKey, best, title, artist || primaryArtist);
-  } catch (err) {
-    return { ok: false, error: err.name === "AbortError" ? "timeout" : "network_error" };
+    return scoredList[0].candidate;
   } finally {
     clearTimeout(timer);
   }
 }
 
-function saveAndReturnLyrics(cacheKey, data, defaultTitle, defaultArtist) {
+function cachePayload(cacheKey, payload) {
+  if (lyricsCache.size >= MAX_CACHE_SIZE) {
+    const firstKey = lyricsCache.keys().next().value;
+    lyricsCache.delete(firstKey);
+  }
+  lyricsCache.set(cacheKey, payload);
+}
+
+function saveAndReturnLyrics(cacheKey, data, defaultTitle, defaultArtist, source = "lrclib") {
   let parsedLines = [];
   let isSynced = false;
 
@@ -257,33 +388,23 @@ function saveAndReturnLyrics(cacheKey, data, defaultTitle, defaultArtist) {
     isSynced = parsedLines.length > 0;
   }
 
-  if (!isSynced && data.plainLyrics) {
-    parsedLines = data.plainLyrics
-      .split("\n")
-      .map((t) => t.trim())
-      .filter(Boolean)
-      .map((text, idx) => ({ time: idx * 5, text }));
-  }
-
-  if (parsedLines.length === 0) {
-    return { ok: false, error: "no_lyrics_content" };
+  // Never assign fake 5s timestamps to plain lyrics.
+  // Real synchronized lyrics are required for karaoke sync.
+  if (!isSynced || parsedLines.length === 0) {
+    return { ok: false, error: "no_synced_lyrics", plain: data.plainLyrics || null };
   }
 
   const payload = {
     ok: true,
     synced: isSynced,
+    source,
     trackName: data.trackName || defaultTitle,
     artistName: data.artistName || defaultArtist,
     lines: parsedLines,
     plain: data.plainLyrics || null,
   };
 
-  if (lyricsCache.size >= MAX_CACHE_SIZE) {
-    const firstKey = lyricsCache.keys().next().value;
-    lyricsCache.delete(firstKey);
-  }
-  lyricsCache.set(cacheKey, payload);
-
+  cachePayload(cacheKey, payload);
   return payload;
 }
 
@@ -293,11 +414,15 @@ export async function prefetchLyricsForTrack({
   artists = [],
   durationSec = null,
   trackId = "",
+  platform = "",
+  videoId = "",
   fetchImpl = globalThis.fetch,
 } = {}) {
   try {
     return await fetchLyrics(title, artist, durationSec, {
       artists,
+      platform,
+      videoId: videoId || (platform === "youtube" ? trackId : ""),
       fetchImpl,
       timeoutMs: 8000,
     });
