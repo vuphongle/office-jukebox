@@ -40,6 +40,7 @@ import {
   buildSpotifyAuthorizeUrl,
   exchangeSpotifyCode,
   refreshSpotifyToken,
+  getSpotifyRateLimitStatus,
 } from "./src/spotify.js";
 import { ARTIST_AVATARS } from "./src/artistAvatars.js";
 import {
@@ -138,23 +139,107 @@ const SPOTIFY_REDIRECT_URI =
   (process.env.SPOTIFY_REDIRECT_URI || "").trim() ||
   (PUBLIC_BASE ? `${PUBLIC_BASE}/api/spotify/callback` : `http://${LAN_IP}:${PORT}/api/spotify/callback`);
 
+function readLatestEnvVars() {
+  const envPath = path.join(__dirname, ".env");
+  const env = { ...process.env };
+  if (existsSync(envPath)) {
+    try {
+      const content = readFileSync(envPath, "utf8");
+      for (const line of content.split("\n")) {
+        const m = line.match(/^\s*([A-Z0-9_]+)\s*=\s*(.*)\s*$/i);
+        if (m) {
+          env[m[1]] = m[2].replace(/^["']|["']$/g, "").trim();
+        }
+      }
+    } catch {}
+  }
+  return env;
+}
+
 function getSpotifyCredentialsPool() {
+  const env = readLatestEnvVars();
+  const primaryId = (env.SPOTIFY_CLIENT_ID || SPOTIFY_CLIENT_ID || "").trim();
+  const primarySecret = (env.SPOTIFY_CLIENT_SECRET || SPOTIFY_CLIENT_SECRET || "").trim();
+  const backupId = (env.SPOTIFY_BACKUP_CLIENT_ID || SPOTIFY_BACKUP_CLIENT_ID || "").trim();
+  const backupSecret = (env.SPOTIFY_BACKUP_CLIENT_SECRET || SPOTIFY_BACKUP_CLIENT_SECRET || "").trim();
+
   const pool = [];
-  if (SPOTIFY_CLIENT_ID && SPOTIFY_CLIENT_SECRET) {
+  if (primaryId && primarySecret) {
     pool.push({
-      clientId: SPOTIFY_CLIENT_ID,
-      clientSecret: SPOTIFY_CLIENT_SECRET,
+      clientId: primaryId,
+      clientSecret: primarySecret,
       label: "primary",
     });
   }
-  if (SPOTIFY_BACKUP_CLIENT_ID && SPOTIFY_BACKUP_CLIENT_SECRET) {
+  if (backupId && backupSecret) {
     pool.push({
-      clientId: SPOTIFY_BACKUP_CLIENT_ID,
-      clientSecret: SPOTIFY_BACKUP_CLIENT_SECRET,
+      clientId: backupId,
+      clientSecret: backupSecret,
       label: "backup",
     });
   }
   return pool;
+}
+
+let lastSpotifyRateLimitStatus = null;
+let spotifyRateLimitResetTimer = null;
+
+function broadcastSpotifyRateLimitStatus(status) {
+  if (typeof wss === "undefined" || !wss?.clients) return;
+  const msg = JSON.stringify({
+    type: "spotifyRateLimitStatus",
+    ...status,
+  });
+  for (const client of wss.clients) {
+    if (client.readyState === 1) client.send(msg);
+  }
+}
+
+function checkAndBroadcastSpotifyRateLimit(pool = getSpotifyCredentialsPool()) {
+  const currentStatus = getSpotifyRateLimitStatus(pool);
+  const wasLimited = lastSpotifyRateLimitStatus?.isRateLimited === true;
+  const isLimited = currentStatus.isRateLimited === true;
+
+  if (wasLimited && !isLimited) {
+    if (spotifyRateLimitResetTimer) {
+      clearTimeout(spotifyRateLimitResetTimer);
+      spotifyRateLimitResetTimer = null;
+    }
+    lastSpotifyRateLimitStatus = currentStatus;
+    broadcastSpotifyRateLimitStatus({
+      ...currentStatus,
+      justReset: true,
+    });
+    return;
+  }
+
+  if (isLimited) {
+    const resetAt = currentStatus.resetAt;
+    const resetChanged = !wasLimited || lastSpotifyRateLimitStatus?.resetAt !== resetAt;
+    lastSpotifyRateLimitStatus = currentStatus;
+
+    if (resetChanged) {
+      broadcastSpotifyRateLimitStatus({
+        ...currentStatus,
+        justReset: false,
+      });
+
+      if (spotifyRateLimitResetTimer) {
+        clearTimeout(spotifyRateLimitResetTimer);
+      }
+      const delay = Math.max(200, (resetAt - Date.now()) + 300);
+      spotifyRateLimitResetTimer = setTimeout(() => {
+        spotifyRateLimitResetTimer = null;
+        checkAndBroadcastSpotifyRateLimit(pool);
+      }, delay);
+      if (typeof spotifyRateLimitResetTimer.unref === "function") {
+        spotifyRateLimitResetTimer.unref();
+      }
+    }
+    return;
+  }
+
+  lastSpotifyRateLimitStatus = currentStatus;
 }
 
 // --- Initialize SQLite database and repositories (SSOT) --------------------
@@ -319,11 +404,14 @@ async function getValidSpotifyAccessToken() {
   if (activeSpotifyToken && now < activeSpotifyTokenExpiresAt - 60_000) {
     return activeSpotifyToken;
   }
-  if (spotifySettings?.refreshToken && SPOTIFY_CLIENT_ID && SPOTIFY_CLIENT_SECRET) {
+  const env = readLatestEnvVars();
+  const primaryId = (env.SPOTIFY_CLIENT_ID || SPOTIFY_CLIENT_ID || "").trim();
+  const primarySecret = (env.SPOTIFY_CLIENT_SECRET || SPOTIFY_CLIENT_SECRET || "").trim();
+  if (spotifySettings?.refreshToken && primaryId && primarySecret) {
     try {
       const refreshed = await refreshSpotifyToken(spotifySettings.refreshToken, {
-        clientId: SPOTIFY_CLIENT_ID,
-        clientSecret: SPOTIFY_CLIENT_SECRET,
+        clientId: primaryId,
+        clientSecret: primarySecret,
       });
       if (refreshed?.access_token) {
         activeSpotifyToken = refreshed.access_token;
@@ -1129,6 +1217,7 @@ app.get("/api/browse", publicReadLimit, async (req, res) => {
     }
     const isRateLimited = Boolean(err?.message && (err.message.includes("429") || err.message.includes("Too Many Requests")));
     if (isRateLimited) {
+      checkAndBroadcastSpotifyRateLimit();
       console.warn("[browse] Spotify rate limited (429), auto-falling back to YouTube for:", q || targetArtist);
       try {
         const ytQuery = targetArtist ? (targetSq || targetArtist) : (q === "__vn_hits" ? "top hits vietnam" : q);
@@ -1273,6 +1362,7 @@ app.get("/api/search", publicReadLimit, async (req, res) => {
       } catch (spotifyErr) {
         const isRateLimited = Boolean(spotifyErr?.message && (spotifyErr.message.includes("429") || spotifyErr.message.includes("Too Many Requests")));
         if (isRateLimited) {
+          checkAndBroadcastSpotifyRateLimit(pool);
           console.warn("[search] Spotify rate limited (429), auto-falling back to YouTube for:", q);
           const ytResults = await searchYouTubeByMode(q, { mode: searchMode, limit: 10, offset });
           const fallbackData = {
@@ -1294,6 +1384,9 @@ app.get("/api/search", publicReadLimit, async (req, res) => {
   } catch (err) {
     console.error("[search]", err.message);
     const isRateLimited = Boolean(err?.message && (err.message.includes("429") || err.message.includes("Too Many Requests")));
+    if (isRateLimited) {
+      checkAndBroadcastSpotifyRateLimit();
+    }
     res.status(isRateLimited ? 429 : 502).json({
       error: isRateLimited
         ? "Spotify đang tạm giới hạn lượt yêu cầu. Bạn có thể chuyển sang tìm kiếm YouTube để nghe nhạc ngay."
@@ -1331,10 +1424,13 @@ app.post("/api/youtube/resolve", publicReadLimit, async (req, res) => {
 
 // Spotify OAuth and playback status endpoints
 app.get("/api/spotify/status", (req, res) => {
+  const pool = getSpotifyCredentialsPool();
+  const hasBackup = pool.some((c) => c.label === "backup");
   res.json({
     connected: !!spotifySettings?.refreshToken,
-    configured: getSpotifyCredentialsPool().length > 0,
-    hasBackup: !!(SPOTIFY_BACKUP_CLIENT_ID && SPOTIFY_BACKUP_CLIENT_SECRET),
+    configured: pool.length > 0,
+    hasBackup,
+    rateLimit: getSpotifyRateLimitStatus(pool),
   });
 });
 
@@ -1433,16 +1529,24 @@ app.get("/api/tiktok/stream", publicReadLimit, async (req, res) => {
   }
 });
 
-app.get("/api/lyrics", async (req, res) => {
-  const title = (req.query.title || "").toString().trim();
-  const artist = (req.query.artist || "").toString().trim();
+app.get("/api/lyrics", publicReadLimit, async (req, res) => {
+  // Clamp input lengths to prevent excessively long strings being forwarded to
+  // upstream APIs (LRCLIB, Zing MP3) or eating cache space with garbage keys.
+  const title = (req.query.title || "").toString().trim().slice(0, 200);
+  const artist = (req.query.artist || "").toString().trim().slice(0, 200);
   const durationSec = parseFloat(req.query.duration);
+  const platform = (req.query.platform || "").toString().trim().toLowerCase().slice(0, 30);
+  const videoId = (req.query.videoId || req.query.ytId || "").toString().trim().slice(0, 64);
   let artists = [];
   if (req.query.artists) {
     try {
-      artists = JSON.parse(req.query.artists);
+      const raw = req.query.artists.toString().slice(0, 2000); // prevent huge JSON blobs
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) {
+        artists = parsed.slice(0, 20).map((s) => String(s).trim().slice(0, 100)).filter(Boolean);
+      }
     } catch {
-      artists = (req.query.artists || "").toString().split(",").map((s) => s.trim()).filter(Boolean);
+      artists = (req.query.artists || "").toString().slice(0, 1000).split(",").map((s) => s.trim().slice(0, 100)).filter(Boolean);
     }
   }
 
@@ -1452,6 +1556,8 @@ app.get("/api/lyrics", async (req, res) => {
 
   const result = await fetchLyrics(title, artist, Number.isFinite(durationSec) ? durationSec : null, {
     artists,
+    platform,
+    videoId,
   });
   res.json(result);
 });
@@ -1652,13 +1758,15 @@ app.post("/api/request", songRequestIpLimit, async (req, res) => {
       deviceId: req.deviceId || null,
     });
 
-    if (cleanProvider === "spotify" || (Array.isArray(canonical.artists) && canonical.artists.length > 0)) {
+    if (cleanProvider === "spotify" || (Array.isArray(canonical.artists) && canonical.artists.length > 0) || cleanProvider === "youtube") {
       const durSec = parseDurationSeconds(canonical.duration);
       prefetchLyricsForTrack({
         title: canonical.title,
         artist: canonical.channel,
         artists: canonical.artists || [],
         durationSec: Number.isFinite(durSec) ? durSec : null,
+        platform: cleanProvider,
+        videoId: cleanProvider === "youtube" ? videoId : "",
         trackId: videoId,
       }).catch((err) => {
         console.warn("[lyrics-prefetch] Background prefetch warning:", err?.message || err);
@@ -2348,6 +2456,7 @@ function stateMessage() {
     chatAiOn: chatAiSettings.enabled && chatOn,
     chatAiName: chatAiSettings.name,
     voteSortOn,
+    spotifyStatus: getSpotifyRateLimitStatus(getSpotifyCredentialsPool()),
   });
 }
 
@@ -2357,20 +2466,24 @@ function broadcastState() {
     if (client.readyState === 1) client.send(msg);
   }
 }
+let latestPlaybackTick = null;
 let latestSpotifyPlaybackTick = null;
 
 state.onChange = (nextState) => {
-  if (latestSpotifyPlaybackTick && latestSpotifyPlaybackTick.videoId !== nextState.nowPlaying?.videoId) {
+  if (latestPlaybackTick && latestPlaybackTick.videoId !== nextState.nowPlaying?.videoId) {
+    latestPlaybackTick = null;
     latestSpotifyPlaybackTick = null;
   }
   broadcastState();
-  if (nextState.nowPlaying?.provider === "spotify" && latestSpotifyPlaybackTick && !latestSpotifyPlaybackTick.paused) {
+  const curProvider = nextState.nowPlaying?.provider || "youtube";
+  const isTickSupported = curProvider === "spotify" || curProvider === "youtube" || curProvider === "yt";
+  if (isTickSupported && latestPlaybackTick && !latestPlaybackTick.paused) {
     const now = Date.now();
-    const elapsed = Math.max(0, now - (latestSpotifyPlaybackTick.serverTime || now));
+    const elapsed = Math.max(0, now - (latestPlaybackTick.serverTime || now));
     const tickMsg = JSON.stringify({
       type: "playbackTick",
-      ...latestSpotifyPlaybackTick,
-      position: latestSpotifyPlaybackTick.position + elapsed,
+      ...latestPlaybackTick,
+      position: latestPlaybackTick.position + elapsed,
       serverTime: now,
     });
     for (const client of wss.clients) {
@@ -2775,6 +2888,7 @@ wss.on("connection", (ws, request) => {
           ...(transition ? {} : { reason: "Bài đang phát không thuộc về bạn hoặc đã chuyển bài." }),
         }));
         if (transition) {
+          latestPlaybackTick = null;
           latestSpotifyPlaybackTick = null;
           settleRankTransition(transition);
         }
@@ -2784,22 +2898,24 @@ wss.on("connection", (ws, request) => {
       if (msg.type === "requestPlaybackTick") {
         if (ws.readyState === 1) {
           const now = Date.now();
-          if (latestSpotifyPlaybackTick) {
-            const elapsed = latestSpotifyPlaybackTick.paused
+          const activeTick = latestPlaybackTick || latestSpotifyPlaybackTick;
+          if (activeTick) {
+            const elapsed = activeTick.paused
               ? 0
-              : Math.max(0, now - (latestSpotifyPlaybackTick.serverTime || now));
+              : Math.max(0, now - (activeTick.serverTime || now));
             ws.send(JSON.stringify({
               type: "playbackTick",
-              ...latestSpotifyPlaybackTick,
-              position: latestSpotifyPlaybackTick.position + elapsed,
+              ...activeTick,
+              position: activeTick.position + elapsed,
               serverTime: now,
             }));
-          } else if (state.nowPlaying?.provider === "spotify") {
-            const elapsed = state.nowPlaying.startedAt ? Math.max(0, now - state.nowPlaying.startedAt) : 0;
+          } else if (state.nowPlaying) {
+            const isYt = state.nowPlaying.provider === "youtube" || state.nowPlaying.provider === "yt";
+            const elapsed = (!isYt && state.nowPlaying.startedAt) ? Math.max(0, now - state.nowPlaying.startedAt) : 0;
             ws.send(JSON.stringify({
               type: "playbackTick",
               position: elapsed,
-              paused: false,
+              paused: isYt ? true : false,
               seek: false,
               videoId: state.nowPlaying.videoId || "",
               serverTime: now,
@@ -2844,16 +2960,17 @@ wss.on("connection", (ws, request) => {
           const paused = Boolean(msg.paused);
           const seek = Boolean(msg.seek);
           const videoId = typeof msg.videoId === "string" ? msg.videoId : "";
-          latestSpotifyPlaybackTick = {
+          latestPlaybackTick = {
             position,
             paused,
             seek,
             videoId,
             serverTime: Date.now(),
           };
+          latestSpotifyPlaybackTick = latestPlaybackTick;
           const payload = JSON.stringify({
             type: "playbackTick",
-            ...latestSpotifyPlaybackTick,
+            ...latestPlaybackTick,
           });
           for (const client of wss.clients) {
             if (client !== ws && client.readyState === 1) {
@@ -2863,6 +2980,7 @@ wss.on("connection", (ws, request) => {
           break;
         }
         case "ended":
+          latestPlaybackTick = null;
           latestSpotifyPlaybackTick = null;
           if (typeof msg.playbackToken !== "string" || !msg.playbackToken) break;
           const activeItem = state.nowPlaying;
@@ -2872,6 +2990,7 @@ wss.on("connection", (ws, request) => {
           settleRankTransition(state.advance(msg.videoId || expectedVideoId || null, { finishReason: "ended", playbackToken: msg.playbackToken, playedSeconds: msg.playedSeconds }));
           break;
         case "error":
+          latestPlaybackTick = null;
           latestSpotifyPlaybackTick = null;
           if (typeof msg.playbackToken !== "string" || !msg.playbackToken) break;
           const activeErrItem = state.nowPlaying;
@@ -2881,6 +3000,7 @@ wss.on("connection", (ws, request) => {
           settleRankTransition(state.advance(msg.videoId || expectedErrVideoId || null, { isError: true, finishReason: "error", playbackToken: msg.playbackToken }));
           break;
         case "skip":
+          latestPlaybackTick = null;
           latestSpotifyPlaybackTick = null;
           settleRankTransition(state.skip({ playedSeconds: msg.playedSeconds }));
           break;
