@@ -2,16 +2,20 @@
   function cleanLyricsQuery(rawTitle, rawArtist) {
     let title = (rawTitle || "").trim();
     let artist = (rawArtist || "").trim();
-    if (!artist && title.includes(" - ")) {
+    if (title.includes(" - ")) {
       const parts = title.split(" - ");
-      artist = parts[0].trim();
-      title = parts.slice(1).join(" - ").trim();
+      if (!artist) {
+        artist = parts[0].trim();
+        title = parts.slice(1).join(" - ").trim();
+      } else if (parts[0].trim().toLowerCase() === artist.toLowerCase()) {
+        title = parts.slice(1).join(" - ").trim();
+      }
     }
     title = title
       .replace(/\[[^\]]*\]/g, "")
       .replace(/\([^)]*(?:official|video|audio|mv|prod\.|feat\.|ft\.)[^)]*\)/gi, "")
+      .replace(/\s*[\-–—|/l•]\s*(?:official|music\s*video|mv|audio|lyric\s*video|video\s*lyric|live\s*session).*$/gi, "")
       .replace(/\|.*$/g, "")
-      .replace(/-.*(?:official|mv|audio).*$/gi, "")
       .replace(/\s*(?:-\s*)?(?:feat\.|ft\.).*$/gi, "")
       .trim();
     artist = artist.replace(/\s*-\s*Topic$/i, "").trim();
@@ -52,6 +56,8 @@
     artist: rawArtist = "",
     artists = [],
     durationSec = null,
+    platform = "",
+    videoId = "",
     fetchImpl = global.fetch || fetch,
     timeoutMs = 6000,
   } = {}) {
@@ -67,6 +73,12 @@
       if (durationSec && Number.isFinite(durationSec)) {
         params.set("duration", Math.round(durationSec));
       }
+      if (platform) {
+        params.set("platform", platform);
+      }
+      if (videoId) {
+        params.set("videoId", videoId);
+      }
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), timeoutMs);
       const res = await fetchImpl(`/api/lyrics?${params.toString()}`, { signal: controller.signal });
@@ -81,6 +93,16 @@
 
     // 2. Direct browser fallback to LRCLIB API with smart queries
     try {
+      const isYt = platform === "youtube" || platform === "yt";
+      if (isYt) {
+        const isMv = /\b(?:official\s*(?:music\s*)?video|official\s*mv|\bmv\b|\bm\/v\b|music\s*video|video\s*clip|phim\s*ca\s*nh\u1ea1c|short\s*film)\b/i.test(rawTitle);
+        const isSpecialPerformance = /\b(?:live\s*(?:session|at|performance|acoustic)?|concert|performance\s*video|acoustic|remix|cover|dance\s*practice|speed\s*up|slowed)\b/i.test(rawTitle);
+        if (isMv || isSpecialPerformance) {
+          // Do not fall back to studio album lyrics for YouTube MVs/Live that lack CC
+          return null;
+        }
+      }
+
       const targetArtists = Array.isArray(artists) && artists.length > 0
         ? artists
         : (artist ? [artist.split(/[,;]/)[0].trim()] : []);
@@ -113,7 +135,7 @@
               const normArtist = (primaryArtist || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/đ/g, "d");
               if (primaryArtist && !text.includes(primaryArtist.toLowerCase()) && !normText.includes(normArtist)) return false;
               if (durationSec && Number.isFinite(durationSec) && it.duration) {
-                if (Math.abs(it.duration - durationSec) > 35) return false;
+                if (Math.abs(it.duration - durationSec) > 4) return false;
               }
               if (text.includes("cover") && !title.toLowerCase().includes("cover")) return false;
               return true;
@@ -123,29 +145,15 @@
             if (found) {
               lrclibData = found;
               break;
-            } else if (!lrclibData && list[0]) {
-              lrclibData = list[0];
             }
           }
         }
       }
 
-      if (lrclibData) {
-        let lines = [];
-        let isSynced = false;
-        if (lrclibData.syncedLyrics) {
-          lines = parseLrc(lrclibData.syncedLyrics);
-          isSynced = lines.length > 0;
-        }
-        if (!isSynced && lrclibData.plainLyrics) {
-          lines = lrclibData.plainLyrics
-            .split("\n")
-            .map((t) => t.trim())
-            .filter(Boolean)
-            .map((text, idx) => ({ time: idx * 5, text }));
-        }
+      if (lrclibData && lrclibData.syncedLyrics) {
+        const lines = parseLrc(lrclibData.syncedLyrics);
         if (lines.length > 0) {
-          return { ok: true, synced: isSynced, lines };
+          return { ok: true, synced: true, lines };
         }
       }
     } catch {}

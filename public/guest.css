@@ -1055,6 +1055,21 @@ header .desktop-intro { display: none; }
 .toast.bad .toast-ico { background: oklch(68% 0.18 32 / 0.2); }
 .toast.info { border-color: oklch(80% 0.14 85 / 0.4); }
 .toast.info .toast-ico { background: oklch(80% 0.14 85 / 0.15); }
+.toast.interactive {
+  pointer-events: auto;
+  cursor: pointer;
+  border-color: rgba(16, 185, 129, 0.55);
+  box-shadow: 0 12px 32px rgba(16, 185, 129, 0.2), 0 4px 12px rgba(0, 0, 0, 0.4);
+  transition: transform 0.18s ease, box-shadow 0.18s ease, border-color 0.18s ease;
+}
+.toast.interactive:hover {
+  transform: translateY(-2px);
+  border-color: rgba(16, 185, 129, 0.9);
+  box-shadow: 0 14px 36px rgba(16, 185, 129, 0.3), 0 6px 16px rgba(0, 0, 0, 0.5);
+}
+.toast.interactive:active {
+  transform: translateY(0);
+}
 
 /* While the filter checks a song (web search can take 5–20 seconds), scan a
    light bar along the bottom and pulse the icon so the wait looks active rather
@@ -2096,6 +2111,85 @@ header .desktop-intro { display: none; }
   box-shadow: 0 0 14px rgba(29, 185, 84, 0.2);
 }
 
+.spotify-status-dot {
+  position: relative;
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  margin-left: 4px;
+  background: #10b981;
+  box-shadow: 0 0 8px rgba(16, 185, 129, 0.7);
+  flex-shrink: 0;
+  transition: all 0.25s ease;
+}
+
+.spotify-status-dot.hidden {
+  display: none !important;
+}
+
+/* Continuous radiant wave ripples when Spotify is available */
+.spotify-status-dot.online::before,
+.spotify-status-dot.online::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  border: 1.5px solid rgba(16, 185, 129, 0.75);
+  background: rgba(16, 185, 129, 0.1);
+  pointer-events: none;
+  box-sizing: border-box;
+  animation: spotifyWave 2s cubic-bezier(0.2, 0.4, 0.35, 1) infinite;
+}
+
+/* Second wave emits exactly when first wave reaches 50% spread */
+.spotify-status-dot.online::after {
+  animation-delay: -1s;
+}
+
+/* When rate-limited: amber dot, disable waves */
+.spotify-status-dot.limited {
+  background: #f59e0b;
+  box-shadow: 0 0 6px rgba(245, 158, 11, 0.6);
+}
+
+.spotify-status-dot.limited::before,
+.spotify-status-dot.limited::after {
+  display: none !important;
+}
+
+/* Radiant celebratory burst when just reset / recovered from rate limit */
+.spotify-status-dot.pulsing {
+  background: #1ed760;
+  box-shadow: 0 0 10px rgba(30, 215, 96, 0.9);
+}
+
+.spotify-status-dot.pulsing::before,
+.spotify-status-dot.pulsing::after {
+  border-color: rgba(30, 215, 96, 0.85);
+  background: rgba(30, 215, 96, 0.16);
+  animation-duration: 1.6s;
+}
+
+.spotify-status-dot.pulsing::after {
+  animation-delay: -0.8s;
+}
+
+@keyframes spotifyWave {
+  0% {
+    transform: scale(0.95);
+    opacity: 0.9;
+  }
+  50% {
+    transform: scale(1.55);
+    opacity: 0.45;
+  }
+  100% {
+    transform: scale(2.1);
+    opacity: 0;
+  }
+}
+
 .r-title-row {
   display: flex;
   align-items: center;
@@ -2131,6 +2225,19 @@ header .desktop-intro { display: none; }
   background: rgba(29, 185, 84, 0.26);
   transform: translateY(-1px);
   box-shadow: 0 4px 14px rgba(29, 185, 84, 0.3);
+}
+
+.np-actions .np-lyrics-btn.provider-youtube,
+.now-playing.provider-youtube .np-actions .np-lyrics-btn {
+  color: #ff4e45;
+  background: rgba(255, 78, 69, 0.14);
+  border: 1px solid rgba(255, 78, 69, 0.38);
+}
+
+.np-actions .np-lyrics-btn.provider-youtube:hover,
+.now-playing.provider-youtube .np-actions .np-lyrics-btn:hover {
+  background: rgba(255, 78, 69, 0.26);
+  box-shadow: 0 4px 14px rgba(255, 78, 69, 0.35);
 }
 
 .np-actions .np-lyrics-btn.hidden {
@@ -2417,6 +2524,54 @@ header .desktop-intro { display: none; }
   border-radius: 50%;
   animation: spin 0.8s linear infinite;
   box-shadow: 0 0 12px rgba(30, 215, 96, 0.3);
+}
+
+/* ---- YouTube Red Theme for Lyrics Overlay ---- */
+.now-playing.lyrics-mode.provider-youtube {
+  background: radial-gradient(circle at 85% 15%, oklch(35% 0.2 28 / 0.28) 0%, transparent 65%), oklch(24% 0.035 85 / 0.35);
+  border: 1px solid oklch(62% 0.22 28 / 0.45);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.35), 0 0 24px oklch(58% 0.22 28 / 0.2);
+}
+
+.now-playing.lyrics-mode.provider-youtube .np-lyrics-badge {
+  color: #ff4e45;
+}
+
+.now-playing.lyrics-mode.provider-youtube .np-lyrics-badge .eq span {
+  background: #ff4e45;
+}
+
+.now-playing.lyrics-mode.provider-youtube .np-lyrics-toggle-btn {
+  border-color: oklch(60% 0.22 28 / 0.42);
+  background: oklch(60% 0.22 28 / 0.15);
+  color: #ff4e45;
+}
+
+.now-playing.lyrics-mode.provider-youtube .np-lyrics-toggle-btn:hover {
+  background: oklch(60% 0.22 28 / 0.28);
+  border-color: #ff4e45;
+  box-shadow: 0 4px 12px oklch(60% 0.22 28 / 0.25);
+}
+
+.now-playing.lyrics-mode.provider-youtube .np-lyrics-scroller {
+  scrollbar-color: oklch(60% 0.22 28 / 0.4) transparent;
+}
+
+.now-playing.lyrics-mode.provider-youtube .np-lyrics-scroller::-webkit-scrollbar-thumb {
+  background: oklch(60% 0.22 28 / 0.35);
+}
+
+.now-playing.lyrics-mode.provider-youtube .guest-lyric-line.active {
+  background: oklch(60% 0.22 28 / 0.16);
+  border-color: oklch(60% 0.22 28 / 0.42);
+  text-shadow: 0 0 16px oklch(60% 0.22 28 / 0.75), 0 0 2px rgba(255, 255, 255, 0.6);
+  box-shadow: 0 4px 14px oklch(60% 0.22 28 / 0.14);
+}
+
+.now-playing.lyrics-mode.provider-youtube .np-lyrics-loading::after {
+  border: 3px solid rgba(255, 78, 69, 0.22);
+  border-top-color: #ff4e45;
+  box-shadow: 0 0 12px rgba(255, 78, 69, 0.35);
 }
 
 @media (max-width: 640px) {
