@@ -51,6 +51,28 @@ async function stopServer(child) {
   if (child.exitCode !== null) return;
   child.kill("SIGTERM");
   await new Promise((resolve) => child.once("exit", resolve));
+  // Give the OS a moment to release file handles on Windows before caller cleans up
+  await new Promise((resolve) => setTimeout(resolve, 50));
+}
+
+/**
+ * Removes a directory tree with retry logic for Windows EBUSY / EPERM errors.
+ * After killing a child process, the OS may hold file handles briefly; retrying
+ * avoids flaky test failures without needing platform-specific branches.
+ */
+async function rmRecursiveRetry(dirPath, maxRetries = 5, baseDelayMs = 100) {
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      rmSync(dirPath, { recursive: true, force: true });
+      return;
+    } catch (err) {
+      if ((err.code === "EBUSY" || err.code === "EPERM") && attempt < maxRetries) {
+        await new Promise((resolve) => setTimeout(resolve, baseDelayMs * attempt));
+      } else {
+        throw err;
+      }
+    }
+  }
 }
 
 async function loginAs(baseUrl, username, password) {
@@ -155,7 +177,7 @@ test("settings and feedback handlers report atomic persistence failures and roll
     assert.ok(afterFailedDelete.items.some((entry) => entry.id === item.id));
   } finally {
     await stopServer(child);
-    rmSync(dataDir, { recursive: true, force: true });
+    await rmRecursiveRetry(dataDir);
   }
 });
 
@@ -174,7 +196,7 @@ test("feedback submission reports a rename failure instead of claiming success",
     assert.equal(existsSync(path.join(dataDir, "feedback.json")), true);
   } finally {
     await stopServer(child);
-    rmSync(dataDir, { recursive: true, force: true });
+    await rmRecursiveRetry(dataDir);
   }
 });
 
@@ -219,7 +241,7 @@ test("authenticated members can replace an avatar stored in the server data dire
     assert.equal(rejected.status, 400);
   } finally {
     await stopServer(child);
-    rmSync(dataDir, { recursive: true, force: true });
+    await rmRecursiveRetry(dataDir);
   }
 });
 
@@ -265,7 +287,7 @@ test("member chat exposes avatar URLs without leaking internal user IDs", async 
   } finally {
     socket?.close();
     await stopServer(child);
-    rmSync(dataDir, { recursive: true, force: true });
+    await rmRecursiveRetry(dataDir);
   }
 });
 
@@ -301,7 +323,7 @@ test("admin search mode is validated and persists across server restarts", async
     assert.equal(persisted.searchMode, "youtube-music");
   } finally {
     await stopServer(running.child);
-    rmSync(dataDir, { recursive: true, force: true });
+    await rmRecursiveRetry(dataDir);
   }
 });
 
@@ -379,7 +401,7 @@ test("admin can lock orders to the network registered by the authenticated host"
     assert.equal(reopened.status, 400);
   } finally {
     await stopServer(running.child);
-    rmSync(dataDir, { recursive: true, force: true });
+    await rmRecursiveRetry(dataDir);
   }
 });
 
@@ -404,7 +426,7 @@ test("WebSocket settings failures do not broadcast unpersisted state", async () 
   } finally {
     socket?.close();
     await stopServer(child);
-    rmSync(dataDir, { recursive: true, force: true });
+    await rmRecursiveRetry(dataDir);
   }
 });
 
@@ -439,7 +461,7 @@ test("successfully acknowledged feedback survives a server restart", async () =>
     assert.ok(listed.items.some((entry) => entry.content === "Survive restart"));
   } finally {
     await stopServer(running.child);
-    rmSync(dataDir, { recursive: true, force: true });
+    await rmRecursiveRetry(dataDir);
   }
 });
 
@@ -455,7 +477,7 @@ test("public rank benefits expose every check-in reward", async () => {
     assert.equal(Object.hasOwn(payload.benefits[0], "passwordHash"), false);
   } finally {
     await stopServer(child);
-    rmSync(dataDir, { recursive: true, force: true });
+    await rmRecursiveRetry(dataDir);
   }
 });
 
@@ -471,7 +493,7 @@ test("public leaderboard is available without authentication and stays bounded",
     assert.equal(Object.hasOwn(payload.leaderboard[0] || {}, "userId"), false);
   } finally {
     await stopServer(child);
-    rmSync(dataDir, { recursive: true, force: true });
+    await rmRecursiveRetry(dataDir);
   }
 });
 
@@ -497,7 +519,7 @@ test("weekly music leaderboard is public while personal weekly standing requires
     assert.equal(personalPayload.weeklyRank.weeklyMusicXp, 0);
   } finally {
     await stopServer(child);
-    rmSync(dataDir, { recursive: true, force: true });
+    await rmRecursiveRetry(dataDir);
   }
 });
 
@@ -516,7 +538,7 @@ test("public leaderboard page is available without authentication", async () => 
     assert.match(html, /id="weekly-standing"/);
   } finally {
     await stopServer(child);
-    rmSync(dataDir, { recursive: true, force: true });
+    await rmRecursiveRetry(dataDir);
   }
 });
 
@@ -534,7 +556,7 @@ test("WebSocket owner skip responds without granting host control", async () => 
   } finally {
     socket?.close();
     await stopServer(child);
-    rmSync(dataDir, { recursive: true, force: true });
+    await rmRecursiveRetry(dataDir);
   }
 });
 
@@ -617,7 +639,7 @@ test("authenticated owner can skip the exact current song without refund or XP",
     if (child) await stopServer(child);
     try { closeDb(seedDb); } catch {}
     try { closeDb(verifyDb); } catch {}
-    rmSync(dataDir, { recursive: true, force: true });
+    await rmRecursiveRetry(dataDir);
   }
 });
 
@@ -707,7 +729,7 @@ test("admin notifications fan out to active users with unread/read controls", as
   } finally {
     memberSocket?.close();
     await stopServer(child);
-    rmSync(dataDir, { recursive: true, force: true });
+    await rmRecursiveRetry(dataDir);
   }
 });
 
@@ -763,6 +785,6 @@ test("admin password reset replaces member credentials and revokes existing sess
     assert.equal(newPassword.status, 200);
   } finally {
     await stopServer(child);
-    rmSync(dataDir, { recursive: true, force: true });
+    await rmRecursiveRetry(dataDir);
   }
 });

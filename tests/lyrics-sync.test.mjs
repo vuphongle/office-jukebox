@@ -347,24 +347,24 @@ describe("Lyrics Synchronization Invariants", () => {
     expect(getActiveIndex(lines, fixedRafCurSec)).toBe(1); // STAYED AT LINE 2 (NO ROLLBACK)!
   });
 
-  test("auto-open guest lyrics on new Spotify song transition", () => {
+  test("auto-open guest lyrics on new Spotify or YouTube song transition", () => {
     let guestLyricsActive = false;
-    let lastHandledSpotifyTrackId = "";
+    let lastHandledLyricsTrackId = "";
     let userCollapsedTrackId = "";
     let guestLyricsAnchorPosition = -1;
     let lyricsModeRendered = false;
 
     function handleStateUpdate(state, lyricsDataMap) {
       const curNp = state?.nowPlaying;
-      const isSpotify = curNp?.provider === "spotify";
-      const trackId = isSpotify
+      const isSupported = curNp?.provider === "spotify" || curNp?.provider === "youtube" || curNp?.provider === "yt";
+      const trackId = isSupported
         ? (curNp.videoId || curNp.id || `${(curNp.channel || "").toLowerCase()}:::${(curNp.title || "").toLowerCase()}`)
         : "";
 
-      if (isSpotify && trackId) {
-        const isNewSpotifySong = String(trackId) !== String(lastHandledSpotifyTrackId);
-        if (isNewSpotifySong) {
-          lastHandledSpotifyTrackId = trackId;
+      if (isSupported && trackId) {
+        const isNewSong = String(trackId) !== String(lastHandledLyricsTrackId);
+        if (isNewSong) {
+          lastHandledLyricsTrackId = trackId;
           userCollapsedTrackId = "";
           guestLyricsAnchorPosition = 0;
 
@@ -384,19 +384,20 @@ describe("Lyrics Synchronization Invariants", () => {
           }
         }
       } else {
-        lastHandledSpotifyTrackId = "";
+        lastHandledLyricsTrackId = "";
         userCollapsedTrackId = "";
         guestLyricsActive = false;
         lyricsModeRendered = false;
       }
 
-      return { guestLyricsActive, lyricsModeRendered, guestLyricsAnchorPosition, lastHandledSpotifyTrackId };
+      return { guestLyricsActive, lyricsModeRendered, guestLyricsAnchorPosition, lastHandledLyricsTrackId };
     }
 
     const lyricsDb = {
       "spotify:track:song1": { lines: [{ time: 1.0, text: "Line 1" }, { time: 5.0, text: "Line 2" }] },
       "spotify:track:song2": { lines: [] }, // Song 2 has NO lyrics
-      "spotify:track:song3": { lines: [{ time: 2.0, text: "Song 3 Line 1" }] },
+      "yt123": { lines: [{ time: 2.0, text: "YouTube Song Line 1" }] },
+      "yt_no_lyrics": { lines: [] },
     };
 
     // 1. Initial song: Spotify song1 with lyrics -> AUTO OPENS
@@ -416,23 +417,24 @@ describe("Lyrics Synchronization Invariants", () => {
     expect(res2.guestLyricsActive).toBe(false);
     expect(res2.lyricsModeRendered).toBe(false);
 
-    // 3. Next song: Spotify song3 with lyrics -> AUTO OPENS AGAIN
+    // 3. Next song: YouTube song yt123 WITH lyrics -> AUTO OPENS just like Spotify
     const res3 = handleStateUpdate(
-      { nowPlaying: { provider: "spotify", videoId: "spotify:track:song3", title: "Song 3", channel: "Artist 3" } },
+      { nowPlaying: { provider: "youtube", videoId: "yt123", title: "YT Song", channel: "YT Channel" } },
       lyricsDb
     );
     expect(res3.guestLyricsActive).toBe(true);
     expect(res3.lyricsModeRendered).toBe(true);
     expect(res3.guestLyricsAnchorPosition).toBe(0);
+    expect(res3.lastHandledLyricsTrackId).toBe("yt123");
 
-    // 4. Next song: YouTube song -> LYRICS COLLAPSED AND RESET
+    // 4. Next song: Unsupported platform (e.g. soundcloud) -> COLLAPSED AND RESET
     const res4 = handleStateUpdate(
-      { nowPlaying: { provider: "youtube", videoId: "yt123", title: "YT Song", channel: "YT Channel" } },
+      { nowPlaying: { provider: "soundcloud", videoId: "sc999", title: "SC Song", channel: "SC Artist" } },
       lyricsDb
     );
     expect(res4.guestLyricsActive).toBe(false);
     expect(res4.lyricsModeRendered).toBe(false);
-    expect(res4.lastHandledSpotifyTrackId).toBe("");
+    expect(res4.lastHandledLyricsTrackId).toBe("");
   });
 
   test("user collapse state is sticky per track, resets on new track", () => {
