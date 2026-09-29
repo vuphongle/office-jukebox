@@ -73,6 +73,24 @@ describe("Zing MP3 Lyrics Provider", () => {
       expect(res.reason).toBe("duration_mismatch");
     });
 
+    it("rejects candidate when duration differs by more than 2s (e.g. 3s difference)", () => {
+      const cand = {
+        title: "Tình Anh Bán Chiếu",
+        duration: 393,
+        lyricLink: "https://static-zmp3.zmdcdn.me/lyrics/1.lrc",
+        artists: [{ name: "Út Trà Ôn" }],
+      };
+
+      const res = validateZingCandidate(cand, {
+        targetTitle: "Tình Anh Bán Chiếu",
+        targetArtist: "Út Trà Ôn",
+        targetDurationSec: 390,
+      });
+
+      expect(res.valid).toBe(false);
+      expect(res.reason).toBe("duration_mismatch");
+    });
+
     it("rejects candidate when artist differs completely", () => {
       const cand = {
         title: "Tình Anh Bán Chiếu",

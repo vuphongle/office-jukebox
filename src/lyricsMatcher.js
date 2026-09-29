@@ -85,7 +85,7 @@ export function containsArtist(haystack, artistName) {
 
 export function scoreLyricsCandidate(
   candidate,
-  { targetTitle, targetArtists = [], targetDurationSec = null, maxDurationDiff = 4, isStrictDuration = false } = {}
+  { targetTitle, targetArtists = [], targetDurationSec = null, maxDurationDiff = 2, isStrictDuration = false } = {}
 ) {
   if (!candidate || typeof candidate !== "object") {
     return {
@@ -208,7 +208,7 @@ export function scoreLyricsCandidate(
     reason = "artist_mismatch";
   }
 
-  const maxAllowedDiff = isStrictDuration ? (maxDurationDiff || 4) : 15;
+  const maxAllowedDiff = isStrictDuration ? (maxDurationDiff ?? 2) : 15;
   if (durationDiff !== null && durationDiff > maxAllowedDiff) {
     isAcceptable = false;
     reason = "duration_mismatch";

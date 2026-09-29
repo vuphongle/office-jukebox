@@ -261,7 +261,7 @@ describe("Multi-Source Lyrics Pipeline Orchestrator", () => {
     expect(res.error).toBe("no_matching_version");
   });
 
-  it("allows studio fallback for YouTube Audio/Visualizer/Topic when duration matches within <= 4s", async () => {
+  it("allows studio fallback for YouTube Audio/Visualizer/Topic when duration matches within <= 2s", async () => {
     clearLyricsCache();
     const mockFetch = async (url) => {
       if (url.includes("youtubei/v1/player")) {
@@ -295,7 +295,7 @@ describe("Multi-Source Lyrics Pipeline Orchestrator", () => {
     expect(res.lines[0].text).toBe("Chạy ngay đi trước khi...");
   });
 
-  it("rejects studio fallback for YouTube Audio when duration differs by more than 4s", async () => {
+  it("rejects studio fallback for YouTube Audio when duration differs by more than 2s (e.g. 3s difference)", async () => {
     clearLyricsCache();
     const mockFetch = async (url) => {
       if (url.includes("youtubei/v1/player")) {
@@ -308,10 +308,10 @@ describe("Multi-Source Lyrics Pipeline Orchestrator", () => {
         return {
           ok: true,
           json: async () => ({
-            trackName: "Song Name",
-            artistName: "Artist",
-            duration: 200, // Diff is 20s vs target 220s (> 4s)
-            syncedLyrics: "[00:10.00]Mismatch",
+            trackName: "Chạy Ngay Đi",
+            artistName: "Sơn Tùng M-TP",
+            duration: 245, // Diff is 3s vs target 248s (> 2s)
+            syncedLyrics: "[00:12.00]Chạy ngay đi trước khi...",
           }),
         };
       }
@@ -320,10 +320,10 @@ describe("Multi-Source Lyrics Pipeline Orchestrator", () => {
           ok: true,
           json: async () => [
             {
-              trackName: "Song Name",
-              artistName: "Artist",
-              duration: 200, // Diff is 20s
-              syncedLyrics: "[00:10.00]Mismatch",
+              trackName: "Chạy Ngay Đi",
+              artistName: "Sơn Tùng M-TP",
+              duration: 245, // Diff is 3s (> 2s)
+              syncedLyrics: "[00:12.00]Chạy ngay đi trước khi...",
             },
           ],
         };
@@ -331,10 +331,10 @@ describe("Multi-Source Lyrics Pipeline Orchestrator", () => {
       if (url.includes("ac.zingmp3.vn")) {
         return { ok: true, json: async () => ({ data: { items: [] } }) };
       }
-      throw new Error("unexpected URL: " + url);
+      return { ok: false };
     };
 
-    const res = await fetchLyrics("Song Name (Audio)", "Artist", 220, {
+    const res = await fetchLyrics("Chạy Ngay Đi (Official Audio)", "Sơn Tùng M-TP", 248, {
       platform: "youtube",
       videoId: "mismatchedAudio",
       fetchImpl: mockFetch,

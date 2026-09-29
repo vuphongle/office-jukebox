@@ -185,7 +185,7 @@ export async function fetchLyrics(
 
     // YouTube video has no creator captions (or they were rejected).
     // For MV / Live / Special Performance without CC: studio LRC from LRCLIB or Zing MP3
-    // is only safe if duration matches within 4 s AND artist matches — both already enforced
+    // is only safe if duration matches within 2 s AND artist matches — both already enforced
     // by isStrictDuration + scoreLyricsCandidate below. Fall through to attempt LRCLIB first.
   }
 
@@ -193,13 +193,13 @@ export async function fetchLyrics(
   const primaryArtist = targetArtists[0] || (artist ? artist.split(/[,;&]/)[0].replace(/["']/g, "").trim() : "");
   let lrclibBest = null;
 
-  // For YouTube audio tracks falling back to studio LRC, enforce strict duration matching (<= 4s)
+  // For YouTube audio tracks falling back to studio LRC, enforce strict duration matching (<= 2s)
   const isStrictDuration = (platform === "youtube" || platform === "yt");
 
   try {
     lrclibBest = await queryLrclib(title, artist, primaryArtist, targetArtists, durationSec, fetchImpl, timeoutMs, {
       isStrictDuration,
-      maxDurationDiff: 4,
+      maxDurationDiff: 2,
     });
   } catch {}
 
@@ -213,6 +213,7 @@ export async function fetchLyrics(
       fetchImpl,
       timeoutMs: Math.min(timeoutMs, 3500),
       artists: targetArtists,
+      maxDurationDiff: 2,
     });
     if (zingResult?.ok && Array.isArray(zingResult.lines) && zingResult.lines.length > 0) {
       const payload = {
@@ -241,7 +242,7 @@ async function queryLrclib(
   durationSec,
   fetchImpl,
   timeoutMs,
-  { isStrictDuration = false, maxDurationDiff = 4 } = {}
+  { isStrictDuration = false, maxDurationDiff = 2 } = {}
 ) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
