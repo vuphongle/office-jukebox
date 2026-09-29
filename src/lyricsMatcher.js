@@ -156,7 +156,31 @@ export function scoreLyricsCandidate(
     }
   }
 
-  // 4. Version modifier check (prevent Remix vs Original, Live vs Studio, etc.)
+  // 4. Title similarity check (prevent matching a completely different song by the same artist)
+  if (targetTitle && candidate.trackName) {
+    const normTarget = stripDiacritics(normalizeSearchText(targetTitle)).replace(/[^a-z0-9\s]/g, " ").replace(/\s+/g, " ").trim();
+    const normCand = stripDiacritics(normalizeSearchText(candidate.trackName)).replace(/[^a-z0-9\s]/g, " ").replace(/\s+/g, " ").trim();
+    
+    if (normTarget && normCand && normTarget !== normCand && !normTarget.includes(normCand) && !normCand.includes(normTarget)) {
+      const targetWords = normTarget.split(" ").filter((w) => w.length >= 2);
+      const candWords = normCand.split(" ").filter((w) => w.length >= 2);
+      const matchingWords = targetWords.filter((w) => candWords.includes(w));
+      const matchRatio = targetWords.length > 0 ? matchingWords.length / targetWords.length : 0;
+      
+      if (matchingWords.length === 0 || (targetWords.length >= 2 && matchRatio < 0.35 && matchingWords.length < 2)) {
+        return {
+          score: 0,
+          allArtistsMatched,
+          matchedArtists,
+          missingArtists,
+          isAcceptable: false,
+          reason: "title_mismatch",
+        };
+      }
+    }
+  }
+
+  // 5. Version modifier check (prevent Remix vs Original, Live vs Studio, etc.)
   const targetTags = extractVersionTags(targetTitle);
   const candidateTags = extractVersionTags(combinedCandidateText);
 

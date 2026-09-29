@@ -22,6 +22,9 @@ describe("Lyrics Service & LRC Parser", () => {
     const q5 = cleanLyricsQuery("HIEUTHUHAI - Người Im Lặng Gặp Người Hay Nói (prod. by Kewtiie) l Official Music Video", "HIEUTHUHAI");
     expect(q5.title).toBe("Người Im Lặng Gặp Người Hay Nói");
     expect(q5.artist).toBe("HIEUTHUHAI");
+
+    const q6 = cleanLyricsQuery("PHƯƠNG MỸ CHI x DTAP | 'THIÊN ĐƯỜNG VỚI NGƯỜI THƯƠNG' | OFFICIAL MUSIC", "Phương Mỹ Chi");
+    expect(q6.title).toBe("THIÊN ĐƯỜNG VỚI NGƯỜI THƯƠNG");
   });
 
   it("parses standard LRC strings into sorted time-stamped array", () => {

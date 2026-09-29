@@ -2058,6 +2058,25 @@ header .desktop-intro { display: none; }
   border: 1px solid rgba(254, 44, 85, 0.38);
 }
 
+/* CC Lyrics badge — YouTube-style red, shown when a video has creator-uploaded synced captions */
+.cc-lyrics-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font: 700 10px/1 var(--sans);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  background: oklch(62% 0.22 28 / 0.18);
+  color: #ff4e45;
+  border: 1px solid oklch(62% 0.22 28 / 0.45);
+  pointer-events: none;
+  user-select: none;
+  white-space: nowrap;
+  flex-shrink: 0;
+  vertical-align: middle;
+}
+
 /* Search Platform Tabs */
 .search-platform-tabs {
   display: flex;

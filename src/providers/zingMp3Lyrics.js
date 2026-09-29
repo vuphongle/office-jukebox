@@ -94,7 +94,19 @@ export function validateZingCandidate(cand, { targetTitle = "", targetArtist = "
     }
   }
 
-  // 3. Artist check
+  // 3. Title match validation (ensure candidate title has overlapping keywords with target title)
+  if (normTargetTitle && normCandTitle) {
+    const targetWords = normTargetTitle.split(" ").filter((w) => w.length >= 2);
+    const candWords = normCandTitle.split(" ").filter((w) => w.length >= 2);
+    const matchingWords = targetWords.filter((w) => candWords.includes(w));
+    const matchRatio = targetWords.length > 0 ? matchingWords.length / targetWords.length : 0;
+
+    if (matchingWords.length === 0 || (targetWords.length >= 2 && matchRatio < 0.35 && matchingWords.length < 2)) {
+      return { valid: false, reason: "title_mismatch" };
+    }
+  }
+
+  // 4. Artist check
   const allTargetArtists = Array.isArray(targetArtists) && targetArtists.length > 0
     ? targetArtists
     : parseArtistListFromString(targetArtist);

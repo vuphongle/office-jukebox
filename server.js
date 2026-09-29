@@ -55,6 +55,7 @@ import {
 } from "./src/tiktok.js";
 import { resolveMediaLink } from "./src/mediaLinkResolver.js";
 import { fetchLyrics, prefetchLyricsForTrack } from "./src/lyricsService.js";
+import { probeYouTubeCcLyrics } from "./src/providers/youtubeCaptions.js";
 import { avatarPublicUrl, validateAvatarUpload } from "./src/avatar.js";
 import { prepareRequestSong } from "./src/requestPipeline.js";
 import { moderate, moderationConfigured } from "./src/moderation.js";
@@ -1205,6 +1206,21 @@ app.get("/api/browse", publicReadLimit, async (req, res) => {
         .slice(0, 20);
     }
 
+    // Probe CC Lyrics for YouTube results (non-blocking, cached 30 min)
+    if (platform !== "spotify" && results.length > 0) {
+      await Promise.all(
+        results.map(async (r) => {
+          if (!r.videoId) return;
+          try {
+            const probe = await probeYouTubeCcLyrics(r.videoId, { timeoutMs: 2500 });
+            r.hasCcLyrics = probe.hasCcLyrics;
+          } catch {
+            r.hasCcLyrics = false;
+          }
+        })
+      );
+    }
+
     if (results.length > 0) {
       browseCache.set(cacheKey, { at: Date.now(), results });
       if (browseCache.size > 1000) browseCache.delete(browseCache.keys().next().value);
@@ -1377,6 +1393,21 @@ app.get("/api/search", publicReadLimit, async (req, res) => {
     }
 
     const results = await searchYouTubeByMode(q, { mode: searchMode, limit: 10, offset });
+
+    // Enrich YouTube results with CC Lyrics badge in parallel (non-blocking, capped at 2.5s).
+    // Each result gets hasCcLyrics:true/false; failures silently default to false.
+    await Promise.all(
+      results.map(async (r) => {
+        if (!r.videoId) return;
+        try {
+          const probe = await probeYouTubeCcLyrics(r.videoId, { timeoutMs: 2500 });
+          r.hasCcLyrics = probe.hasCcLyrics;
+        } catch {
+          r.hasCcLyrics = false;
+        }
+      })
+    );
+
     const data = { results };
     searchCache.set(cacheKey, { at: Date.now(), data });
     if (searchCache.size > 500) searchCache.delete(searchCache.keys().next().value);
@@ -1743,6 +1774,15 @@ app.post("/api/request", songRequestIpLimit, async (req, res) => {
       return res.json({ ok: false, reason: "Bài hát này đã có trong hàng đợi!" });
     }
 
+    // Probe CC Lyrics badge for YouTube (uses cached result when available — usually instant)
+    let hasCcLyrics = false;
+    if (cleanProvider === "youtube") {
+      try {
+        const probe = await probeYouTubeCcLyrics(videoId, { timeoutMs: 1500 });
+        hasCcLyrics = probe.hasCcLyrics;
+      } catch {}
+    }
+
     const { item, position } = state.add({
       videoId,
       title: canonical.title,
@@ -1756,6 +1796,7 @@ app.post("/api/request", songRequestIpLimit, async (req, res) => {
       provider: cleanProvider,
       requesterIp,
       deviceId: req.deviceId || null,
+      hasCcLyrics,
     });
 
     if (cleanProvider === "spotify" || (Array.isArray(canonical.artists) && canonical.artists.length > 0) || cleanProvider === "youtube") {
