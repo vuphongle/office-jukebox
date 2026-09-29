@@ -194,8 +194,9 @@ describe("Multi-Source Lyrics Pipeline Orchestrator", () => {
     expect(res.error).toBe("no_matching_version");
   });
 
-  it("rejects studio fallback for YouTube MV when video has no creator captions (prevents out-of-sync lyrics)", async () => {
+  it("falls through to LRCLIB/ZingMP3 for YouTube MV without CC (strict duration match required)", async () => {
     clearLyricsCache();
+    let lrclibQueried = false;
     const mockFetch = async (url) => {
       // YouTube returns no creator captions
       if (url.includes("youtubei/v1/player")) {
@@ -204,8 +205,16 @@ describe("Multi-Source Lyrics Pipeline Orchestrator", () => {
           json: async () => ({ captions: {} }),
         };
       }
-      // LRCLIB should NEVER be queried for an MV that has no CC
-      throw new Error("LRCLIB must not be queried for YouTube MV without CC: " + url);
+      // LRCLIB should now be queried (no hard-stop) but return no matching version
+      if (url.includes("lrclib.net")) {
+        lrclibQueried = true;
+        return { ok: true, json: async () => [] }; // empty result
+      }
+      // Zing MP3 also returns no match
+      if (url.includes("zingmp3.vn")) {
+        return { ok: true, json: async () => ({ items: [] }) };
+      }
+      return { ok: false };
     };
 
     const res = await fetchLyrics("Đừng Làm Trái Tim Anh Đau | Official Music Video", "Sơn Tùng M-TP", 330, {
@@ -214,12 +223,16 @@ describe("Multi-Source Lyrics Pipeline Orchestrator", () => {
       fetchImpl: mockFetch,
     });
 
+    // LRCLIB must now be queried (we fall through, not hard-stop)
+    expect(lrclibQueried).toBe(true);
+    // No matching version found in any source
     expect(res.ok).toBe(false);
-    expect(res.error).toBe("mv_no_creator_captions");
+    expect(res.error).toBe("no_matching_version");
   });
 
-  it("rejects studio fallback for YouTube Live performance when video has no creator captions", async () => {
+  it("falls through to LRCLIB for YouTube Live without CC (strict duration + artist check prevent mismatch)", async () => {
     clearLyricsCache();
+    let lrclibQueried = false;
     const mockFetch = async (url) => {
       if (url.includes("youtubei/v1/player")) {
         return {
@@ -227,7 +240,14 @@ describe("Multi-Source Lyrics Pipeline Orchestrator", () => {
           json: async () => ({ captions: {} }),
         };
       }
-      throw new Error("LRCLIB must not be queried for YouTube Live without CC: " + url);
+      if (url.includes("lrclib.net")) {
+        lrclibQueried = true;
+        return { ok: true, json: async () => [] };
+      }
+      if (url.includes("zingmp3.vn")) {
+        return { ok: true, json: async () => ({ items: [] }) };
+      }
+      return { ok: false };
     };
 
     const res = await fetchLyrics("See You Again (Live at Grammy)", "Charlie Puth", 240, {
@@ -236,11 +256,12 @@ describe("Multi-Source Lyrics Pipeline Orchestrator", () => {
       fetchImpl: mockFetch,
     });
 
+    expect(lrclibQueried).toBe(true);
     expect(res.ok).toBe(false);
-    expect(res.error).toBe("mv_no_creator_captions");
+    expect(res.error).toBe("no_matching_version");
   });
 
-  it("allows studio fallback for YouTube Audio/Visualizer/Topic when duration matches within <= 4s", async () => {
+  it("allows studio fallback for YouTube Audio/Visualizer/Topic when duration matches within <= 2s", async () => {
     clearLyricsCache();
     const mockFetch = async (url) => {
       if (url.includes("youtubei/v1/player")) {
@@ -274,7 +295,7 @@ describe("Multi-Source Lyrics Pipeline Orchestrator", () => {
     expect(res.lines[0].text).toBe("Chạy ngay đi trước khi...");
   });
 
-  it("rejects studio fallback for YouTube Audio when duration differs by more than 4s", async () => {
+  it("rejects studio fallback for YouTube Audio when duration differs by more than 2s (e.g. 3s difference)", async () => {
     clearLyricsCache();
     const mockFetch = async (url) => {
       if (url.includes("youtubei/v1/player")) {
@@ -287,10 +308,10 @@ describe("Multi-Source Lyrics Pipeline Orchestrator", () => {
         return {
           ok: true,
           json: async () => ({
-            trackName: "Song Name",
-            artistName: "Artist",
-            duration: 200, // Diff is 20s vs target 220s (> 4s)
-            syncedLyrics: "[00:10.00]Mismatch",
+            trackName: "Chạy Ngay Đi",
+            artistName: "Sơn Tùng M-TP",
+            duration: 245, // Diff is 3s vs target 248s (> 2s)
+            syncedLyrics: "[00:12.00]Chạy ngay đi trước khi...",
           }),
         };
       }
@@ -299,10 +320,10 @@ describe("Multi-Source Lyrics Pipeline Orchestrator", () => {
           ok: true,
           json: async () => [
             {
-              trackName: "Song Name",
-              artistName: "Artist",
-              duration: 200, // Diff is 20s
-              syncedLyrics: "[00:10.00]Mismatch",
+              trackName: "Chạy Ngay Đi",
+              artistName: "Sơn Tùng M-TP",
+              duration: 245, // Diff is 3s (> 2s)
+              syncedLyrics: "[00:12.00]Chạy ngay đi trước khi...",
             },
           ],
         };
@@ -310,10 +331,10 @@ describe("Multi-Source Lyrics Pipeline Orchestrator", () => {
       if (url.includes("ac.zingmp3.vn")) {
         return { ok: true, json: async () => ({ data: { items: [] } }) };
       }
-      throw new Error("unexpected URL: " + url);
+      return { ok: false };
     };
 
-    const res = await fetchLyrics("Song Name (Audio)", "Artist", 220, {
+    const res = await fetchLyrics("Chạy Ngay Đi (Official Audio)", "Sơn Tùng M-TP", 248, {
       platform: "youtube",
       videoId: "mismatchedAudio",
       fetchImpl: mockFetch,

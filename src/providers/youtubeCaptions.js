@@ -294,3 +294,113 @@ export async function fetchYouTubeCreatorCaptions(
     clearTimeout(timer);
   }
 }
+
+// ─── CC Lyrics Probe ──────────────────────────────────────────────────────────
+// Minimum total lyric characters for a CC track to be considered a real lyrics
+// track (not just "Cảm ơn các bạn đã xem!" or 1-3 courtesy lines).
+const CC_MIN_CHAR_TOTAL = 120;
+
+// In-memory probe cache: videoId → { hasCcLyrics, expiresAt }
+const ccProbeCache = new Map();
+const CC_PROBE_TTL_MS = 30 * 60 * 1000; // 30 min
+const CC_PROBE_CACHE_MAX = 500;
+
+/**
+ * Lightweight check: does a YouTube video have meaningful creator CC lyrics?
+ * Fetches InnerTube player metadata; if a creator track exists, downloads its
+ * content and verifies the total character count meets the minimum threshold.
+ *
+ * @param {string} videoId
+ * @param {{ fetchImpl?: Function, timeoutMs?: number }} options
+ * @returns {Promise<{ hasCcLyrics: boolean }>}
+ */
+export async function probeYouTubeCcLyrics(
+  videoId,
+  { fetchImpl = globalThis.fetch, timeoutMs = 2500 } = {}
+) {
+  if (!videoId || typeof videoId !== "string" || !YT_VIDEO_ID_RE.test(videoId.trim())) {
+    return { hasCcLyrics: false };
+  }
+
+  // Serve from cache if still fresh
+  const cached = ccProbeCache.get(videoId);
+  if (cached && Date.now() < cached.expiresAt) {
+    return { hasCcLyrics: cached.hasCcLyrics };
+  }
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    const playerRes = await fetchImpl(INNERTUBE_API_URL, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "User-Agent": INNERTUBE_USER_AGENT,
+      },
+      body: JSON.stringify({
+        videoId,
+        context: {
+          client: {
+            clientName: "ANDROID",
+            clientVersion: INNERTUBE_CLIENT_VERSION,
+          },
+        },
+      }),
+      signal: controller.signal,
+    });
+
+    if (!playerRes.ok) {
+      return { hasCcLyrics: false };
+    }
+
+    const playerData = await playerRes.json();
+    const tracks = playerData?.captions?.playerCaptionsTracklistRenderer?.captionTracks;
+
+    if (!Array.isArray(tracks) || tracks.length === 0) {
+      return _saveCcProbe(videoId, false);
+    }
+
+    // Find a creator-uploaded (non-ASR, non-translated) track with a valid URL
+    const creatorTrack = tracks.find((t) => {
+      if (!t || typeof t !== "object") return false;
+      if (t.kind === "asr") return false;
+      if (typeof t.vssId === "string" && t.vssId.startsWith("a.")) return false;
+      if (typeof t.vssId === "string" && t.vssId.includes(".translate")) return false;
+      return Boolean(t.baseUrl);
+    });
+
+    if (!creatorTrack || !isAllowedCaptionUrl(creatorTrack.baseUrl)) {
+      return _saveCcProbe(videoId, false);
+    }
+
+    // Download caption content to verify it's substantial (not just 1-3 courtesy lines)
+    const captionRes = await fetchImpl(creatorTrack.baseUrl, {
+      headers: { "User-Agent": INNERTUBE_USER_AGENT },
+      signal: controller.signal,
+    });
+
+    if (!captionRes.ok) {
+      return _saveCcProbe(videoId, false);
+    }
+
+    const xml = await captionRes.text();
+    const lines = parseYouTubeTimedText(xml);
+
+    // Total characters of meaningful lyric text must meet the minimum threshold
+    const totalChars = lines.reduce((sum, l) => sum + (l.text ? l.text.length : 0), 0);
+    return _saveCcProbe(videoId, totalChars >= CC_MIN_CHAR_TOTAL);
+  } catch {
+    return { hasCcLyrics: false };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+function _saveCcProbe(videoId, hasCcLyrics) {
+  if (ccProbeCache.size >= CC_PROBE_CACHE_MAX) {
+    ccProbeCache.delete(ccProbeCache.keys().next().value);
+  }
+  ccProbeCache.set(videoId, { hasCcLyrics, expiresAt: Date.now() + CC_PROBE_TTL_MS });
+  return { hasCcLyrics };
+}

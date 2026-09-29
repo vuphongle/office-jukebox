@@ -2293,6 +2293,9 @@ function safeImageUrl(value) {
 function resultCard(r) {
   const li = document.createElement("li");
   const badgeHtml = getPlatformIconBadge(r.provider);
+  const ccBadgeHtml = r.hasCcLyrics
+    ? `<span class="cc-lyrics-badge" title="Video có lời bài hát đồng bộ từ phụ đề chính chủ" aria-label="CC Lyrics">🎵 CC Lyrics</span>`
+    : "";
   li.innerHTML = `
     <img src="${safeImageUrl(r.thumbnail)}" alt="" loading="lazy" referrerpolicy="no-referrer" />
     <div class="r-meta">
@@ -2301,6 +2304,7 @@ function resultCard(r) {
         ${badgeHtml}
       </div>
       <div class="r-sub"></div>
+      ${ccBadgeHtml}
     </div>
     <div class="r-actions">
       <span class="r-favorite-slot"></span>
@@ -3409,6 +3413,7 @@ function renderQueue(state) {
         <div class="t-row">
           <span class="t"></span>
           ${getPlatformIconBadge(item.provider)}
+          ${item.hasCcLyrics ? '<span class="cc-lyrics-badge" title="Video có lời bài hát đồng bộ từ phụ đề chính chủ" aria-label="CC Lyrics">🎵 CC Lyrics</span>' : ""}
           ${isPinned ? '<span class="q-pinned-badge">Ghim</span>' : ""}
           <span class="q-favorite-slot"></span>
         </div>

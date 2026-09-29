@@ -33,6 +33,34 @@ export function cleanLyricsQuery(rawTitle, rawArtist) {
   let title = (rawTitle || "").trim();
   let artist = (rawArtist || "").trim();
 
+  // Handle pipe '|' separated YouTube video titles (e.g. "PHƯƠNG MỸ CHI x DTAP | 'THIÊN ĐƯỜNG VỚI NGƯỜI THƯƠNG' | OFFICIAL MUSIC")
+  if (title.includes("|")) {
+    const segments = title.split("|").map((s) => s.trim()).filter(Boolean);
+    const noiseRegex = /^(?:official\s*(?:music\s*)?video|official\s*mv|official\s*audio|mv|audio|lyric\s*video|video\s*lyric|live\s*session|official\s*music|music\s*video|official)$/i;
+    const cleanSegments = segments.filter((s) => !noiseRegex.test(s));
+
+    if (cleanSegments.length >= 2) {
+      // 1. Check if a segment is wrapped in quotes like 'Title' or "Title"
+      const quoted = cleanSegments.find((s) => /^['"“‘].*['"”’]$/.test(s.trim()));
+      if (quoted) {
+        title = quoted.replace(/^['"“‘]\s*|\s*['"”’]$/g, "").trim();
+        const other = cleanSegments.find((s) => s !== quoted);
+        if (other && !artist) {
+          artist = other;
+        }
+      } else {
+        // 2. If first segment matches artist name, remaining is title
+        if (artist && cleanSegments[0].toLowerCase().includes(artist.toLowerCase())) {
+          title = cleanSegments.slice(1).join(" ");
+        } else {
+          title = cleanSegments[0];
+        }
+      }
+    } else if (cleanSegments.length === 1) {
+      title = cleanSegments[0];
+    }
+  }
+
   // If title is in format "Artist - Title", split it or strip matching artist prefix
   if (title.includes(" - ")) {
     const parts = title.split(" - ");
@@ -44,13 +72,14 @@ export function cleanLyricsQuery(rawTitle, rawArtist) {
     }
   }
 
-  // Strip noise patterns: [MV], (Official Audio), (prod. by...), etc.
+  // Strip noise patterns: [MV], (Official Audio), (prod. by...), quotes, etc.
   title = title
+    .replace(/^['"“‘]\s*|\s*['"”’]$/g, "")
     .replace(/\[[^\]]*\]/g, "")
     .replace(/\([^)]*(?:official|video|audio|mv|prod\.|feat\.|ft\.)[^)]*\)/gi, "")
     .replace(/\s*[\-–—|/l•]\s*(?:official|music\s*video|mv|audio|lyric\s*video|video\s*lyric|live\s*session).*$/gi, "")
-    .replace(/\|.*$/g, "")
     .replace(/\s*(?:-\s*)?(?:feat\.|ft\.).*$/gi, "")
+    .replace(/^['"“‘]\s*|\s*['"”’]$/g, "")
     .trim();
 
   // Strip artist noise like " - Topic"
@@ -154,32 +183,23 @@ export async function fetchLyrics(
       }
     } catch {}
 
-    // If YouTube video has NO creator captions:
-    // If it is an MV, Short Film, Live session, Remix, or Acoustic performance:
-    // Studio LRC does not match the video timeline (due to acting, intros, dialogue, or tempo changes).
-    // Never fall back to studio LRC for MV/Live without CC to avoid out-of-sync lyrics.
-    if (versionInfo.isMv || versionInfo.isSpecialPerformance) {
-      const payload = {
-        ok: false,
-        error: "mv_no_creator_captions",
-        reason: "Bản MV/Video không có phụ đề đồng bộ từ tác giả trên YouTube.",
-      };
-      setNegativeCache(cacheKey, { error: payload.error, expiresAt: now + NEGATIVE_CACHE_TTL_MS });
-      return payload;
-    }
+    // YouTube video has no creator captions (or they were rejected).
+    // For MV / Live / Special Performance without CC: studio LRC from LRCLIB or Zing MP3
+    // is only safe if duration matches within 2 s AND artist matches — both already enforced
+    // by isStrictDuration + scoreLyricsCandidate below. Fall through to attempt LRCLIB first.
   }
 
   // 2. LRCLIB (Primary synced lyrics source)
   const primaryArtist = targetArtists[0] || (artist ? artist.split(/[,;&]/)[0].replace(/["']/g, "").trim() : "");
   let lrclibBest = null;
 
-  // For YouTube audio tracks falling back to studio LRC, enforce strict duration matching (<= 4s)
+  // For YouTube audio tracks falling back to studio LRC, enforce strict duration matching (<= 2s)
   const isStrictDuration = (platform === "youtube" || platform === "yt");
 
   try {
     lrclibBest = await queryLrclib(title, artist, primaryArtist, targetArtists, durationSec, fetchImpl, timeoutMs, {
       isStrictDuration,
-      maxDurationDiff: 4,
+      maxDurationDiff: 2,
     });
   } catch {}
 
@@ -193,6 +213,7 @@ export async function fetchLyrics(
       fetchImpl,
       timeoutMs: Math.min(timeoutMs, 3500),
       artists: targetArtists,
+      maxDurationDiff: 2,
     });
     if (zingResult?.ok && Array.isArray(zingResult.lines) && zingResult.lines.length > 0) {
       const payload = {
@@ -221,7 +242,7 @@ async function queryLrclib(
   durationSec,
   fetchImpl,
   timeoutMs,
-  { isStrictDuration = false, maxDurationDiff = 4 } = {}
+  { isStrictDuration = false, maxDurationDiff = 2 } = {}
 ) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);

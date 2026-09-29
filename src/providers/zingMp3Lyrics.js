@@ -67,7 +67,7 @@ export function extractZingCandidates(data) {
 
 const VARIATION_TAGS = ["remix", "cover", "karaoke", "beat", "instrumental", "parody"];
 
-export function validateZingCandidate(cand, { targetTitle = "", targetArtist = "", targetArtists = [], targetDurationSec = null } = {}) {
+export function validateZingCandidate(cand, { targetTitle = "", targetArtist = "", targetArtists = [], targetDurationSec = null, maxDurationDiff = 2 } = {}) {
   if (!cand || typeof cand !== "object") {
     return { valid: false, reason: "invalid_candidate" };
   }
@@ -76,10 +76,10 @@ export function validateZingCandidate(cand, { targetTitle = "", targetArtist = "
     return { valid: false, reason: "no_lyric_link" };
   }
 
-  // 1. Duration check (strict tolerance <= 4s to prevent out-of-sync lyrics)
+  // 1. Duration check (strict tolerance <= 2s to prevent out-of-sync lyrics)
   if (targetDurationSec && Number.isFinite(targetDurationSec) && cand.duration && Number.isFinite(cand.duration)) {
     const diff = Math.abs(cand.duration - targetDurationSec);
-    if (diff > 4) {
+    if (diff > maxDurationDiff) {
       return { valid: false, reason: "duration_mismatch", diff };
     }
   }
@@ -94,7 +94,19 @@ export function validateZingCandidate(cand, { targetTitle = "", targetArtist = "
     }
   }
 
-  // 3. Artist check
+  // 3. Title match validation (ensure candidate title has overlapping keywords with target title)
+  if (normTargetTitle && normCandTitle) {
+    const targetWords = normTargetTitle.split(" ").filter((w) => w.length >= 2);
+    const candWords = normCandTitle.split(" ").filter((w) => w.length >= 2);
+    const matchingWords = targetWords.filter((w) => candWords.includes(w));
+    const matchRatio = targetWords.length > 0 ? matchingWords.length / targetWords.length : 0;
+
+    if (matchingWords.length === 0 || (targetWords.length >= 2 && matchRatio < 0.35 && matchingWords.length < 2)) {
+      return { valid: false, reason: "title_mismatch" };
+    }
+  }
+
+  // 4. Artist check
   const allTargetArtists = Array.isArray(targetArtists) && targetArtists.length > 0
     ? targetArtists
     : parseArtistListFromString(targetArtist);
@@ -125,7 +137,7 @@ export async function fetchZingMp3Lyrics(
   title,
   artist = "",
   durationSec = null,
-  { fetchImpl = globalThis.fetch, timeoutMs = 3500, artists = [] } = {}
+  { fetchImpl = globalThis.fetch, timeoutMs = 3500, artists = [], maxDurationDiff = 2 } = {}
 ) {
   if (!title || !title.trim()) {
     return { ok: false, error: "empty_title" };
@@ -165,7 +177,7 @@ export async function fetchZingMp3Lyrics(
             allCandidates.push(...list);
             // If we found a candidate with lyricLink and matching duration, stop querying
             const quickMatch = list.find((it) => {
-              const v = validateZingCandidate(it, { targetTitle: title, targetArtist: artist, targetArtists, targetDurationSec: durationSec });
+              const v = validateZingCandidate(it, { targetTitle: title, targetArtist: artist, targetArtists, targetDurationSec: durationSec, maxDurationDiff });
               return v.valid;
             });
             if (quickMatch) break;
@@ -186,6 +198,7 @@ export async function fetchZingMp3Lyrics(
         targetArtist: artist,
         targetArtists,
         targetDurationSec: durationSec,
+        maxDurationDiff,
       });
       if (validation.valid) {
         // Calculate match score
