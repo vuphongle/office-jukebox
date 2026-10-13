@@ -52,6 +52,7 @@ import {
   isValidTikTokUrl,
   parseTikTokUrl,
   fetchTikTokMetadata,
+  deleteCachedTikTokMetadata,
 } from "./src/tiktok.js";
 import { resolveMediaLink } from "./src/mediaLinkResolver.js";
 import { fetchLyrics, prefetchLyricsForTrack } from "./src/lyricsService.js";
@@ -1545,16 +1546,62 @@ app.post("/api/spotify/disconnect", requireHostAuth, (req, res) => {
 });
 
 app.get("/api/tiktok/stream", publicReadLimit, async (req, res) => {
+  res.set("Cache-Control", "no-store");
+  res.set("Access-Control-Allow-Origin", "*");
   const rawUrl = typeof req.query?.url === "string" ? req.query.url.trim() : "";
   if (!rawUrl || !isValidTikTokUrl(rawUrl)) {
     return res.status(400).json({ ok: false, error: "invalid_tiktok_url" });
   }
   try {
-    const meta = await fetchTikTokMetadata(rawUrl);
+    let meta = await fetchTikTokMetadata(rawUrl);
     if (!meta || !meta.streamUrl) {
       return res.status(502).json({ ok: false, error: "stream_not_available" });
     }
-    res.redirect(302, meta.streamUrl);
+
+    const tryFetchStream = async (url) => {
+      const resp = await fetch(url, {
+        headers: {
+          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
+          Accept: "*/*",
+          Range: req.headers.range || "bytes=0-",
+        },
+      });
+      return resp;
+    };
+
+    let streamRes = await tryFetchStream(meta.streamUrl).catch(() => null);
+    if (!streamRes || streamRes.status === 403 || streamRes.status === 410) {
+      deleteCachedTikTokMetadata(rawUrl);
+      meta = await fetchTikTokMetadata(rawUrl);
+      if (meta?.streamUrl) {
+        streamRes = await tryFetchStream(meta.streamUrl).catch(() => null);
+      }
+    }
+
+    if (!streamRes || !streamRes.ok) {
+      if (meta?.streamUrl) {
+        return res.redirect(302, meta.streamUrl);
+      }
+      return res.status(502).json({ ok: false, error: "stream_not_available" });
+    }
+
+    res.status(streamRes.status);
+    const contentType = streamRes.headers.get("content-type") || "audio/mpeg";
+    const contentLength = streamRes.headers.get("content-length");
+    const contentRange = streamRes.headers.get("content-range");
+    const acceptRanges = streamRes.headers.get("accept-ranges");
+
+    res.set("Content-Type", contentType);
+    if (contentLength) res.set("Content-Length", contentLength);
+    if (contentRange) res.set("Content-Range", contentRange);
+    if (acceptRanges) res.set("Accept-Ranges", acceptRanges);
+
+    if (streamRes.body) {
+      const { Readable } = await import("node:stream");
+      Readable.fromWeb(streamRes.body).pipe(res);
+    } else {
+      res.end();
+    }
   } catch (err) {
     res.status(500).json({ ok: false, error: err.message || "stream_fetch_failed" });
   }
@@ -1789,6 +1836,7 @@ app.post("/api/request", songRequestIpLimit, async (req, res) => {
       channel: canonical.channel,
       artists: canonical.artists || [],
       duration: canonical.duration,
+      musicDurationSec: canonical.musicDurationSec || 0,
       thumbnail: canonical.thumbnail,
       addedBy: requesterName,
       requesterId,
@@ -2511,16 +2559,29 @@ let latestPlaybackTick = null;
 let latestSpotifyPlaybackTick = null;
 
 state.onChange = (nextState) => {
-  if (latestPlaybackTick && latestPlaybackTick.videoId !== nextState.nowPlaying?.videoId) {
+  const curVideoId = nextState.nowPlaying?.videoId || null;
+  if (curVideoId) {
+    if (!latestPlaybackTick || latestPlaybackTick.videoId !== curVideoId) {
+      latestPlaybackTick = {
+        type: "playbackTick",
+        videoId: curVideoId,
+        position: 0,
+        paused: true,
+        seek: false,
+        serverTime: Date.now(),
+      };
+      latestSpotifyPlaybackTick = null;
+    }
+  } else {
     latestPlaybackTick = null;
     latestSpotifyPlaybackTick = null;
   }
   broadcastState();
-  const curProvider = nextState.nowPlaying?.provider || "youtube";
-  const isTickSupported = curProvider === "spotify" || curProvider === "youtube" || curProvider === "yt";
-  if (isTickSupported && latestPlaybackTick && !latestPlaybackTick.paused) {
+  if (latestPlaybackTick) {
     const now = Date.now();
-    const elapsed = Math.max(0, now - (latestPlaybackTick.serverTime || now));
+    const elapsed = latestPlaybackTick.paused
+      ? 0
+      : Math.max(0, now - (latestPlaybackTick.serverTime || now));
     const tickMsg = JSON.stringify({
       type: "playbackTick",
       ...latestPlaybackTick,
@@ -2951,12 +3012,10 @@ wss.on("connection", (ws, request) => {
               serverTime: now,
             }));
           } else if (state.nowPlaying) {
-            const isYt = state.nowPlaying.provider === "youtube" || state.nowPlaying.provider === "yt";
-            const elapsed = (!isYt && state.nowPlaying.startedAt) ? Math.max(0, now - state.nowPlaying.startedAt) : 0;
             ws.send(JSON.stringify({
               type: "playbackTick",
-              position: elapsed,
-              paused: isYt ? true : false,
+              position: 0,
+              paused: true,
               seek: false,
               videoId: state.nowPlaying.videoId || "",
               serverTime: now,

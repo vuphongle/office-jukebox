@@ -120,6 +120,12 @@ export function clearTikTokCache() {
   tiktokMetadataCache.clear();
 }
 
+export function deleteCachedTikTokMetadata(canonicalUrl) {
+  if (!canonicalUrl) return false;
+  const normalized = parseTikTokUrl(canonicalUrl) || canonicalUrl;
+  return tiktokMetadataCache.delete(normalized);
+}
+
 export function setCachedTikTokMetadata(canonicalUrl, data) {
   tiktokMetadataCache.set(canonicalUrl, {
     data,
@@ -161,15 +167,34 @@ export async function fetchTikTokMetadata(
         const d = json.data;
         const channel = (d.music_info?.author || d.author?.nickname || d.author?.unique_id || "TikTok Creator").trim();
         const title = cleanTikTokTitle(d.title, d.music_info?.title, channel);
-        const duration = formatDurationSeconds(d.duration);
+        const videoDurationSec = Number(d.duration) || 0;
+        const musicDurationSec = Number(d.music_info?.duration) || 0;
+        const effectiveDurationSec = musicDurationSec > 0 ? musicDurationSec : videoDurationSec;
+        const duration = formatDurationSeconds(effectiveDurationSec);
         const thumbnail = d.cover || d.origin_cover || d.author?.avatar || null;
-        const streamUrl = d.music || d.music_info?.play || d.play || "";
+
+        let streamUrl = "";
+        let streamKind = "music";
+        if (d.music) {
+          streamUrl = d.music;
+          streamKind = "music";
+        } else if (d.music_info?.play) {
+          streamUrl = d.music_info.play;
+          streamKind = "music";
+        } else if (d.play) {
+          streamUrl = d.play;
+          streamKind = "video";
+        }
 
         const song = {
           videoId: normalizedUrl,
           title,
           channel,
           duration,
+          durationSec: effectiveDurationSec,
+          musicDurationSec,
+          videoDurationSec,
+          streamKind,
           thumbnail,
           provider: "tiktok",
           streamUrl,

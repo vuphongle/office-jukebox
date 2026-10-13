@@ -2730,7 +2730,7 @@ async function loadGuestLyrics(np, { autoOpen = false } = {}) {
     const isYt = curNp && (curNp.provider === "youtube" || curNp.provider === "yt");
     guestLyricsAnchorPosition = 0;
     guestLyricsAnchorTime = performance.now();
-    guestLyricsPaused = isYt ? true : false;
+    guestLyricsPaused = true;
     if (lastQueueState) renderQueue(lastQueueState);
     startGuestLyricsSyncLoop();
     if (queueWs && queueWs.readyState === WebSocket.OPEN) {
@@ -2947,8 +2947,7 @@ function toggleGuestLyrics(active) {
   }
 
   if (guestLyricsActive && np) {
-    const isYt = np.provider === "youtube" || np.provider === "yt";
-    guestLyricsPaused = isYt ? true : false;
+    guestLyricsPaused = true;
     if (queueWs && queueWs.readyState === WebSocket.OPEN) {
       queueWs.send(JSON.stringify({ type: "requestPlaybackTick" }));
     }
@@ -3046,7 +3045,7 @@ function connectWs() {
           userCollapsedTrackId = "";
           guestLyricsAnchorPosition = 0;
           guestLyricsAnchorTime = performance.now();
-          guestLyricsPaused = isYt ? true : false;
+          guestLyricsPaused = true;
           loadGuestLyrics(curNp, { autoOpen: true });
           if (queueWs && queueWs.readyState === WebSocket.OPEN) {
             queueWs.send(JSON.stringify({ type: "requestPlaybackTick" }));
@@ -3054,7 +3053,7 @@ function connectWs() {
         } else if (guestLyricsActive && String(trackId) !== String(currentGuestLyricsTrackId)) {
           guestLyricsAnchorPosition = 0;
           guestLyricsAnchorTime = performance.now();
-          guestLyricsPaused = isYt ? true : false;
+          guestLyricsPaused = true;
           loadGuestLyrics(curNp, { autoOpen: true });
           if (queueWs && queueWs.readyState === WebSocket.OPEN) {
             queueWs.send(JSON.stringify({ type: "requestPlaybackTick" }));
@@ -3071,7 +3070,7 @@ function connectWs() {
       if (guestLyricsActive) {
         const curNp = lastQueueState?.nowPlaying;
         const isSupportedProvider = Boolean(
-          curNp && (curNp.provider === "spotify" || curNp.provider === "youtube" || curNp.provider === "yt")
+          curNp && (curNp.provider === "spotify" || curNp.provider === "youtube" || curNp.provider === "yt" || curNp.provider === "tiktok" || curNp.provider === "soundcloud")
         );
         if (isSupportedProvider && (!msg.videoId || msg.videoId === curNp.videoId)) {
           const isPaused = Boolean(msg.paused);

@@ -204,7 +204,7 @@ export class JukeboxState {
   }
 
   // Add a moderated/approved song and return the created item with its position.
-  add({ videoId, title, channel, duration, thumbnail, addedBy, requesterId, userId = null, provider = "youtube", requesterIp = "", deviceId = "", artists = [], hasCcLyrics = false }) {
+  add({ videoId, title, channel, duration, thumbnail, addedBy, requesterId, userId = null, provider = "youtube", requesterIp = "", deviceId = "", artists = [], hasCcLyrics = false, musicDurationSec = 0 }) {
     let dbItem = null;
     if (this.queueRepo) {
       dbItem = this.queueRepo.createItem({
@@ -234,6 +234,7 @@ export class JukeboxState {
       channel: channel || "",
       artists: resolvedArtists,
       duration: normalizeDuration(duration),
+      musicDurationSec: Number(musicDurationSec) || 0,
       thumbnail: thumbnail || null,
       addedBy: (addedBy || "").slice(0, 40),
       requesterId: (requesterId || "").toString().slice(0, 64),
