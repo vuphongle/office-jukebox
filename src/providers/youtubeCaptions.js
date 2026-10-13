@@ -1,20 +1,12 @@
 // Provider for fetching creator-uploaded (human) YouTube captions
-// Excludes auto-generated ASR captions and enforces original language matching.
+// Refactored to delegate to youtubeLyricsResolver.js as the single source of truth.
 
-const INNERTUBE_API_URL = "https://www.youtube.com/youtubei/v1/player?prettyPrint=false";
-const INNERTUBE_CLIENT_VERSION = "20.10.38";
-const INNERTUBE_USER_AGENT = `com.google.android.youtube/${INNERTUBE_CLIENT_VERSION} (Linux; U; Android 14)`;
-
-// SSRF protection: only allow fetching from these YouTube-controlled domains
-const ALLOWED_CAPTION_HOSTS = new Set([
-  "www.youtube.com",
-  "youtube.com",
-  "googlevideo.com",
-  "ytimg.com",
-]);
-
-// Valid YouTube video IDs: 11 chars, alphanumeric + hyphen + underscore
-const YT_VIDEO_ID_RE = /^[A-Za-z0-9_-]{6,32}$/;
+import {
+  resolveYouTubeCreatorLyrics,
+  parseYouTubeTimedText as parseXmlTimedText,
+  decodeHtmlEntities as decodeEntities,
+  isAllowedCaptionUrl,
+} from "./youtubeLyricsResolver.js";
 
 export function detectOriginalLanguage(title = "", artist = "") {
   const text = `${title} ${artist}`;
@@ -48,10 +40,6 @@ export function selectOriginalCreatorTrack(captionTracks, originalLang) {
     return null;
   }
 
-  // 1. Strictly filter to creator-uploaded tracks:
-  // - No kind: "asr" (Auto Speech Recognition)
-  // - No vssId starting with "a." (auto-generated)
-  // - No translation markers
   const creatorTracks = captionTracks.filter((t) => {
     if (!t || typeof t !== "object") return false;
     if (t.kind === "asr") return false;
@@ -66,7 +54,6 @@ export function selectOriginalCreatorTrack(captionTracks, originalLang) {
 
   const targetLang = (originalLang || "en").toLowerCase();
 
-  // 2. Find track exactly matching the detected original language
   const exactMatch = creatorTracks.find((t) => {
     const code = (t.languageCode || "").toLowerCase();
     const vss = (t.vssId || "").toLowerCase();
@@ -77,7 +64,6 @@ export function selectOriginalCreatorTrack(captionTracks, originalLang) {
     return exactMatch;
   }
 
-  // 3. Prefix match for regional variants (e.g. "zh-Hans" -> "zh", "en-US" -> "en")
   const prefixMatch = creatorTracks.find((t) => {
     const code = (t.languageCode || "").toLowerCase();
     return code.startsWith(targetLang);
@@ -87,320 +73,37 @@ export function selectOriginalCreatorTrack(captionTracks, originalLang) {
     return prefixMatch;
   }
 
-  // If the original language was detected as a specific non-English language (e.g. Vietnamese, Korean, Japanese)
-  // and no creator track exists for that language, do NOT return an English translated track!
-  // Return null so the pipeline falls back to LRCLIB / Zing MP3 in the native language.
   if (targetLang !== "en") {
     return null;
   }
 
-  // For English songs, if no exact "en" track found, check the first creator track
   return creatorTracks[0] || null;
 }
 
-const HTML_ENTITY_MAP = {
-  "&amp;": "&",
-  "&quot;": '"',
-  "&apos;": "'",
-  "&#39;": "'",
-  "&lt;": "<",
-  "&gt;": ">",
-  "&nbsp;": " ",
-  "&ndash;": "–",
-  "&mdash;": "—",
-  "&hellip;": "…",
-  "&lsquo;": "‘",
-  "&rsquo;": "’",
-  "&ldquo;": "“",
-  "&rdquo;": "”",
-  "&bull;": "•",
-  "&copy;": "©",
-  "&trade;": "™",
-  "&reg;": "®",
-};
-
-export function decodeHtmlEntities(str = "") {
-  if (typeof str !== "string") return "";
-  return str
-    .replace(/&(?:amp|quot|apos|#39|lt|gt|nbsp|ndash|mdash|hellip|lsquo|rsquo|ldquo|rdquo|bull|copy|trade|reg);/gi, (m) => HTML_ENTITY_MAP[m.toLowerCase()] || m)
-    .replace(/&#(\d+);/g, (_, code) => {
-      const n = parseInt(code, 10);
-      return Number.isFinite(n) && n > 0 ? String.fromCharCode(n) : "";
-    })
-    .replace(/&#x([0-9a-f]+);/gi, (_, hex) => {
-      const n = parseInt(hex, 16);
-      return Number.isFinite(n) && n > 0 ? String.fromCharCode(n) : "";
-    });
-}
-
-export function parseYouTubeTimedText(xmlText) {
-  if (typeof xmlText !== "string" || !xmlText.trim()) return [];
-
-  const lines = [];
-  // Match both <p t="ms" d="ms">text</p> and <text start="s" dur="s">text</text>
-  const pRegex = /<p\s+[^>]*?t="(\d+)"(?:[^>]*?d="(\d+)")?[^>]*>(.*?)<\/p>/gis;
-  const textRegex = /<text\s+[^>]*?start="([\d.]+)"(?:[^>]*?dur="([\d.]+)")?[^>]*>(.*?)<\/text>/gis;
-
-  let match;
-  while ((match = pRegex.exec(xmlText)) !== null) {
-    const timeMs = parseInt(match[1], 10);
-    const rawText = match[3];
-    const text = cleanCaptionText(rawText);
-    if (text) {
-      lines.push({ time: Math.max(0, timeMs / 1000), text });
-    }
-  }
-
-  if (lines.length === 0) {
-    while ((match = textRegex.exec(xmlText)) !== null) {
-      const timeSec = parseFloat(match[1]);
-      const rawText = match[3];
-      const text = cleanCaptionText(rawText);
-      if (text && Number.isFinite(timeSec)) {
-        lines.push({ time: Math.max(0, timeSec), text });
-      }
-    }
-  }
-
-  return lines.sort((a, b) => a.time - b.time);
-}
-
-function cleanCaptionText(raw) {
-  if (typeof raw !== "string" || !raw.trim()) return "";
-  // 1. Replace line break tags with space
-  let text = raw.replace(/<br\s*\/?>/gi, " ");
-  // 2. Remove XML/HTML tags (like <font ...>, <s>, <span>, etc.) BEFORE decoding entities
-  // to avoid accidentally stripping emoticons like <3
-  text = text.replace(/<[^>]+>/g, "");
-  // 3. Decode HTML entities so creator special characters (♪, quotes, <3, etc.) are properly restored
-  text = decodeHtmlEntities(text);
-  // 4. Normalize whitespace (collapse tabs/multiple spaces into single space)
-  // Strictly preserve all creator-authored special characters (♪, ♫, #, quotes, punctuation, brackets, emoticons)
-  text = text.replace(/[ \t\f\v]+/g, " ").trim();
-
-  return text;
-}
-
-/**
- * Returns true if a URL's hostname is in the YouTube-controlled domain allow-list.
- * Used to prevent SSRF when the player API returns a baseUrl that could point to
- * an attacker-controlled server.
- * @param {string} rawUrl
- */
-function isAllowedCaptionUrl(rawUrl) {
-  if (typeof rawUrl !== "string" || !rawUrl.startsWith("https://")) return false;
-  try {
-    const { hostname } = new URL(rawUrl);
-    // Accept exact match or any subdomain of an allowed host
-    return [...ALLOWED_CAPTION_HOSTS].some(
-      (h) => hostname === h || hostname.endsWith(`.${h}`)
-    );
-  } catch {
-    return false;
-  }
-}
+export const decodeHtmlEntities = decodeEntities;
+export const parseYouTubeTimedText = parseXmlTimedText;
 
 export async function fetchYouTubeCreatorCaptions(
   videoId,
-  { title = "", artist = "", fetchImpl = globalThis.fetch, timeoutMs = 3500 } = {}
+  { title = "", artist = "", fetchImpl = globalThis.fetch, timeoutMs = 6000 } = {}
 ) {
-  if (!videoId || typeof videoId !== "string" || !YT_VIDEO_ID_RE.test(videoId.trim())) {
-    return { ok: false, error: "invalid_video_id" };
-  }
-
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
-
-  try {
-    const playerRes = await fetchImpl(INNERTUBE_API_URL, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "User-Agent": INNERTUBE_USER_AGENT,
-      },
-      body: JSON.stringify({
-        videoId,
-        context: {
-          client: {
-            clientName: "ANDROID",
-            clientVersion: INNERTUBE_CLIENT_VERSION,
-          },
-        },
-      }),
-      signal: controller.signal,
-    });
-
-    if (!playerRes.ok) {
-      return { ok: false, error: "player_api_error" };
-    }
-
-    const playerData = await playerRes.json();
-    const tracks = playerData?.captions?.playerCaptionsTracklistRenderer?.captionTracks;
-
-    if (!Array.isArray(tracks) || tracks.length === 0) {
-      return { ok: false, error: "no_creator_captions" };
-    }
-
-    const ytTitle = playerData?.videoDetails?.title || "";
-    const ytAuthor = playerData?.videoDetails?.author || "";
-    let originalLang = detectOriginalLanguage(title, artist);
-    if (originalLang === "en" && (ytTitle || ytAuthor)) {
-      const fallbackLang = detectOriginalLanguage(ytTitle, ytAuthor);
-      if (fallbackLang !== "en") {
-        originalLang = fallbackLang;
-      }
-    }
-    const selectedTrack = selectOriginalCreatorTrack(tracks, originalLang);
-
-    if (!selectedTrack || !selectedTrack.baseUrl) {
-      return { ok: false, error: "no_creator_captions" };
-    }
-
-    // SSRF guard: reject caption URLs that don't point to YouTube's own infrastructure
-    if (!isAllowedCaptionUrl(selectedTrack.baseUrl)) {
-      return { ok: false, error: "invalid_caption_url" };
-    }
-
-    // Fetch the timedtext XML from the baseUrl
-    const captionRes = await fetchImpl(selectedTrack.baseUrl, {
-      headers: { "User-Agent": INNERTUBE_USER_AGENT },
-      signal: controller.signal,
-    });
-
-    if (!captionRes.ok) {
-      return { ok: false, error: "caption_download_failed" };
-    }
-
-    const xml = await captionRes.text();
-    const lines = parseYouTubeTimedText(xml);
-
-    if (lines.length === 0) {
-      return { ok: false, error: "empty_captions" };
-    }
-
-    return {
-      ok: true,
-      synced: true,
-      source: "youtube_captions",
-      language: selectedTrack.languageCode || originalLang,
-      lines,
-    };
-  } catch (err) {
-    return {
-      ok: false,
-      error: err.name === "AbortError" ? "timeout" : "network_error",
-    };
-  } finally {
-    clearTimeout(timer);
-  }
+  return resolveYouTubeCreatorLyrics(videoId, {
+    title,
+    artist,
+    fetchImpl,
+    timeoutMs,
+    mode: "full",
+  });
 }
 
-// ─── CC Lyrics Probe ──────────────────────────────────────────────────────────
-// Minimum total lyric characters for a CC track to be considered a real lyrics
-// track (not just "Cảm ơn các bạn đã xem!" or 1-3 courtesy lines).
-const CC_MIN_CHAR_TOTAL = 120;
-
-// In-memory probe cache: videoId → { hasCcLyrics, expiresAt }
-const ccProbeCache = new Map();
-const CC_PROBE_TTL_MS = 30 * 60 * 1000; // 30 min
-const CC_PROBE_CACHE_MAX = 500;
-
-/**
- * Lightweight check: does a YouTube video have meaningful creator CC lyrics?
- * Fetches InnerTube player metadata; if a creator track exists, downloads its
- * content and verifies the total character count meets the minimum threshold.
- *
- * @param {string} videoId
- * @param {{ fetchImpl?: Function, timeoutMs?: number }} options
- * @returns {Promise<{ hasCcLyrics: boolean }>}
- */
 export async function probeYouTubeCcLyrics(
   videoId,
   { fetchImpl = globalThis.fetch, timeoutMs = 2500 } = {}
 ) {
-  if (!videoId || typeof videoId !== "string" || !YT_VIDEO_ID_RE.test(videoId.trim())) {
-    return { hasCcLyrics: false };
-  }
-
-  // Serve from cache if still fresh
-  const cached = ccProbeCache.get(videoId);
-  if (cached && Date.now() < cached.expiresAt) {
-    return { hasCcLyrics: cached.hasCcLyrics };
-  }
-
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
-
-  try {
-    const playerRes = await fetchImpl(INNERTUBE_API_URL, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "User-Agent": INNERTUBE_USER_AGENT,
-      },
-      body: JSON.stringify({
-        videoId,
-        context: {
-          client: {
-            clientName: "ANDROID",
-            clientVersion: INNERTUBE_CLIENT_VERSION,
-          },
-        },
-      }),
-      signal: controller.signal,
-    });
-
-    if (!playerRes.ok) {
-      return { hasCcLyrics: false };
-    }
-
-    const playerData = await playerRes.json();
-    const tracks = playerData?.captions?.playerCaptionsTracklistRenderer?.captionTracks;
-
-    if (!Array.isArray(tracks) || tracks.length === 0) {
-      return _saveCcProbe(videoId, false);
-    }
-
-    // Find a creator-uploaded (non-ASR, non-translated) track with a valid URL
-    const creatorTrack = tracks.find((t) => {
-      if (!t || typeof t !== "object") return false;
-      if (t.kind === "asr") return false;
-      if (typeof t.vssId === "string" && t.vssId.startsWith("a.")) return false;
-      if (typeof t.vssId === "string" && t.vssId.includes(".translate")) return false;
-      return Boolean(t.baseUrl);
-    });
-
-    if (!creatorTrack || !isAllowedCaptionUrl(creatorTrack.baseUrl)) {
-      return _saveCcProbe(videoId, false);
-    }
-
-    // Download caption content to verify it's substantial (not just 1-3 courtesy lines)
-    const captionRes = await fetchImpl(creatorTrack.baseUrl, {
-      headers: { "User-Agent": INNERTUBE_USER_AGENT },
-      signal: controller.signal,
-    });
-
-    if (!captionRes.ok) {
-      return _saveCcProbe(videoId, false);
-    }
-
-    const xml = await captionRes.text();
-    const lines = parseYouTubeTimedText(xml);
-
-    // Total characters of meaningful lyric text must meet the minimum threshold
-    const totalChars = lines.reduce((sum, l) => sum + (l.text ? l.text.length : 0), 0);
-    return _saveCcProbe(videoId, totalChars >= CC_MIN_CHAR_TOTAL);
-  } catch {
-    return { hasCcLyrics: false };
-  } finally {
-    clearTimeout(timer);
-  }
-}
-
-function _saveCcProbe(videoId, hasCcLyrics) {
-  if (ccProbeCache.size >= CC_PROBE_CACHE_MAX) {
-    ccProbeCache.delete(ccProbeCache.keys().next().value);
-  }
-  ccProbeCache.set(videoId, { hasCcLyrics, expiresAt: Date.now() + CC_PROBE_TTL_MS });
-  return { hasCcLyrics };
+  const result = await resolveYouTubeCreatorLyrics(videoId, {
+    fetchImpl,
+    timeoutMs,
+    mode: "probe",
+  });
+  return { hasCcLyrics: Boolean(result?.hasCcLyrics) };
 }

@@ -62,7 +62,7 @@
     timeoutMs = 6000,
   } = {}) {
     const { title, artist } = cleanLyricsQuery(rawTitle, rawArtist);
-    if (!title) return null;
+    const isYt = platform === "youtube" || platform === "yt";
 
     // 1. Try local backend /api/lyrics first
     try {
@@ -88,20 +88,25 @@
         if (json.ok && Array.isArray(json.lines) && json.lines.length > 0) {
           return json;
         }
-      }
-    } catch {}
-
-    // 2. Direct browser fallback to LRCLIB API with smart queries
-    try {
-      const isYt = platform === "youtube" || platform === "yt";
-      if (isYt) {
-        const isMv = /\b(?:official\s*(?:music\s*)?video|official\s*mv|\bmv\b|\bm\/v\b|music\s*video|video\s*clip|phim\s*ca\s*nh\u1ea1c|short\s*film)\b/i.test(rawTitle);
-        const isSpecialPerformance = /\b(?:live\s*(?:session|at|performance|acoustic)?|concert|performance\s*video|acoustic|remix|cover|dance\s*practice|speed\s*up|slowed)\b/i.test(rawTitle);
-        if (isMv || isSpecialPerformance) {
-          // Do not fall back to studio album lyrics for YouTube MVs/Live that lack CC
-          return null;
+        if (isYt) {
+          return { ok: false, error: json.error || "no_creator_captions" };
         }
+      } else if (isYt) {
+        return { ok: false, error: "no_creator_captions" };
       }
+    } catch {
+      if (isYt) {
+        return { ok: false, error: "no_creator_captions" };
+      }
+    }
+
+    // For YouTube, creator-uploaded captions are the ONLY permitted source: no browser fallback
+    if (isYt) {
+      return { ok: false, error: "no_creator_captions" };
+    }
+
+    // 2. Direct browser fallback to LRCLIB API with smart queries (Non-YouTube only)
+    try {
 
       const targetArtists = Array.isArray(artists) && artists.length > 0
         ? artists

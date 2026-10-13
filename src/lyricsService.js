@@ -1,4 +1,4 @@
-// Lyrics service orchestrating multi-source lyrics (YouTube Creator Captions -> LRCLIB -> Zing MP3)
+// Lyrics service: YouTube uses creator captions ONLY; other platforms use LRCLIB -> Zing MP3
 
 import { scoreLyricsCandidate, detectTrackVersionType } from "./lyricsMatcher.js";
 import { parseArtistListFromString } from "./spotify.js";
@@ -130,6 +130,12 @@ export async function fetchLyrics(
     videoId = "",
   } = {}
 ) {
+  const isYouTube = platform === "youtube" || platform === "yt";
+
+  if (isYouTube && !videoId) {
+    return { ok: false, error: "missing_video_id" };
+  }
+
   const { title, artist } = cleanLyricsQuery(rawTitle, rawArtist);
   if (!title) return { ok: false, error: "empty_title" };
 
@@ -138,7 +144,7 @@ export async function fetchLyrics(
     : parseArtistListFromString(artist);
 
   const artistKey = targetArtists.length > 0 ? targetArtists.join(",").toLowerCase() : artist.toLowerCase();
-  const cacheKey = `${artistKey}:::${title.toLowerCase()}`;
+  const cacheKey = isYouTube ? `yt:${videoId}` : `meta:${artistKey}:::${title.toLowerCase()}`;
 
   if (lyricsCache.has(cacheKey)) {
     // LRU: move to end so recently-accessed entries survive eviction longer
@@ -157,17 +163,16 @@ export async function fetchLyrics(
     negativeCache.delete(cacheKey);
   }
 
-  const versionInfo = detectTrackVersionType(rawTitle, rawArtist);
-
-  // 1. YouTube Creator Captions (only for YouTube platform when videoId is provided)
-  if ((platform === "youtube" || platform === "yt") && videoId) {
+  // 1. YouTube platform: ONLY creator captions, strictly NO fall-through to LRCLIB or Zing MP3
+  if (isYouTube) {
     try {
       const ytResult = await fetchYouTubeCreatorCaptions(videoId, {
         title,
         artist,
         fetchImpl,
-        timeoutMs: Math.min(timeoutMs, 3500),
+        timeoutMs: Math.max(timeoutMs, 6000),
       });
+
       if (ytResult?.ok && Array.isArray(ytResult.lines) && ytResult.lines.length > 0) {
         const payload = {
           ok: true,
@@ -181,25 +186,26 @@ export async function fetchLyrics(
         cachePayload(cacheKey, payload);
         return payload;
       }
-    } catch {}
 
-    // YouTube video has no creator captions (or they were rejected).
-    // For MV / Live / Special Performance without CC: studio LRC from LRCLIB or Zing MP3
-    // is only safe if duration matches within 2 s AND artist matches — both already enforced
-    // by isStrictDuration + scoreLyricsCandidate below. Fall through to attempt LRCLIB first.
+      // Negative cache only certain definitive errors
+      if (ytResult?.error === "no_creator_captions") {
+        setNegativeCache(cacheKey, { error: "no_creator_captions", expiresAt: now + NEGATIVE_CACHE_TTL_MS });
+      }
+
+      return { ok: false, error: ytResult?.error || "no_creator_captions" };
+    } catch (err) {
+      return { ok: false, error: "network_error" };
+    }
   }
 
-  // 2. LRCLIB (Primary synced lyrics source)
+  // 2. Non-YouTube platforms (Spotify, SoundCloud, TikTok): LRCLIB (Primary synced lyrics source)
   const primaryArtist = targetArtists[0] || (artist ? artist.split(/[,;&]/)[0].replace(/["']/g, "").trim() : "");
   let lrclibBest = null;
 
-  // For YouTube audio tracks falling back to studio LRC, enforce strict duration matching (<= 2s)
-  const isStrictDuration = (platform === "youtube" || platform === "yt");
-
   try {
     lrclibBest = await queryLrclib(title, artist, primaryArtist, targetArtists, durationSec, fetchImpl, timeoutMs, {
-      isStrictDuration,
-      maxDurationDiff: 2,
+      isStrictDuration: false,
+      maxDurationDiff: 4,
     });
   } catch {}
 
@@ -207,7 +213,7 @@ export async function fetchLyrics(
     return saveAndReturnLyrics(cacheKey, lrclibBest, title, artist || primaryArtist, "lrclib");
   }
 
-  // 3. Fallback to Zing MP3 API (Secondary source, rich in Vietnamese/regional songs)
+  // 3. Fallback to Zing MP3 API (Secondary source)
   try {
     const zingResult = await fetchZingMp3Lyrics(title, artist, durationSec, {
       fetchImpl,

@@ -375,7 +375,8 @@ async function loadLyrics(rawTitle, rawArtist, duration, artists = [], platform 
   const cleaned = lyricsClient
     ? lyricsClient.cleanLyricsQuery(rawTitle, rawArtist)
     : { title: (rawTitle || "").trim(), artist: (rawArtist || "").trim() };
-  const trackKey = `${cleaned.artist.toLowerCase()}:::${cleaned.title.toLowerCase()}`;
+  const isYt = platform === "youtube" || platform === "yt";
+  const trackKey = isYt && videoId ? `yt:${videoId}` : `${cleaned.artist.toLowerCase()}:::${cleaned.title.toLowerCase()}`;
   if (trackKey === currentLyricsTrackKey && currentLyrics) {
     return;
   }
@@ -385,6 +386,8 @@ async function loadLyrics(rawTitle, rawArtist, duration, artists = [], platform 
 
   const contentEl = document.getElementById("spotify-lyrics-content");
   const scrollerEl = document.getElementById("spotify-lyrics-scroller");
+  const sourceTagEl = document.getElementById("spotify-lyrics-source-tag");
+  if (sourceTagEl) sourceTagEl.style.display = "none";
   if (contentEl) {
     contentEl.classList.add("is-loading");
     contentEl.classList.remove("is-empty");
@@ -424,7 +427,10 @@ async function loadLyrics(rawTitle, rawArtist, duration, artists = [], platform 
     if (contentEl) {
       contentEl.classList.remove("is-loading");
       contentEl.classList.add("is-empty");
-      contentEl.innerHTML = `<div class="spotify-lyrics-empty"><span>🎵</span><span>Chưa có lời bài hát đồng bộ cho bài hát này.</span></div>`;
+      const emptyMsg = isYt
+        ? "Video này chưa có lời bài hát chính chủ (phụ đề do kênh đăng tải)."
+        : "Chưa có lời bài hát đồng bộ cho bài hát này.";
+      contentEl.innerHTML = `<div class="spotify-lyrics-empty"><span>🎵</span><span>${emptyMsg}</span></div>`;
     }
     if (scrollerEl) {
       scrollerEl.classList.remove("is-loading");
@@ -434,6 +440,14 @@ async function loadLyrics(rawTitle, rawArtist, duration, artists = [], platform 
   }
 
   currentLyrics = data;
+  if (sourceTagEl) {
+    if (data.source === "youtube_captions") {
+      sourceTagEl.textContent = `Phụ đề chính chủ · ${(data.language || "VI").toUpperCase()}`;
+      sourceTagEl.style.display = "inline-block";
+    } else {
+      sourceTagEl.style.display = "none";
+    }
+  }
   renderLyricsLines(data.lines);
 }
 

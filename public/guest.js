@@ -2608,7 +2608,10 @@ async function loadGuestLyrics(np, { autoOpen = false } = {}) {
   const rawTitle = np.title || "";
   const rawArtist = np.channel || "";
   const duration = np.duration;
-  const trackId = np.videoId || np.id || `${rawArtist.toLowerCase()}:::${rawTitle.toLowerCase()}`;
+  const isYtTrack = np.platform === "youtube" || np.platform === "yt" || np.provider === "youtube" || np.provider === "yt";
+  const trackId = isYtTrack && (np.videoId || np.id)
+    ? `yt:${np.videoId || np.id}`
+    : (np.videoId || np.id || `${rawArtist.toLowerCase()}:::${rawTitle.toLowerCase()}`);
 
   if (trackId === currentGuestLyricsTrackId && currentGuestLyrics?.lines && currentGuestLyrics.lines.length > 0) {
     if (autoOpen && !guestLyricsActive) {
@@ -2640,6 +2643,8 @@ async function loadGuestLyrics(np, { autoOpen = false } = {}) {
 
   const contentEl = document.getElementById("np-lyrics-content");
   const scrollerEl = document.getElementById("np-lyrics-scroller");
+  const sourceTagEl = document.querySelector(".np-lyrics-source-tag");
+  if (sourceTagEl) sourceTagEl.style.display = "none";
   if (contentEl) {
     contentEl.classList.add("is-loading");
     contentEl.classList.remove("is-empty");
@@ -2695,7 +2700,10 @@ async function loadGuestLyrics(np, { autoOpen = false } = {}) {
     if (currentContentEl) {
       currentContentEl.classList.remove("is-loading");
       currentContentEl.classList.add("is-empty");
-      currentContentEl.innerHTML = `<div class="np-lyrics-empty"><span>🎵</span><span>Chưa có lời bài hát đồng bộ cho bài hát này.</span></div>`;
+      const emptyMsg = isYtTrack
+        ? "Video này chưa có lời bài hát chính chủ (phụ đề do kênh đăng tải)."
+        : "Chưa có lời bài hát đồng bộ cho bài hát này.";
+      currentContentEl.innerHTML = `<div class="np-lyrics-empty"><span>🎵</span><span>${emptyMsg}</span></div>`;
     }
     if (currentScrollerEl) {
       currentScrollerEl.classList.remove("is-loading");
@@ -2705,6 +2713,14 @@ async function loadGuestLyrics(np, { autoOpen = false } = {}) {
   }
 
   currentGuestLyrics = data;
+  if (sourceTagEl) {
+    if (data.source === "youtube_captions") {
+      sourceTagEl.textContent = `Phụ đề chính chủ · ${(data.language || "VI").toUpperCase()}`;
+      sourceTagEl.style.display = "inline-block";
+    } else {
+      sourceTagEl.style.display = "none";
+    }
+  }
   if (autoOpen && !guestLyricsActive) {
     if (String(trackId) === String(userCollapsedTrackId)) {
       return;
@@ -3257,6 +3273,7 @@ function renderQueue(state) {
                 <div class="np-lyrics-badge">
                   <span class="eq"><span></span><span></span><span></span></span>
                   <span>Lời bài hát · Đồng bộ</span>
+                  <span class="np-lyrics-source-tag" style="display:none;font-size:10px;opacity:0.85;margin-left:4px;padding:1px 5px;border-radius:4px;background:rgba(255,255,255,0.18);"></span>
                 </div>
                 <div class="np-lyrics-title"></div>
                 <div class="np-lyrics-sub"></div>
