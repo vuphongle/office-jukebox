@@ -5,6 +5,55 @@ let rankBenefitsPromise = null;
 const favoritesController = window.JukeboxFavoritesController.create();
 let favoritesViewActive = false;
 
+let serverClockOffset = 0;
+let rolloverTimer = null;
+let lastKnownLocalDate = null;
+
+function scheduleRolloverTimer(nextRolloverAt) {
+  if (rolloverTimer) clearTimeout(rolloverTimer);
+  if (!nextRolloverAt) return;
+  const targetMs = new Date(nextRolloverAt).getTime();
+  const nowMs = Date.now() + serverClockOffset;
+  const delay = targetMs - nowMs;
+  if (delay > 0 && delay < 24 * 60 * 60 * 1000) {
+    rolloverTimer = setTimeout(() => {
+      fetchMe();
+    }, delay + 1000);
+  }
+}
+
+function urlBase64ToUint8Array(base64String) {
+  const padding = "=".repeat((4 - (base64String.length % 4)) % 4);
+  const base64 = (base64String + padding).replace(/-/g, "+").replace(/_/g, "/");
+  const rawData = window.atob(base64);
+  const outputArray = new Uint8Array(rawData.length);
+  for (let i = 0; i < rawData.length; ++i) {
+    outputArray[i] = rawData.charCodeAt(i);
+  }
+  return outputArray;
+}
+
+if ("serviceWorker" in navigator) {
+  navigator.serviceWorker.register("/sw.js", { scope: "/" }).catch((err) => {
+    console.warn("[sw] registration failed:", err);
+  });
+}
+
+// 60-second periodic date check fallback
+setInterval(() => {
+  if (currentUser && currentUser.streakView?.localDate) {
+    const today = new Intl.DateTimeFormat("en-CA", {
+      timeZone: "Asia/Ho_Chi_Minh",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    }).format(new Date(Date.now() + serverClockOffset));
+    if (currentUser.streakView.localDate !== today) {
+      fetchMe();
+    }
+  }
+}, 60000);
+
 async function loadRankBenefits() {
   if (rankBenefitsPromise) return rankBenefitsPromise;
   rankBenefitsPromise = fetch("/api/rank/benefits")
@@ -54,7 +103,14 @@ async function fetchMe() {
     const res = await fetch("/api/me");
     const data = await res.json();
     if (data.ok && data.authenticated && data.user) {
+      if (typeof data.serverNow === "number") {
+        serverClockOffset = data.serverNow - Date.now();
+      }
       currentUser = data.user;
+      lastKnownLocalDate = currentUser.streakView?.localDate || null;
+      if (currentUser.streakView?.nextRolloverAt) {
+        scheduleRolloverTimer(currentUser.streakView.nextRolloverAt);
+      }
       syncFavoritesIdentity();
       await loadFavorites();
       renderUserAuthBar();
@@ -85,10 +141,26 @@ function renderUserAuthBar() {
   if (!bar) return;
   if (currentUser) {
     const avatarLetter = escapeHtml((currentUser.displayName || currentUser.username || "U").trim().charAt(0).toUpperCase());
-    const hasCheckedIn = Boolean(currentUser.hasCheckedInToday);
-    const streakTitle = hasCheckedIn
-      ? `Đã điểm danh hôm nay · Chuỗi ${currentUser.currentStreak || 0} ngày`
-      : `Chưa điểm danh hôm nay · Nhấn để thắp sáng chuỗi ${currentUser.currentStreak || 0} ngày!`;
+    const streakView = currentUser.streakView;
+    const isCheckedIn = streakView ? streakView.checkedInToday : Boolean(currentUser.hasCheckedInToday);
+    const isBroken = streakView ? streakView.streakBroken : false;
+    const displayStreak = streakView ? streakView.displayStreak : (currentUser.currentStreak || 0);
+
+    let streakClass = "inactive";
+    let streakTitle = "";
+    if (isCheckedIn) {
+      streakClass = "active";
+      streakTitle = `Đã điểm danh hôm nay · Chuỗi ${displayStreak} ngày`;
+    } else if (isBroken) {
+      streakClass = "broken";
+      streakTitle = streakView?.restoreEligible
+        ? `Chuỗi đã bị gián đoạn · Nhấn để khôi phục ngay!`
+        : `Chuỗi đã kết thúc · Nhấn để bắt đầu chuỗi mới!`;
+    } else {
+      streakClass = "inactive";
+      streakTitle = `Chưa điểm danh hôm nay · Nhấn để thắp sáng chuỗi ${displayStreak} ngày!`;
+    }
+
     bar.innerHTML = `
       <div class="user-profile-badge">
         <a class="user-account-link" href="/account" aria-label="Mở trang tài khoản của ${escapeHtml(currentUser.displayName || currentUser.username)}">
@@ -96,9 +168,9 @@ function renderUserAuthBar() {
           <span class="user-name"><strong>${escapeHtml(currentUser.displayName || currentUser.username)}</strong></span>
         </a>
         <span id="user-points-pill" class="user-points-pill" title="Xem lịch sử / Điểm danh">${currentUser.pointsBalance} 🪙</span>
-        <span id="user-streak-pill" class="user-streak-pill ${hasCheckedIn ? "active" : "inactive"}" title="${escapeHtml(streakTitle)}" role="button" tabindex="0">
+        <span id="user-streak-pill" class="user-streak-pill ${streakClass}" title="${escapeHtml(streakTitle)}" role="button" tabindex="0">
           <span class="user-streak-flame" aria-hidden="true">🔥</span>
-          <span class="user-streak-count">${currentUser.currentStreak || 0}d</span>
+          <span class="user-streak-count">${displayStreak}d</span>
         </span>
         <button data-notification-bell class="notification-bell" type="button" aria-label="Mở thông báo">
           <svg aria-hidden="true" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M18 9a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4" /></svg>
@@ -296,18 +368,143 @@ async function handleLogout() {
 }
 
 // --- Daily Check-in & Streak Modal ----------------------------------------
+async function checkStreakRestoreCard() {
+  const card = document.getElementById("streak-restore-card");
+  const btn = document.getElementById("do-restore-btn");
+  const title = document.getElementById("restore-card-title");
+  const desc = document.getElementById("restore-card-desc");
+  if (!card || !btn) return;
+
+  try {
+    const res = await fetch("/api/me/streak");
+    const data = await res.json();
+    if (!data.ok) {
+      card.classList.add("hidden");
+      return;
+    }
+    if (data.restoreAvailable) {
+      card.classList.remove("hidden");
+      btn.disabled = false;
+      btn.textContent = "Khôi phục chuỗi";
+      if (title) title.textContent = `Khôi phục chuỗi ${data.brokenStreak} ngày 🔥`;
+      const monthNum = data.monthKey ? data.monthKey.slice(5) : "";
+      if (desc) desc.textContent = `Chuỗi của bạn đã bị gián đoạn hôm qua. Bạn còn 1 lượt khôi phục trong tháng ${monthNum}!`;
+    } else if (data.restoreEligible && !data.hasQuota) {
+      card.classList.remove("hidden");
+      btn.disabled = true;
+      btn.textContent = "Hết lượt tháng này";
+      if (title) title.textContent = "Đã dùng lượt khôi phục tháng này";
+      const nextMonth = data.restoreResetsAt
+        ? new Date(data.restoreResetsAt).toLocaleDateString("vi-VN", { month: "2-digit", year: "numeric" })
+        : "tháng sau";
+      if (desc) desc.textContent = `Lượt khôi phục tiếp theo sẽ mở lại vào ${nextMonth}.`;
+    } else {
+      card.classList.add("hidden");
+    }
+  } catch {
+    card.classList.add("hidden");
+  }
+}
+
+async function updatePushReminderUI() {
+  const btn = document.getElementById("push-reminder-toggle-btn");
+  const label = document.getElementById("push-reminder-btn-label");
+  const area = document.getElementById("push-reminder-area");
+  if (!btn || !label || !area) return;
+
+  if (!("serviceWorker" in navigator) || !("PushManager" in window) || !("Notification" in window)) {
+    area.classList.add("hidden");
+    return;
+  }
+  area.classList.remove("hidden");
+
+  try {
+    const reg = await navigator.serviceWorker.ready;
+    const sub = await reg.pushManager.getSubscription();
+    if (sub) {
+      btn.classList.add("subscribed");
+      label.textContent = "✓ Đang bật nhắc nhở 22:00 (Nhấn để tắt)";
+    } else {
+      btn.classList.remove("subscribed");
+      label.textContent = "🔔 Nhắc tôi điểm danh lúc 22:00";
+    }
+  } catch {
+    btn.classList.remove("subscribed");
+    label.textContent = "🔔 Nhắc tôi điểm danh lúc 22:00";
+  }
+}
+
+async function togglePushReminder() {
+  const btn = document.getElementById("push-reminder-toggle-btn");
+  if (!currentUser) return;
+
+  btn.disabled = true;
+  try {
+    const reg = await navigator.serviceWorker.ready;
+    const existingSub = await reg.pushManager.getSubscription();
+
+    if (existingSub) {
+      await existingSub.unsubscribe();
+      await fetch("/api/me/push/subscribe", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ endpoint: existingSub.endpoint }),
+      });
+      toast("info", "🔕", "Đã tắt nhắc nhở điểm danh.");
+    } else {
+      const permission = await Notification.requestPermission();
+      if (permission !== "granted") {
+        toast("bad", "!", "Bạn đã từ chối quyền gửi thông báo trên trình duyệt.");
+        return;
+      }
+
+      const keyRes = await fetch("/api/push/vapid-public-key");
+      const keyData = await keyRes.json();
+      if (!keyData.ok || !keyData.publicKey) {
+        toast("bad", "!", "Hệ thống chưa cấu hình VAPID key.");
+        return;
+      }
+
+      const applicationServerKey = urlBase64ToUint8Array(keyData.publicKey);
+      const newSub = await reg.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey,
+      });
+
+      const subJson = newSub.toJSON();
+      await fetch("/api/me/push/subscribe", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          endpoint: subJson.endpoint,
+          keys: subJson.keys,
+        }),
+      });
+
+      toast("ok", "🔔", "Đã bật nhắc nhở điểm danh 22:00 mỗi ngày!");
+    }
+    await updatePushReminderUI();
+  } catch (err) {
+    toast("bad", "⚠️", "Không thể thiết lập thông báo đẩy: " + err.message);
+  } finally {
+    btn.disabled = false;
+  }
+}
+
 function openCheckinModal() {
   if (!currentUser) {
     openAuthModal("login");
     return;
   }
   const modal = document.getElementById("checkin-modal");
-  document.getElementById("modal-streak-count").textContent = currentUser.currentStreak || 0;
+  const streakView = currentUser.streakView;
+  const displayStreak = streakView ? streakView.displayStreak : (currentUser.currentStreak || 0);
+  document.getElementById("modal-streak-count").textContent = displayStreak;
   document.getElementById("checkin-greeting").textContent = `Xin chào ${currentUser.displayName || currentUser.username}!`;
   updateRankBenefitModal();
   if (!rankBenefits.length) loadRankBenefits().then(updateRankBenefitModal);
 
-  const streak = currentUser.currentStreak || 0;
+  const streak = displayStreak;
   const cycle = streak % 30;
   document.getElementById("ms-3").classList.toggle("achieved", cycle >= 3);
   document.getElementById("ms-7").classList.toggle("achieved", cycle >= 7);
@@ -315,15 +512,21 @@ function openCheckinModal() {
   document.getElementById("ms-30").classList.toggle("achieved", cycle === 0 && streak > 0);
 
   const checkinBtn = document.getElementById("do-checkin-btn");
-  if (currentUser.hasCheckedInToday) {
+  const isCheckedIn = streakView ? streakView.checkedInToday : Boolean(currentUser.hasCheckedInToday);
+  if (isCheckedIn) {
     checkinBtn.disabled = true;
     checkinBtn.textContent = "✓ Bạn đã điểm danh hôm nay rồi";
     document.getElementById("checkin-status-text").textContent = "Hãy quay lại vào ngày mai để duy trì streak nhé!";
   } else {
     checkinBtn.disabled = false;
     checkinBtn.textContent = `✨ Điểm Danh Nhận Điểm (+${Number(currentUser.rank?.checkinPoints) || 1} 🪙)`;
-    document.getElementById("checkin-status-text").textContent = "Điểm danh mỗi ngày để nhận điểm vote bài hát và mở khóa mốc thưởng!";
+    document.getElementById("checkin-status-text").textContent = streakView?.streakBroken
+      ? "Chuỗi điểm danh của bạn đã bị gián đoạn. Điểm danh hôm nay để bắt đầu chuỗi mới hoặc khôi phục!"
+      : "Điểm danh mỗi ngày để nhận điểm vote bài hát và mở khóa mốc thưởng!";
   }
+
+  checkStreakRestoreCard();
+  updatePushReminderUI();
 
   modal.classList.remove("hidden");
 }
@@ -334,6 +537,33 @@ function closeCheckinModal() {
 
 document.getElementById("checkin-modal-close")?.addEventListener("click", closeCheckinModal);
 
+document.getElementById("do-restore-btn")?.addEventListener("click", async () => {
+  const btn = document.getElementById("do-restore-btn");
+  btn.disabled = true;
+  btn.textContent = "Đang khôi phục…";
+  try {
+    const res = await fetch("/api/me/streak/restore", { method: "POST" });
+    const data = await res.json();
+    if (data.ok) {
+      toast("ok", "🔥", "Đã khôi phục chuỗi thành công!", {
+        sub: `Chuỗi hiện tại của bạn là ${data.streak} ngày!`,
+      });
+      await fetchMe();
+      openCheckinModal();
+    } else {
+      toast("bad", "!", data.reason || "Không thể khôi phục chuỗi.");
+      btn.disabled = false;
+      btn.textContent = "Khôi phục chuỗi";
+    }
+  } catch (err) {
+    toast("bad", "⚠️", "Lỗi kết nối: " + err.message);
+    btn.disabled = false;
+    btn.textContent = "Khôi phục chuỗi";
+  }
+});
+
+document.getElementById("push-reminder-toggle-btn")?.addEventListener("click", togglePushReminder);
+
 document.getElementById("do-checkin-btn")?.addEventListener("click", async () => {
   const btn = document.getElementById("do-checkin-btn");
   btn.disabled = true;
@@ -343,9 +573,7 @@ document.getElementById("do-checkin-btn")?.addEventListener("click", async () =>
     const res = await fetch("/api/me/checkin", { method: "POST" });
     const data = await res.json();
     if (data.ok) {
-      currentUser.pointsBalance = data.newBalance;
-      currentUser.currentStreak = data.streak;
-      currentUser.hasCheckedInToday = true;
+      await fetchMe();
 
       let msg = `+${data.pointsAwarded} điểm danh ngày`;
       if (data.bonusPoints > 0) {
@@ -2968,10 +3196,19 @@ function initGuestLyrics() {
     }
   });
   document.addEventListener("visibilitychange", () => {
-    if (!document.hidden && guestLyricsActive && queueWs?.readyState === WebSocket.OPEN) {
-      queueWs.send(JSON.stringify({ type: "requestPlaybackTick" }));
+    if (!document.hidden) {
+      if (guestLyricsActive && queueWs?.readyState === WebSocket.OPEN) {
+        queueWs.send(JSON.stringify({ type: "requestPlaybackTick" }));
+      }
+      if (currentUser) {
+        fetchMe();
+      }
     }
   });
+}
+
+if (new URLSearchParams(location.search).get("checkin") === "1") {
+  setTimeout(() => openCheckinModal(), 400);
 }
 
 // ---- Live queue (WebSocket) ------------------------------------------------
@@ -3006,6 +3243,10 @@ function connectWs() {
     }
     if (!msg || typeof msg !== "object" || Array.isArray(msg)) return;
     window.JukeboxNotifications?.handleSocketMessage(msg);
+    if (msg.type === "day_rollover") {
+      fetchMe();
+      return;
+    }
     if (msg.type === "spotifyRateLimitStatus") {
       updateSpotifyStatusUI(msg, { justReset: Boolean(msg.justReset) });
       return;

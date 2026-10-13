@@ -17,6 +17,7 @@
   "dependencies": {
     "express": "^4.19.2",
     "qrcode": "^1.5.4",
+    "web-push": "^3.6.7",
     "ws": "^8.18.0"
   }
 }

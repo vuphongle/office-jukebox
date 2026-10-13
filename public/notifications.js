@@ -97,6 +97,8 @@
     return {
       engagement_reward: "Thưởng thành tích",
       streak_milestone: "Mốc streak",
+      streak_restore: "Khôi phục chuỗi",
+      checkin_reminder: "Nhắc nhở điểm danh",
       vote_refund: "Hoàn điểm vote",
       airdrop_direct: "Airdrop điểm",
       admin_adjustment: "Cộng điểm từ admin",
