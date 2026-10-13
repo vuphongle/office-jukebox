@@ -153,6 +153,8 @@ export function createAuthMiddleware(db) {
           pointsBalance: session.points_balance,
           currentStreak: session.current_streak,
           lastCheckinDate: session.last_checkin_date,
+          brokenStreak: session.broken_streak,
+          brokenMissedDate: session.broken_missed_date,
         };
       }
     }

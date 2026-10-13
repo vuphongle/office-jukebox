@@ -28,6 +28,109 @@ export function getYesterdayLocalDate(timezone = null, date = new Date()) {
   return getLocalDate(timezone, yesterday);
 }
 
+export function getTzOffsetMs(date, timeZone) {
+  try {
+    const parts = new Intl.DateTimeFormat("en-US", {
+      timeZone: resolveTimezone(timeZone),
+      year: "numeric",
+      month: "numeric",
+      day: "numeric",
+      hour: "numeric",
+      minute: "numeric",
+      second: "numeric",
+      hour12: false,
+    }).formatToParts(date);
+    const m = {};
+    for (const p of parts) m[p.type] = p.value;
+    const h = m.hour === "24" ? 0 : Number(m.hour);
+    const asUtc = Date.UTC(Number(m.year), Number(m.month) - 1, Number(m.day), h, Number(m.minute), Number(m.second));
+    return Math.round((asUtc - date.getTime()) / 60000) * 60000;
+  } catch {
+    return 7 * 60 * 60 * 1000;
+  }
+}
+
+export function getNextMidnight(timezone = null, now = new Date()) {
+  const resolvedTz = resolveTimezone(timezone);
+  const todayStr = getLocalDate(resolvedTz, now);
+  const [y, m, d] = todayStr.split("-").map(Number);
+  const offsetMs = getTzOffsetMs(now, resolvedTz);
+  let localMidnightUtcMs = Date.UTC(y, m - 1, d + 1, 0, 0, 0) - offsetMs;
+  let nextDate = new Date(localMidnightUtcMs);
+  const nextOffsetMs = getTzOffsetMs(nextDate, resolvedTz);
+  if (nextOffsetMs !== offsetMs) {
+    localMidnightUtcMs = Date.UTC(y, m - 1, d + 1, 0, 0, 0) - nextOffsetMs;
+    nextDate = new Date(localMidnightUtcMs);
+  }
+  return nextDate;
+}
+
+export function computeStreakView(user, now = new Date(), timezone = null) {
+  const resolvedTz = resolveTimezone(timezone);
+  const localDate = getLocalDate(resolvedTz, now);
+  const yesterday = getYesterdayLocalDate(resolvedTz, now);
+  const dayBeforeYesterday = getLocalDate(resolvedTz, new Date(now.getTime() - 2 * 24 * 60 * 60 * 1000));
+  const nextMidnight = getNextMidnight(resolvedTz, now);
+  const nextRolloverAt = nextMidnight.toISOString();
+
+  const lastCheckin = user?.last_checkin_date || null;
+  const currentStreak = Math.max(0, Number(user?.current_streak) || 0);
+
+  if (lastCheckin === localDate) {
+    // Checked in today!
+    const canRestore = Boolean(
+      user?.broken_missed_date === yesterday && (Number(user?.broken_streak) || 0) > 0
+    );
+    return {
+      displayStreak: currentStreak,
+      checkedInToday: true,
+      streakAlive: true,
+      streakBroken: false,
+      localDate,
+      nextRolloverAt,
+      restoreEligible: canRestore,
+    };
+  }
+
+  if (lastCheckin === yesterday) {
+    // Checked in yesterday, not yet today. Streak alive, display current streak.
+    return {
+      displayStreak: currentStreak,
+      checkedInToday: false,
+      streakAlive: true,
+      streakBroken: false,
+      localDate,
+      nextRolloverAt,
+      restoreEligible: false,
+    };
+  }
+
+  if (lastCheckin === dayBeforeYesterday) {
+    // Missed exactly yesterday (1 day gap). Streak broken, eligible for restore!
+    return {
+      displayStreak: 0,
+      checkedInToday: false,
+      streakAlive: false,
+      streakBroken: true,
+      localDate,
+      nextRolloverAt,
+      restoreEligible: currentStreak > 0,
+    };
+  }
+
+  // Missed >= 2 days or never checked in
+  const hadStreak = Boolean(lastCheckin && currentStreak > 0);
+  return {
+    displayStreak: 0,
+    checkedInToday: false,
+    streakAlive: false,
+    streakBroken: hadStreak,
+    localDate,
+    nextRolloverAt,
+    restoreEligible: false,
+  };
+}
+
 export function calculateMilestoneBonus(streakAfter) {
   // Milestone bonuses: day 3: +2, day 7: +5, day 14: +10, day 30: +20.
   // After day 30, the cycle repeats modulo 30.
@@ -100,8 +203,16 @@ export function performCheckin(
 
     // Calculate streak
     let streakAfter = 1;
+    let brokenStreak = 0;
+    let brokenMissedDate = null;
     if (user.last_checkin_date === yesterday) {
       streakAfter = (user.current_streak || 0) + 1;
+    } else {
+      const dayBeforeYesterday = getLocalDate(timezone, new Date(now.getTime() - 2 * 24 * 60 * 60 * 1000));
+      if (user.last_checkin_date === dayBeforeYesterday && (user.current_streak || 0) > 0) {
+        brokenStreak = user.current_streak || 0;
+        brokenMissedDate = yesterday;
+      }
     }
 
     const { bonus: bonusPoints, isMilestone, milestoneDay } = calculateMilestoneBonus(streakAfter);
@@ -149,9 +260,9 @@ export function performCheckin(
     const immediateBalance = user.points_balance + immediateAwarded;
     db.run(
       `UPDATE users
-       SET points_balance = ?, current_streak = ?, last_checkin_date = ?, updated_at = ?
+       SET points_balance = ?, current_streak = ?, last_checkin_date = ?, broken_streak = ?, broken_missed_date = ?, updated_at = ?
        WHERE id = ?`,
-      [immediateBalance, streakAfter, today, nowIso, userId]
+      [immediateBalance, streakAfter, today, brokenStreak, brokenMissedDate, nowIso, userId]
     );
 
     const notifications = [];
