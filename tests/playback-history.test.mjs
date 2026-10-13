@@ -216,7 +216,7 @@ test("GET /api/history requires authentication and returns only the current user
   closeDb();
 
   const port = 47000 + Math.floor(Math.random() * 1000);
-  const child = spawn("bun", ["server.js"], {
+  const child = spawn(process.execPath, ["server.js"], {
     cwd: ROOT,
     env: {
       ...process.env,
@@ -284,8 +284,11 @@ test("GET /api/history requires authentication and returns only the current user
     assert.equal(data2.items.length, 5);
     assert.equal(data2.items[0].videoId, "yt_5");
   } finally {
-    child.kill("SIGTERM");
+    child.kill(process.platform === "win32" ? "SIGKILL" : "SIGTERM");
     await new Promise((resolve) => child.once("exit", resolve));
+    if (process.platform === "win32") {
+      await new Promise((resolve) => setTimeout(resolve, 80));
+    }
     rmSync(dataDir, { recursive: true, force: true });
   }
 });

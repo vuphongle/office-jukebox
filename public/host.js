@@ -29,6 +29,7 @@ if (hostCoordinationChannel) {
 let currentVideoId = null;
 let currentPlaybackToken = null;
 let terminalReportedForToken = null;
+let playbackEventHandlers = null;
 let latestState = { nowPlaying: null, queue: [] };
 
 // Multi-platform state
@@ -354,56 +355,17 @@ window.onYouTubeIframeAPIReady = function () {
       },
       onStateChange: (e) => {
         if (e.data === YT.PlayerState.PLAYING) {
-          const actualId = player.getVideoData ? player.getVideoData()?.video_id : null;
-          if (actualId && currentVideoId && actualId !== currentVideoId) {
-            console.warn("[reconcile] YouTube videoId mismatch in onStateChange PLAYING:", {
-              actual: actualId,
-              expected: currentVideoId,
-            });
-            player.stopVideo();
-            player.loadVideoById(currentVideoId);
-            return;
-          }
-          if (autoplayMutedRecoveryActive) {
-            autoplayMutedRecoveryActive = false;
-            try { player.unMute?.(); } catch {}
-          }
           clearTimeout(playbackWatchdog);
           hidePlaybackRecovery();
           startYouTubeSync();
         } else if (e.data === YT.PlayerState.PAUSED || e.data === YT.PlayerState.BUFFERING) {
           stopYouTubeSync();
           broadcastYouTubeTick({ seek: false, forcedPaused: true });
-        } else if (e.data === YT.PlayerState.ENDED) {
-          stopYouTubeSync();
-          if (activePlayerProvider === "youtube" && currentPlaybackToken && terminalReportedForToken !== currentPlaybackToken) {
-            if (send({
-              type: "ended",
-              videoId: currentVideoId,
-              playbackToken: currentPlaybackToken,
-              playedSeconds: getCurrentPlayerTime(),
-            })) {
-              terminalReportedForToken = currentPlaybackToken;
-            }
-          }
         }
         updatePlayPauseIcon();
       },
-      onAutoplayBlocked: () => attemptAutoplayRecovery(),
-      onError: (e) => {
-        stopYouTubeSync();
-        console.warn("YouTube player error", e?.data, "for", currentVideoId);
-        if (activePlayerProvider === "youtube" && currentPlaybackToken && terminalReportedForToken !== currentPlaybackToken) {
-          if (send({
-            type: "error",
-            videoId: currentVideoId,
-            playbackToken: currentPlaybackToken,
-            code: e?.data ?? null,
-          })) {
-            terminalReportedForToken = currentPlaybackToken;
-          }
-        }
-      },
+      onAutoplayBlocked: () => showPlaybackRecovery(),
+      onError: () => {},
     },
   });
 };
@@ -1541,6 +1503,11 @@ function syncPlayer() {
   if (!np) {
     clearTimeout(playbackWatchdog);
     stopSpotifySync();
+    if (playbackEventHandlers && player?.removeEventListener) {
+      player.removeEventListener("onStateChange", playbackEventHandlers.onStateChange);
+      player.removeEventListener("onError", playbackEventHandlers.onError);
+    }
+    playbackEventHandlers = null;
     currentVideoId = null;
     currentPlaybackToken = null;
     terminalReportedForToken = null;
@@ -1594,6 +1561,11 @@ function syncPlayer() {
   updatePlayPauseIcon();
 
   if (np.videoId !== currentVideoId || np.playbackToken !== currentPlaybackToken) {
+    if (playbackEventHandlers && player?.removeEventListener) {
+      player.removeEventListener("onStateChange", playbackEventHandlers.onStateChange);
+      player.removeEventListener("onError", playbackEventHandlers.onError);
+    }
+    playbackEventHandlers = null;
     currentVideoId = np.videoId;
     currentPlaybackToken = np.playbackToken || null;
     currentProvider = provider;
@@ -1605,6 +1577,25 @@ function syncPlayer() {
     tiktokResumeTime = 0;
     tiktokRetryCount = 0;
     clearTimeout(tiktokRetryTimer);
+
+    const eventVideoId = np.videoId;
+    const eventPlaybackToken = np.playbackToken || null;
+    let terminalReported = false;
+
+    const sendTerminal = (type, code = null) => {
+      if (terminalReported || !eventPlaybackToken) return;
+      const payload = {
+        type,
+        videoId: eventVideoId,
+        playbackToken: eventPlaybackToken,
+      };
+      if (type === "ended") payload.playedSeconds = getCurrentPlayerTime();
+      if (type === "error") payload.code = code;
+      if (send(payload)) {
+        terminalReported = true;
+        if (eventPlaybackToken === currentPlaybackToken) terminalReportedForToken = eventPlaybackToken;
+      }
+    };
 
     if (provider === "youtube") {
       stopSpotifySync();
@@ -1623,7 +1614,48 @@ function syncPlayer() {
 
       if (!playerReady) return;
 
+      playbackEventHandlers = {
+        onStateChange: (e) => {
+          if (e.data === YT.PlayerState.PLAYING) {
+            const actualId = player.getVideoData ? player.getVideoData()?.video_id : null;
+            if (actualId && currentVideoId && actualId !== currentVideoId) {
+              console.warn("[reconcile] YouTube videoId mismatch in onStateChange PLAYING:", {
+                actual: actualId,
+                expected: currentVideoId,
+              });
+              player.stopVideo();
+              player.loadVideoById(currentVideoId);
+              return;
+            }
+            if (autoplayMutedRecoveryActive) {
+              autoplayMutedRecoveryActive = false;
+              try { player.unMute?.(); } catch {}
+            }
+            clearTimeout(playbackWatchdog);
+            hidePlaybackRecovery();
+            startYouTubeSync();
+          } else if (e.data === YT.PlayerState.PAUSED || e.data === YT.PlayerState.BUFFERING) {
+            stopYouTubeSync();
+            broadcastYouTubeTick({ seek: false, forcedPaused: true });
+          } else if (e.data === YT.PlayerState.ENDED) {
+            stopYouTubeSync();
+            sendTerminal("ended");
+          }
+          updatePlayPauseIcon();
+        },
+        onError: (e) => {
+          stopYouTubeSync();
+          console.warn("YouTube player error", e?.data, "for", eventVideoId);
+          sendTerminal("error", e?.data ?? null);
+        },
+      };
+      if (player.addEventListener) {
+        player.addEventListener("onStateChange", playbackEventHandlers.onStateChange);
+        player.addEventListener("onError", playbackEventHandlers.onError);
+      }
+
       player.loadVideoById(np.videoId);
+      player.playVideo();
       setTimeout(() => {
         if (activePlayerProvider === "youtube" && playerReady && latestState?.nowPlaying?.videoId === np.videoId) {
           const s = player.getPlayerState ? player.getPlayerState() : -1;
@@ -1991,12 +2023,16 @@ function reconcilePlayback() {
   }
 }
 
-setInterval(reconcilePlayback, 3000);
+let reconcileInterval = null;
+function startPlaybackReconciler() {
+  if (reconcileInterval) return;
+  reconcileInterval = setInterval(reconcilePlayback, 3000);
+}
 document.addEventListener("visibilitychange", () => {
-  if (!document.hidden) reconcilePlayback();
+  if (!document.hidden && started) reconcilePlayback();
 });
 window.addEventListener("focus", () => {
-  reconcilePlayback();
+  if (started) reconcilePlayback();
 });
 
 // ---- Silent Audio Keeper ---------------------------------------------------
@@ -2053,6 +2089,11 @@ function updateMediaSession(np) {
 window.addEventListener("pageshow", (e) => {
   if (!e.persisted) return;
   clearTimeout(playbackWatchdog);
+  if (playbackEventHandlers && player?.removeEventListener) {
+    player.removeEventListener("onStateChange", playbackEventHandlers.onStateChange);
+    player.removeEventListener("onError", playbackEventHandlers.onError);
+  }
+  playbackEventHandlers = null;
   if (silentAudioCtx && silentAudioCtx.state === "suspended") {
     silentAudioCtx.resume().catch(() => {});
   }
@@ -3001,6 +3042,7 @@ document.getElementById("start-btn").onclick = () => {
   document.getElementById("stage").classList.remove("hidden");
   registerOrderNetworkHost();
   startOrderNetworkHostRefresh();
+  startPlaybackReconciler();
   syncPlayer();
 };
 
