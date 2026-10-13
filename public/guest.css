@@ -1561,6 +1561,28 @@ header .desktop-intro { display: none; }
 .user-streak-pill.active:hover .user-streak-flame {
   transform: scale(1.12);
 }
+
+/* Streak broken (đứt chuỗi) - gạch ngang và ngọn lửa xám mờ */
+.user-streak-pill.broken {
+  color: var(--muted);
+  background: oklch(24% .01 260 / .45);
+  border-color: oklch(34% .01 260 / .35);
+}
+.user-streak-pill.broken .user-streak-flame {
+  filter: grayscale(1) opacity(.35);
+}
+.user-streak-pill.broken .user-streak-count {
+  text-decoration: line-through;
+  color: var(--muted);
+}
+.user-streak-pill.broken:hover {
+  background: oklch(65% .24 30 / .15);
+  border-color: oklch(65% .24 30 / .4);
+}
+.user-streak-pill.broken:hover .user-streak-flame {
+  filter: grayscale(.2) opacity(.9);
+  transform: scale(1.1);
+}
 .notification-bell {
   position: relative;
   width: 34px;
@@ -1975,6 +1997,96 @@ header .desktop-intro { display: none; }
 }
 .do-checkin-btn:hover { transform: translateY(-1px); }
 .do-checkin-btn:disabled { opacity: 0.6; cursor: not-allowed; }
+
+/* Streak Restore Card (TikTok style) */
+.streak-restore-card {
+  margin-bottom: 14px;
+  padding: 12px 14px;
+  background: linear-gradient(135deg, rgba(249, 115, 22, 0.12), rgba(239, 68, 68, 0.12));
+  border: 1px solid rgba(249, 115, 22, 0.35);
+  border-radius: 14px;
+}
+.restore-card-content {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.restore-fire-icon {
+  font-size: 26px;
+  line-height: 1;
+  animation: restorePulse 1.8s infinite ease-in-out;
+}
+@keyframes restorePulse {
+  0%, 100% { transform: scale(1); filter: drop-shadow(0 0 2px rgba(249, 115, 22, 0.5)); }
+  50% { transform: scale(1.15); filter: drop-shadow(0 0 8px rgba(239, 68, 68, 0.8)); }
+}
+.restore-copy {
+  flex: 1;
+  min-width: 0;
+}
+.restore-copy strong {
+  display: block;
+  font-size: 13px;
+  color: var(--text-hi);
+  margin-bottom: 2px;
+}
+.restore-copy p {
+  font-size: 11px;
+  color: var(--muted);
+  margin: 0;
+  line-height: 1.35;
+}
+.do-restore-btn {
+  background: linear-gradient(135deg, #f97316, #ef4444);
+  color: #fff;
+  border: none;
+  border-radius: 10px;
+  padding: 8px 14px;
+  font: 700 12px/1 var(--sans);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: transform 150ms ease, box-shadow 150ms ease;
+}
+.do-restore-btn:hover:not(:disabled) {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(239, 68, 68, 0.4);
+}
+.do-restore-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* Push Reminder Area */
+.push-reminder-area {
+  margin-bottom: 14px;
+  display: flex;
+  justify-content: center;
+}
+.push-reminder-toggle-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 14px;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  background: var(--fill);
+  color: var(--text);
+  font: 600 12px/1 var(--sans);
+  cursor: pointer;
+  transition: all 150ms ease;
+}
+.push-reminder-toggle-btn:hover {
+  border-color: var(--gold);
+  background: oklch(80% 0.14 85 / 0.1);
+}
+.push-reminder-toggle-btn.subscribed {
+  border-color: rgba(34, 197, 94, 0.4);
+  background: rgba(34, 197, 94, 0.1);
+  color: #4ade80;
+}
+.push-bell-icon {
+  font-size: 14px;
+}
 
 @media (prefers-reduced-motion: reduce) {
   .marquee-title.is-overflowing:hover .marquee-track,

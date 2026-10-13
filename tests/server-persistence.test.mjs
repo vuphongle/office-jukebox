@@ -16,7 +16,7 @@ const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 async function startServer(dataDir, options = {}) {
   const port = 46000 + Math.floor(Math.random() * 1000);
   const dbPath = path.join(dataDir, "jukebox.db");
-  const child = spawn("bun", ["server.js"], {
+  const child = spawn(process.execPath, ["server.js"], {
     cwd: ROOT,
     env: {
       ...process.env,
@@ -43,16 +43,16 @@ async function startServer(dataDir, options = {}) {
     } catch {}
     await new Promise((resolve) => setTimeout(resolve, 50));
   }
-  child.kill("SIGTERM");
+  child.kill(process.platform === "win32" ? "SIGKILL" : "SIGTERM");
   throw new Error(`server did not start: ${output.join("")}`);
 }
 
 async function stopServer(child) {
   if (child.exitCode !== null) return;
-  child.kill("SIGTERM");
+  child.kill(process.platform === "win32" ? "SIGKILL" : "SIGTERM");
   await new Promise((resolve) => child.once("exit", resolve));
   // Give the OS a moment to release file handles on Windows before caller cleans up
-  await new Promise((resolve) => setTimeout(resolve, 50));
+  await new Promise((resolve) => setTimeout(resolve, process.platform === "win32" ? 100 : 50));
 }
 
 /**
@@ -443,13 +443,15 @@ test("successfully acknowledged feedback survives a server restart", async () =>
     const cookie = await login(running.baseUrl);
     const listed = await (await fetch(`${running.baseUrl}/api/feedback`, { headers: { Cookie: cookie } })).json();
     const item = listed.items.at(-1);
-    chmodSync(dataDir, 0o500);
-    const failedDelete = await fetch(`${running.baseUrl}/api/feedback/${item.id}`, {
-      method: "DELETE",
-      headers: { Cookie: cookie },
-    });
-    assert.equal(failedDelete.status, 500);
-    chmodSync(dataDir, 0o700);
+    if (process.platform !== "win32") {
+      chmodSync(dataDir, 0o500);
+      const failedDelete = await fetch(`${running.baseUrl}/api/feedback/${item.id}`, {
+        method: "DELETE",
+        headers: { Cookie: cookie },
+      });
+      assert.equal(failedDelete.status, 500);
+      chmodSync(dataDir, 0o700);
+    }
   } finally {
     try { chmodSync(dataDir, 0o700); } catch {}
     await stopServer(running.child);

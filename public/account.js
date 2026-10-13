@@ -328,22 +328,28 @@ function renderAccount() {
     : `${Number(rank.xp || 0).toLocaleString("vi-VN")} XP · Tối đa`;
   renderAccountRankBenefits(rank);
   $("#points-value").textContent = Number(currentUser.pointsBalance || 0).toLocaleString("vi-VN");
-  $("#streak-value").textContent = `${currentUser.currentStreak || 0} ngày`;
-  $("#reward-streak").textContent = currentUser.currentStreak || 0;
-  $("#checkin-value").textContent = currentUser.hasCheckedInToday ? "Đã điểm danh" : "Chưa điểm danh";
-  $("#checkin-stat-icon").classList.toggle("success", !!currentUser.hasCheckedInToday);
-  $("#checkin-stat-icon").classList.toggle("muted", !currentUser.hasCheckedInToday);
+  const streakView = currentUser.streakView;
+  const displayStreak = streakView?.displayStreak ?? (currentUser.currentStreak || 0);
+  const isBroken = !!streakView?.streakBroken;
+  $("#streak-value").textContent = isBroken ? "0 ngày (đã đứt)" : `${displayStreak} ngày`;
+  $("#reward-streak").textContent = displayStreak;
+  const isCheckedIn = streakView ? streakView.checkedInToday : !!currentUser.hasCheckedInToday;
+  $("#checkin-value").textContent = isBroken ? "Đã mất chuỗi" : (isCheckedIn ? "Đã điểm danh" : "Chưa điểm danh");
+  $("#checkin-stat-icon").classList.toggle("success", !!isCheckedIn);
+  $("#checkin-stat-icon").classList.toggle("muted", !isCheckedIn);
 
   const checkinButton = $("#account-checkin");
-  checkinButton.disabled = !!currentUser.hasCheckedInToday;
-  checkinButton.querySelector(".button-label").textContent = currentUser.hasCheckedInToday
+  checkinButton.disabled = !!isCheckedIn;
+  checkinButton.querySelector(".button-label").textContent = isCheckedIn
     ? "Đã điểm danh hôm nay"
     : `Điểm danh nhận +${checkinReward} điểm`;
-  $("#checkin-description").textContent = currentUser.hasCheckedInToday
+  $("#checkin-description").textContent = isCheckedIn
     ? "Hãy quay lại vào ngày mai để duy trì chuỗi điểm danh."
-    : "Điểm danh mỗi ngày để nhận điểm vote và mở khóa mốc thưởng.";
+    : (isBroken
+        ? "Chuỗi của bạn đã bị đứt. Điểm danh ngay hôm nay để bắt đầu lại chuỗi mới!"
+        : "Điểm danh mỗi ngày để nhận điểm vote và mở khóa mốc thưởng.");
 
-  const streak = currentUser.currentStreak || 0;
+  const streak = displayStreak;
   const cycle = streak % 30;
   renderEngagementMilestones();
   $$(".milestone[data-milestone-type=legacy]").forEach((milestone) => {
@@ -450,7 +456,7 @@ async function loadLedger({ reset = false } = {}) {
 function renderLedger() {
   $("#ledger-total").textContent = `${ledgerTotal.toLocaleString("vi-VN")} giao dịch`;
   if (!ledgerItems.length) {
-    const canCheckin = !currentUser.hasCheckedInToday;
+    const canCheckin = !(currentUser?.streakView ? currentUser.streakView.checkedInToday : currentUser?.hasCheckedInToday);
     $("#ledger-content").innerHTML = `<div class="ledger-state"><div><strong>Chưa có hoạt động điểm</strong><p>${canCheckin ? "Hãy điểm danh hôm nay để nhận điểm đầu tiên." : "Các giao dịch nhận và sử dụng điểm sẽ xuất hiện tại đây."}</p>${canCheckin ? '<button class="secondary-button" type="button" data-empty-checkin>Điểm danh ngay</button>' : ""}</div></div>`;
     $("[data-empty-checkin]")?.addEventListener("click", performCheckin);
   } else {
@@ -468,7 +474,8 @@ function renderLedger() {
 
 async function performCheckin() {
   const button = $("#account-checkin");
-  if (!currentUser || currentUser.hasCheckedInToday) return;
+  const isCheckedIn = currentUser?.streakView ? currentUser.streakView.checkedInToday : !!currentUser?.hasCheckedInToday;
+  if (!currentUser || isCheckedIn) return;
   setButtonLoading(button, true);
   try {
     const { data } = await requestJson("/api/me/checkin", { method: "POST" });
@@ -476,6 +483,16 @@ async function performCheckin() {
     currentUser.pointsBalance = data.newBalance;
     currentUser.currentStreak = data.streak;
     currentUser.hasCheckedInToday = true;
+    if (data.streakView) {
+      currentUser.streakView = data.streakView;
+    } else {
+      currentUser.streakView = {
+        checkedInToday: true,
+        streakBroken: false,
+        displayStreak: data.streak,
+        currentStreak: data.streak,
+      };
+    }
     if (currentUser.rank && data.rank?.checkinPoints) currentUser.rank.checkinPoints = data.rank.checkinPoints;
     renderAccount();
     await loadLedger({ reset: true });
@@ -485,7 +502,8 @@ async function performCheckin() {
     showStatus(error.message, "error");
   } finally {
     setButtonLoading(button, false);
-    if (currentUser?.hasCheckedInToday) button.disabled = true;
+    const checked = currentUser?.streakView ? currentUser.streakView.checkedInToday : !!currentUser?.hasCheckedInToday;
+    if (checked) button.disabled = true;
   }
 }
 

@@ -111,7 +111,7 @@ test("favorite songs support TikTok tracks and retain their thumbnails", () => {
 
 async function startServer(dataDir) {
   const port = 48000 + Math.floor(Math.random() * 1000);
-  const child = spawn("bun", ["server.js"], {
+  const child = spawn(process.execPath, ["server.js"], {
     cwd: ROOT,
     env: {
       ...process.env,
@@ -137,14 +137,17 @@ async function startServer(dataDir) {
     } catch {}
     await new Promise((resolve) => setTimeout(resolve, 50));
   }
-  child.kill("SIGTERM");
+  child.kill(process.platform === "win32" ? "SIGKILL" : "SIGTERM");
   throw new Error(`server did not start: ${output.join("")}`);
 }
 
 async function stopServer(child) {
   if (child.exitCode !== null) return;
-  child.kill("SIGTERM");
+  child.kill(process.platform === "win32" ? "SIGKILL" : "SIGTERM");
   await new Promise((resolve) => child.once("exit", resolve));
+  if (process.platform === "win32") {
+    await new Promise((resolve) => setTimeout(resolve, 80));
+  }
 }
 
 async function register(baseUrl, username) {

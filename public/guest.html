@@ -6,6 +6,8 @@
   <title>Chọn bài hát · Thêm bài hát</title>
   <link rel="icon" type="image/png" href="/assets/favicon.png" />
   <link rel="apple-touch-icon" href="/assets/favicon.png" />
+  <link rel="manifest" href="/manifest.webmanifest" />
+  <meta name="theme-color" content="#0f172a" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Noto+Serif:wght@600;700&family=Noto+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" />
@@ -352,6 +354,24 @@
             <div class="ms-circle">30d</div>
             <div class="ms-info"><strong>Mốc 30 ngày</strong><span>+20 điểm</span></div>
           </div>
+        <!-- Streak Restore Card (TikTok style) -->
+        <div id="streak-restore-card" class="streak-restore-card hidden">
+          <div class="restore-card-content">
+            <span class="restore-fire-icon" aria-hidden="true">🔥</span>
+            <div class="restore-copy">
+              <strong id="restore-card-title">Khôi phục chuỗi streak</strong>
+              <p id="restore-card-desc">Chuỗi của bạn đã bị gián đoạn. Khôi phục ngay?</p>
+            </div>
+            <button id="do-restore-btn" class="do-restore-btn" type="button">Khôi phục chuỗi</button>
+          </div>
+        </div>
+
+        <!-- Web Push Reminder Opt-in -->
+        <div id="push-reminder-area" class="push-reminder-area">
+          <button id="push-reminder-toggle-btn" class="push-reminder-toggle-btn" type="button">
+            <span class="push-bell-icon" aria-hidden="true">🔔</span>
+            <span id="push-reminder-btn-label">Bật nhắc nhở lúc 22:00</span>
+          </button>
         </div>
 
         <div class="checkin-action-area">

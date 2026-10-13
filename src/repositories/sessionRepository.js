@@ -20,7 +20,7 @@ export class SessionRepository {
     return (
       this.db
         .query(
-          `SELECT s.token, s.user_id, s.expires_at, u.username, u.display_name, u.avatar_file, u.role, u.status, u.points_balance, u.current_streak, u.last_checkin_date
+          `SELECT s.token, s.user_id, s.expires_at, u.username, u.display_name, u.avatar_file, u.role, u.status, u.points_balance, u.current_streak, u.last_checkin_date, u.broken_streak, u.broken_missed_date
            FROM sessions s
            JOIN users u ON s.user_id = u.id
            WHERE s.token = ? AND s.expires_at > ? AND u.status = 'active'`
@@ -42,6 +42,8 @@ export class SessionRepository {
       points_balance: row.points_balance,
       current_streak: row.current_streak,
       last_checkin_date: row.last_checkin_date,
+      broken_streak: row.broken_streak,
+      broken_missed_date: row.broken_missed_date,
     };
   }
 

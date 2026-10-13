@@ -52,6 +52,7 @@ import {
   isValidTikTokUrl,
   parseTikTokUrl,
   fetchTikTokMetadata,
+  deleteCachedTikTokMetadata,
 } from "./src/tiktok.js";
 import { resolveMediaLink } from "./src/mediaLinkResolver.js";
 import { fetchLyrics, prefetchLyricsForTrack } from "./src/lyricsService.js";
@@ -104,7 +105,12 @@ import {
 } from "./src/auth.js";
 import { createFixedWindowRateLimiter } from "./src/rateLimit.js";
 import { canUseHostControls, refreshSocketIdentity } from "./src/socketAuth.js";
-import { performCheckin, getLocalDate } from "./src/checkin.js";
+import { performCheckin, getLocalDate, computeStreakView } from "./src/checkin.js";
+import { performStreakRestore, getStreakRestoreStatus } from "./src/streakRestore.js";
+import { startDayRolloverScheduler } from "./src/dayRollover.js";
+import { PushRepository } from "./src/repositories/pushRepository.js";
+import { startCheckinReminderScheduler } from "./src/checkinReminder.js";
+import webpush from "web-push";
 import { parsePagination } from "./src/pagination.js";
 import { getClientIp, parseTrustProxy, isPrivateIp } from "./src/clientIp.js";
 import { countUserQueuedSongs } from "./src/queueLimit.js";
@@ -275,6 +281,19 @@ const rankRepo = new RankRepository(db, {
   engagementRepo,
   createAnnouncementInTransaction: createEngagementAnnouncementMessagesInTransaction,
 });
+const pushRepo = new PushRepository(db);
+
+if (process.env.VAPID_PUBLIC_KEY && process.env.VAPID_PRIVATE_KEY) {
+  try {
+    webpush.setVapidDetails(
+      process.env.VAPID_SUBJECT || "mailto:admin@laztar.xyz",
+      process.env.VAPID_PUBLIC_KEY,
+      process.env.VAPID_PRIVATE_KEY
+    );
+  } catch (err) {
+    console.warn("[webpush] Failed to set VAPID details:", err.message);
+  }
+}
 chatRepo.prune();
 sessionRepo.pruneExpired();
 const sessionPruneTimer = setInterval(() => sessionRepo.pruneExpired(), 6 * 60 * 60 * 1000);
@@ -327,6 +346,12 @@ function publicRankBenefits() {
 
 function publicUser(user) {
   if (!user) return null;
+  const streakView = computeStreakView({
+    current_streak: user.current_streak ?? user.currentStreak,
+    last_checkin_date: user.last_checkin_date ?? user.lastCheckinDate,
+    broken_streak: user.broken_streak ?? user.brokenStreak,
+    broken_missed_date: user.broken_missed_date ?? user.brokenMissedDate,
+  });
   return {
     id: user.id,
     username: user.username,
@@ -336,6 +361,7 @@ function publicUser(user) {
     status: user.status,
     pointsBalance: user.points_balance ?? user.pointsBalance,
     currentStreak: user.current_streak ?? user.currentStreak,
+    streakView,
     rank: publicRank(user.id),
   };
 }
@@ -589,6 +615,12 @@ function requireHostAuth(req, res, next) {
 app.use("/host.html", requireHostAuth);
 app.get("/feedback.html", (_req, res) => res.redirect(302, "/admin#feedback"));
 
+app.get("/sw.js", (_req, res) => {
+  res.setHeader("Cache-Control", "no-cache");
+  res.setHeader("Service-Worker-Allowed", "/");
+  res.sendFile(path.join(__dirname, "public", "sw.js"));
+});
+
 app.use(
   express.static(path.join(__dirname, "public"), {
     setHeaders: (res) => res.setHeader("Cache-Control", "no-cache"),
@@ -702,6 +734,7 @@ app.post("/api/auth/register", registerIpLimit, registerGlobalLimit, async (req,
     const { user, token } = registration.immediate();
     setSessionCookie(res, token, req);
 
+    const streakView = computeStreakView(user);
     res.json({
       ok: true,
       user: {
@@ -712,10 +745,12 @@ app.post("/api/auth/register", registerIpLimit, registerGlobalLimit, async (req,
         role: user.role,
         pointsBalance: user.points_balance,
         currentStreak: user.current_streak,
+        streakView,
         unreadNotificationCount: notificationRepo.getUnreadCount(user.id),
         hasCheckedInToday: false,
         rank: publicRank(user.id),
       },
+      serverNow: Date.now(),
     });
   } catch (err) {
     if (String(err.message).includes("UNIQUE constraint failed: users.username")) {
@@ -747,7 +782,8 @@ app.post("/api/auth/login", loginIpLimit, loginUsernameLimit, async (req, res) =
     setSessionCookie(res, token, req);
 
     const today = getLocalDate();
-    const hasCheckedInToday = user.last_checkin_date === today;
+    const streakView = computeStreakView(user);
+    const hasCheckedInToday = streakView.checkedInToday;
 
     res.json({
       ok: true,
@@ -759,10 +795,12 @@ app.post("/api/auth/login", loginIpLimit, loginUsernameLimit, async (req, res) =
         role: user.role,
         pointsBalance: user.points_balance,
         currentStreak: user.current_streak,
+        streakView,
         unreadNotificationCount: notificationRepo.getUnreadCount(user.id),
         hasCheckedInToday,
         rank: publicRank(user.id),
       },
+      serverNow: Date.now(),
     });
   } catch {
     res.status(500).json({ ok: false, reason: "Không thể đăng nhập lúc này." });
@@ -802,8 +840,13 @@ app.get("/api/me", (req, res) => {
     return res.json({ ok: true, authenticated: false, user: null });
   }
 
-  const today = getLocalDate();
-  const hasCheckedInToday = req.user.lastCheckinDate === today;
+  const streakView = computeStreakView({
+    current_streak: req.user.currentStreak,
+    last_checkin_date: req.user.lastCheckinDate,
+    broken_streak: req.user.brokenStreak,
+    broken_missed_date: req.user.brokenMissedDate,
+  });
+  const hasCheckedInToday = streakView.checkedInToday;
   const activeDrop = dropRepo.getActiveClaimableDrop();
   const alreadyClaimedDrop = activeDrop ? dropRepo.hasUserClaimed(activeDrop.id, req.user.id) : false;
 
@@ -819,6 +862,7 @@ app.get("/api/me", (req, res) => {
       status: req.user.status,
       pointsBalance: req.user.pointsBalance,
       currentStreak: req.user.currentStreak,
+      streakView,
       unreadNotificationCount: notificationRepo.getUnreadCount(req.user.id),
       hasCheckedInToday,
       activeClaimableDrop: activeDrop && !alreadyClaimedDrop
@@ -828,6 +872,7 @@ app.get("/api/me", (req, res) => {
       rank: publicRank(req.user.id),
       weeklyRank: rankRepo.getWeeklyMusicSummary(req.user.id),
     },
+    serverNow: Date.now(),
   });
 });
 
@@ -1021,6 +1066,78 @@ app.post("/api/me/checkin", requireAuth, (req, res) => {
     res.json(response);
   } catch (err) {
     res.status(400).json({ ok: false, reason: err.message });
+  }
+});
+
+app.get("/api/me/streak", requireAuth, (req, res) => {
+  try {
+    const user = userRepo.findById(req.user.id);
+    const view = computeStreakView(user);
+    const restoreStatus = getStreakRestoreStatus(db, req.user.id);
+    res.json({
+      ok: true,
+      streakView: view,
+      ...restoreStatus,
+      serverNow: Date.now(),
+    });
+  } catch (err) {
+    res.status(500).json({ ok: false, reason: "Không thể lấy thông tin chuỗi lúc này." });
+  }
+});
+
+app.post("/api/me/streak/restore", requireAuth, (req, res) => {
+  try {
+    const result = performStreakRestore(db, req.user.id, {
+      notificationRepo,
+    });
+    notifyUserNotificationsUpdated(req.user.id, notificationRepo.getUnreadCount(req.user.id));
+    res.json({
+      ok: true,
+      ...result,
+      serverNow: Date.now(),
+    });
+  } catch (err) {
+    res.status(400).json({ ok: false, reason: err.message || "Không thể khôi phục chuỗi." });
+  }
+});
+
+app.get("/api/push/vapid-public-key", (_req, res) => {
+  res.json({
+    ok: true,
+    publicKey: process.env.VAPID_PUBLIC_KEY || null,
+  });
+});
+
+app.post("/api/me/push/subscribe", requireAuth, (req, res) => {
+  try {
+    const { endpoint, keys } = req.body || {};
+    if (!endpoint || !keys?.p256dh || !keys?.auth) {
+      return res.status(400).json({ ok: false, reason: "Thông tin subscription không hợp lệ." });
+    }
+    const userAgent = (req.headers["user-agent"] || "").slice(0, 255);
+    pushRepo.saveSubscription(req.user.id, {
+      endpoint,
+      p256dh: keys.p256dh,
+      auth: keys.auth,
+      userAgent,
+    });
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(400).json({ ok: false, reason: err.message || "Không thể lưu thông báo đẩy." });
+  }
+});
+
+app.delete("/api/me/push/subscribe", requireAuth, (req, res) => {
+  try {
+    const { endpoint } = req.body || {};
+    if (endpoint) {
+      pushRepo.deleteSubscription(req.user.id, endpoint);
+    } else {
+      pushRepo.deleteAllForUser(req.user.id);
+    }
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(400).json({ ok: false, reason: err.message || "Không thể xóa thông báo đẩy." });
   }
 });
 
@@ -1545,16 +1662,62 @@ app.post("/api/spotify/disconnect", requireHostAuth, (req, res) => {
 });
 
 app.get("/api/tiktok/stream", publicReadLimit, async (req, res) => {
+  res.set("Cache-Control", "no-store");
+  res.set("Access-Control-Allow-Origin", "*");
   const rawUrl = typeof req.query?.url === "string" ? req.query.url.trim() : "";
   if (!rawUrl || !isValidTikTokUrl(rawUrl)) {
     return res.status(400).json({ ok: false, error: "invalid_tiktok_url" });
   }
   try {
-    const meta = await fetchTikTokMetadata(rawUrl);
+    let meta = await fetchTikTokMetadata(rawUrl);
     if (!meta || !meta.streamUrl) {
       return res.status(502).json({ ok: false, error: "stream_not_available" });
     }
-    res.redirect(302, meta.streamUrl);
+
+    const tryFetchStream = async (url) => {
+      const resp = await fetch(url, {
+        headers: {
+          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
+          Accept: "*/*",
+          Range: req.headers.range || "bytes=0-",
+        },
+      });
+      return resp;
+    };
+
+    let streamRes = await tryFetchStream(meta.streamUrl).catch(() => null);
+    if (!streamRes || streamRes.status === 403 || streamRes.status === 410) {
+      deleteCachedTikTokMetadata(rawUrl);
+      meta = await fetchTikTokMetadata(rawUrl);
+      if (meta?.streamUrl) {
+        streamRes = await tryFetchStream(meta.streamUrl).catch(() => null);
+      }
+    }
+
+    if (!streamRes || !streamRes.ok) {
+      if (meta?.streamUrl) {
+        return res.redirect(302, meta.streamUrl);
+      }
+      return res.status(502).json({ ok: false, error: "stream_not_available" });
+    }
+
+    res.status(streamRes.status);
+    const contentType = streamRes.headers.get("content-type") || "audio/mpeg";
+    const contentLength = streamRes.headers.get("content-length");
+    const contentRange = streamRes.headers.get("content-range");
+    const acceptRanges = streamRes.headers.get("accept-ranges");
+
+    res.set("Content-Type", contentType);
+    if (contentLength) res.set("Content-Length", contentLength);
+    if (contentRange) res.set("Content-Range", contentRange);
+    if (acceptRanges) res.set("Accept-Ranges", acceptRanges);
+
+    if (streamRes.body) {
+      const { Readable } = await import("node:stream");
+      Readable.fromWeb(streamRes.body).pipe(res);
+    } else {
+      res.end();
+    }
   } catch (err) {
     res.status(500).json({ ok: false, error: err.message || "stream_fetch_failed" });
   }
@@ -1789,6 +1952,7 @@ app.post("/api/request", songRequestIpLimit, async (req, res) => {
       channel: canonical.channel,
       artists: canonical.artists || [],
       duration: canonical.duration,
+      musicDurationSec: canonical.musicDurationSec || 0,
       thumbnail: canonical.thumbnail,
       addedBy: requesterName,
       requesterId,
@@ -2440,6 +2604,27 @@ function broadcastChatMessage(message) {
   }
 }
 
+function broadcastToAll(data) {
+  const payload = typeof data === "string" ? data : JSON.stringify(data);
+  for (const client of wss.clients) {
+    if (client.readyState === 1) client.send(payload);
+  }
+}
+
+const dayRolloverScheduler = startDayRolloverScheduler({
+  timezone: process.env.APP_TIMEZONE,
+  broadcast: (msg) => broadcastToAll(msg),
+});
+
+const checkinReminderScheduler = startCheckinReminderScheduler({
+  db,
+  pushRepo,
+  notificationRepo,
+  timezone: process.env.APP_TIMEZONE,
+  reminderTime: process.env.CHECKIN_REMINDER_TIME || "22:00",
+  isEnabled: () => true,
+});
+
 const chatAiCoordinator = new ChatAiCoordinator({
   chatRepository: chatRepo,
   memoryRepository: chatAiMemoryRepo,
@@ -2511,16 +2696,29 @@ let latestPlaybackTick = null;
 let latestSpotifyPlaybackTick = null;
 
 state.onChange = (nextState) => {
-  if (latestPlaybackTick && latestPlaybackTick.videoId !== nextState.nowPlaying?.videoId) {
+  const curVideoId = nextState.nowPlaying?.videoId || null;
+  if (curVideoId) {
+    if (!latestPlaybackTick || latestPlaybackTick.videoId !== curVideoId) {
+      latestPlaybackTick = {
+        type: "playbackTick",
+        videoId: curVideoId,
+        position: 0,
+        paused: true,
+        seek: false,
+        serverTime: Date.now(),
+      };
+      latestSpotifyPlaybackTick = null;
+    }
+  } else {
     latestPlaybackTick = null;
     latestSpotifyPlaybackTick = null;
   }
   broadcastState();
-  const curProvider = nextState.nowPlaying?.provider || "youtube";
-  const isTickSupported = curProvider === "spotify" || curProvider === "youtube" || curProvider === "yt";
-  if (isTickSupported && latestPlaybackTick && !latestPlaybackTick.paused) {
+  if (latestPlaybackTick) {
     const now = Date.now();
-    const elapsed = Math.max(0, now - (latestPlaybackTick.serverTime || now));
+    const elapsed = latestPlaybackTick.paused
+      ? 0
+      : Math.max(0, now - (latestPlaybackTick.serverTime || now));
     const tickMsg = JSON.stringify({
       type: "playbackTick",
       ...latestPlaybackTick,
@@ -2951,12 +3149,10 @@ wss.on("connection", (ws, request) => {
               serverTime: now,
             }));
           } else if (state.nowPlaying) {
-            const isYt = state.nowPlaying.provider === "youtube" || state.nowPlaying.provider === "yt";
-            const elapsed = (!isYt && state.nowPlaying.startedAt) ? Math.max(0, now - state.nowPlaying.startedAt) : 0;
             ws.send(JSON.stringify({
               type: "playbackTick",
-              position: elapsed,
-              paused: isYt ? true : false,
+              position: 0,
+              paused: true,
               seek: false,
               videoId: state.nowPlaying.videoId || "",
               serverTime: now,
@@ -3171,13 +3367,20 @@ function shutdown(signal) {
   clearInterval(sessionPruneTimer);
   clearInterval(wsHeartbeatTimer);
   clearInterval(dropExpiryTimer);
+  dayRolloverScheduler?.stop();
+  checkinReminderScheduler?.stop();
   chatAiCoordinator.stop();
-  for (const client of wss.clients) client.close(1001, "Server shutting down");
+  for (const client of wss.clients) {
+    try { client.terminate(); } catch {}
+  }
+  try { wss.close(); } catch {}
+  server.closeIdleConnections?.();
+  server.closeAllConnections?.();
 
   const forceExit = setTimeout(() => {
     closeDb();
-    process.exit(1);
-  }, 10_000);
+    process.exit(0);
+  }, 1500);
   forceExit.unref?.();
   server.close((error) => {
     clearTimeout(forceExit);

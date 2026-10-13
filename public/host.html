@@ -64,6 +64,7 @@
               <div class="spotify-lyrics-badge">
                 <svg width="15" height="15" viewBox="0 0 256 256" fill="currentColor"><path d="M115.06 46.36a4 4 0 0 0-6.11.54A71.54 71.54 0 0 0 96 88a73.29 73.29 0 0 0 .63 9.42L27.12 192.22A15.93 15.93 0 0 0 28.71 213L43 227.29a15.93 15.93 0 0 0 20.78 1.59l94.81-69.53A73.29 73.29 0 0 0 168 160a71.54 71.54 0 0 0 41.09-12.93 4 4 0 0 0 .54-6.11Zm2.61 103.28-16 16a8 8 0 1 1-11.31-11.31l16-16a8 8 0 0 1 11.31 11.31Zm109.4-20.56a4 4 0 0 1-6.12.54L126.38 35.05a4 4 0 0 1 .54-6.12A71.93 71.93 0 0 1 227.07 129.08Z"/></svg>
                 <span>Lời bài hát đồng bộ</span>
+                <span class="spotify-lyrics-source-tag" id="spotify-lyrics-source-tag" style="display:none; font-size:11px; opacity:0.85; margin-left:6px; padding:2px 6px; border-radius:4px; background:rgba(255,255,255,0.18);"></span>
               </div>
               <button type="button" class="spotify-lyrics-close" id="spotify-lyrics-close" title="Đóng lời bài hát (Esc)">✕</button>
             </div>
@@ -192,8 +193,8 @@
           <p class="idle-sub">Quét mã QR để thêm bài hát đầu tiên!</p>
         </div>
         <div id="playback-recovery" class="hidden" role="alert">
-          <p>Trình duyệt đã chặn tự động phát</p>
-          <button id="resume-playback" type="button">▶ Tiếp tục phát</button>
+          <p>Nhấn để tiếp tục phát</p>
+          <button id="resume-playback" type="button" class="btn-resume-playback">▶ Tiếp tục phát</button>
         </div>
       </div>
       <div id="now-meta">
@@ -281,6 +282,7 @@
 
   <script src="/avatar.js"></script>
   <script src="/lyrics-client.js"></script>
+  <script src="/playback-reconciler.js"></script>
   <script src="/host.js"></script>
   <!-- host.js registers onYouTubeIframeAPIReady and onSpotifyWebPlaybackSDKReady before APIs finish loading -->
   <script src="https://www.youtube.com/iframe_api"></script>

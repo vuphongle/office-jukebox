@@ -96,6 +96,7 @@ export function initDb({ dbPath = DEFAULT_DB_PATH, adminUser = process.env.ADMIN
       bonus_points INTEGER NOT NULL DEFAULT 0,
       tier_bonus_points INTEGER NOT NULL DEFAULT 0,
       achievement_points INTEGER NOT NULL DEFAULT 0,
+      is_restored INTEGER NOT NULL DEFAULT 0,
       checked_in_at TEXT NOT NULL,
       UNIQUE(user_id, local_date)
     );
@@ -284,9 +285,51 @@ export function initDb({ dbPath = DEFAULT_DB_PATH, adminUser = process.env.ADMIN
       ON chat_ai_memories(event_id, status, pinned DESC, updated_at DESC);
   `);
 
+  // Streak restore & Web Push tables
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS streak_restores (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      month_key TEXT NOT NULL,
+      missed_date TEXT NOT NULL,
+      streak_before INTEGER NOT NULL,
+      streak_after INTEGER NOT NULL,
+      created_at TEXT NOT NULL,
+      UNIQUE(user_id, month_key)
+    );
+    CREATE INDEX IF NOT EXISTS idx_streak_restores_user ON streak_restores(user_id, month_key);
+
+    CREATE TABLE IF NOT EXISTS push_subscriptions (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      endpoint TEXT NOT NULL UNIQUE,
+      p256dh TEXT NOT NULL,
+      auth TEXT NOT NULL,
+      user_agent TEXT,
+      created_at TEXT NOT NULL,
+      last_success_at TEXT,
+      failure_count INTEGER DEFAULT 0
+    );
+    CREATE INDEX IF NOT EXISTS idx_push_subscriptions_user_id ON push_subscriptions(user_id);
+
+    CREATE TABLE IF NOT EXISTS push_reminder_log (
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      local_date TEXT NOT NULL,
+      kind TEXT NOT NULL,
+      sent_at TEXT NOT NULL,
+      PRIMARY KEY (user_id, local_date, kind)
+    );
+  `);
+
   const userColumns = db.query("PRAGMA table_info(users)").all();
   if (!userColumns.some((column) => column.name === "avatar_file")) {
     db.run("ALTER TABLE users ADD COLUMN avatar_file TEXT");
+  }
+  if (!userColumns.some((column) => column.name === "broken_streak")) {
+    db.run("ALTER TABLE users ADD COLUMN broken_streak INTEGER DEFAULT 0");
+  }
+  if (!userColumns.some((column) => column.name === "broken_missed_date")) {
+    db.run("ALTER TABLE users ADD COLUMN broken_missed_date TEXT");
   }
 
   // Existing databases created before repeat voting need a persistent
@@ -334,6 +377,9 @@ export function initDb({ dbPath = DEFAULT_DB_PATH, adminUser = process.env.ADMIN
   }
   if (!checkinColumns.some((column) => column.name === "achievement_points")) {
     db.run("ALTER TABLE checkins ADD COLUMN achievement_points INTEGER NOT NULL DEFAULT 0");
+  }
+  if (!checkinColumns.some((column) => column.name === "is_restored")) {
+    db.run("ALTER TABLE checkins ADD COLUMN is_restored INTEGER NOT NULL DEFAULT 0");
   }
 
   const dropColumns = db.query("PRAGMA table_info(point_drops)").all();

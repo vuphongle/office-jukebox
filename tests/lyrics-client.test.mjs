@@ -219,5 +219,37 @@ describe("JukeboxLyrics Client Module", () => {
     // Must be null, NOT the wrong Thanh Duy 147s song!
     expect(res).toBeNull();
   });
+
+  test("fetchLyricsClient for YouTube never falls back to LRCLIB and returns error when backend has no creator captions", async () => {
+    let lrclibCalled = false;
+    const mockFetch = async (url) => {
+      if (url.startsWith("/api/lyrics")) {
+        return {
+          ok: true,
+          json: async () => ({ ok: false, error: "no_creator_captions" }),
+        };
+      }
+      if (url.includes("lrclib.net")) {
+        lrclibCalled = true;
+        return {
+          ok: true,
+          json: async () => [{ trackName: "Song", syncedLyrics: "[00:01.00]Hi" }],
+        };
+      }
+      throw new Error("unexpected URL " + url);
+    };
+
+    const res = await JukeboxLyrics.fetchLyricsClient({
+      title: "Song",
+      artist: "Singer",
+      platform: "youtube",
+      videoId: "xyz123",
+      fetchImpl: mockFetch,
+    });
+
+    expect(lrclibCalled).toBe(false);
+    expect(res).toEqual({ ok: false, error: "no_creator_captions" });
+  });
 });
+
 

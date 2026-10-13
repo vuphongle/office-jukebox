@@ -132,8 +132,12 @@ describe("YouTube Creator Captions Provider", () => {
             text: async () => `<?xml version="1.0" encoding="utf-8" ?>
 <timedtext format="3">
 <body>
-<p t="4000" d="2000">Câu hát đầu tiên</p>
-<p t="8000" d="3000">Câu hát thứ hai</p>
+<p t="4000" d="2000">Gió đưa gió đẩy về rẫy ăn còng</p>
+<p t="8000" d="3000">Về bưng ăn cá về đồng ăn cua</p>
+<p t="12000" d="3000">Từ độ chia tay anh đi theo người mới</p>
+<p t="16000" d="3000">Để em nơi đây khóc thầm bên bờ sông xưa</p>
+<p t="20000" d="3000">Chiều nay nghe tiếng chim đa đa kêu bờ bến vắng</p>
+<p t="24000" d="3000">Mà nghe cay đắng xót xa muôn vàn niềm đau</p>
 </body>
 </timedtext>`,
           };
@@ -150,9 +154,9 @@ describe("YouTube Creator Captions Provider", () => {
       expect(res.ok).toBe(true);
       expect(res.synced).toBe(true);
       expect(res.source).toBe("youtube_captions");
-      expect(res.lines).toHaveLength(2);
-      expect(res.lines[0]).toEqual({ time: 4.0, text: "Câu hát đầu tiên" });
-      expect(res.lines[1]).toEqual({ time: 8.0, text: "Câu hát thứ hai" });
+      expect(res.lines).toHaveLength(6);
+      expect(res.lines[0]).toEqual({ time: 4.0, text: "Gió đưa gió đẩy về rẫy ăn còng" });
+      expect(res.lines[1]).toEqual({ time: 8.0, text: "Về bưng ăn cá về đồng ăn cua" });
     });
 
     it("returns error when video only has auto-generated ASR captions", async () => {
