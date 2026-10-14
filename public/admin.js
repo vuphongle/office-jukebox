@@ -197,6 +197,27 @@ function initUsersTab() {
     loadUsers();
   });
 
+  // Event delegation for actions dropdown in user table
+  const usersTbody = document.getElementById("users-tbody");
+  usersTbody?.addEventListener("click", (event) => {
+    const trigger = event.target.closest("[data-action-trigger]");
+    if (trigger) {
+      window.toggleActionDropdown(event, trigger);
+      return;
+    }
+    const item = event.target.closest("[data-action]");
+    if (item) {
+      const tr = item.closest("tr");
+      if (!tr) return;
+      const action = item.dataset.action;
+      const userId = tr.dataset.userId;
+      const username = tr.dataset.username;
+      const balance = Number(tr.dataset.balance || 0);
+      const status = tr.dataset.status;
+      window.handleUserAction(action, userId, username, action === "points" ? balance : status);
+    }
+  });
+
   // Modal Point Adjust
   document.getElementById("modal-close-btn")?.addEventListener("click", closePointsModal);
   document.getElementById("modal-cancel-btn")?.addEventListener("click", closePointsModal);
@@ -209,8 +230,86 @@ function initUsersTab() {
   document.getElementById("reset-password-close-btn")?.addEventListener("click", closeResetPasswordModal);
   document.getElementById("reset-password-done-btn")?.addEventListener("click", closeResetPasswordModal);
   document.getElementById("reset-password-copy-btn")?.addEventListener("click", () => window.copyResetPassword());
-
 }
+
+// Global listeners for closing action dropdowns
+document.addEventListener("click", (e) => {
+  if (!e.target?.closest?.(".action-menu-wrap")) {
+    closeAllActionDropdowns();
+  }
+});
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape") {
+    closeAllActionDropdowns();
+  }
+});
+window.addEventListener?.("scroll", closeAllActionDropdowns, { passive: true });
+window.addEventListener?.("resize", closeAllActionDropdowns, { passive: true });
+
+function closeAllActionDropdowns() {
+  document.querySelectorAll(".action-menu-wrap.open").forEach((wrap) => {
+    wrap.classList.remove("open", "drop-up");
+    wrap.querySelector(".action-menu-trigger")?.setAttribute("aria-expanded", "false");
+    const dropdown = wrap.querySelector(".action-dropdown");
+    if (dropdown) {
+      dropdown.style.top = "";
+      dropdown.style.left = "";
+    }
+  });
+}
+window.closeAllActionDropdowns = closeAllActionDropdowns;
+
+window.toggleActionDropdown = function (event, triggerBtn) {
+  event?.stopPropagation?.();
+  const wrap = triggerBtn?.closest?.(".action-menu-wrap");
+  if (!wrap) return;
+  const dropdown = wrap.querySelector(".action-dropdown");
+  if (!dropdown) return;
+
+  const isOpen = wrap.classList.contains("open");
+  closeAllActionDropdowns();
+
+  if (!isOpen) {
+    wrap.classList.add("open");
+    triggerBtn.setAttribute("aria-expanded", "true");
+
+    const rect = triggerBtn.getBoundingClientRect?.() || { bottom: 0, top: 0, right: 0 };
+    const dropdownHeight = dropdown.offsetHeight || 165;
+    const dropdownWidth = dropdown.offsetWidth || 140;
+    const winHeight = window.innerHeight || 800;
+    const winWidth = window.innerWidth || 1200;
+    const spaceBelow = winHeight - rect.bottom;
+    const spaceAbove = rect.top;
+
+    // Open upwards if not enough space below AND there is enough or more space above
+    const shouldDropUp = spaceBelow < dropdownHeight + 16 && spaceAbove > spaceBelow;
+
+    if (shouldDropUp) {
+      wrap.classList.add("drop-up");
+      dropdown.style.top = `${Math.round(Math.max(8, rect.top - dropdownHeight - 6))}px`;
+    } else {
+      wrap.classList.remove("drop-up");
+      dropdown.style.top = `${Math.round(rect.bottom + 6)}px`;
+    }
+
+    const rightAlignedLeft = rect.right - dropdownWidth;
+    const leftPos = Math.max(8, Math.min(winWidth - dropdownWidth - 8, rightAlignedLeft));
+    dropdown.style.left = `${Math.round(leftPos)}px`;
+  }
+};
+
+window.handleUserAction = function (action, userId, username, extra) {
+  closeAllActionDropdowns();
+  if (action === "points") {
+    window.openPointsModal(userId, username, extra);
+  } else if (action === "ledger") {
+    window.openUserLedger(userId, username);
+  } else if (action === "reset") {
+    window.resetUserPassword(userId, username);
+  } else if (action === "toggle-status") {
+    window.toggleUserStatus(userId, extra);
+  }
+};
 
 async function loadUsers() {
   const search = document.getElementById("user-search-input")?.value || "";
@@ -222,7 +321,7 @@ async function loadUsers() {
     const res = await fetch(`/api/admin/users?search=${encodeURIComponent(search)}&status=${encodeURIComponent(status)}&page=${usersPage}&limit=20`);
     const data = await res.json();
     if (!data.ok) {
-      tbody.innerHTML = `<tr><td colspan="9" class="text-center">${escapeHtml(data.reason || "Lỗi tải người dùng")}</td></tr>`;
+      tbody.innerHTML = `<tr><td colspan="8" class="text-center">${escapeHtml(data.reason || "Lỗi tải người dùng")}</td></tr>`;
       renderPagination("users-pagination", 1, 0, 20, () => {});
       return;
     }
@@ -233,7 +332,7 @@ async function loadUsers() {
     });
 
     if (!data.users.length) {
-      tbody.innerHTML = `<tr><td colspan="9" class="text-center">Không tìm thấy thành viên nào</td></tr>`;
+      tbody.innerHTML = `<tr><td colspan="8" class="text-center">Không tìm thấy thành viên nào</td></tr>`;
       return;
     }
 
@@ -242,28 +341,49 @@ async function loadUsers() {
         const roleBadge = u.role === "admin" ? '<span class="badge badge-admin">Admin</span>' : '<span class="badge badge-user">User</span>';
         const statusBadge = u.status === "active" ? '<span class="badge badge-active">Hoạt động</span>' : '<span class="badge badge-blocked">Bị khóa</span>';
         const blockBtnText = u.status === "active" ? "Khóa" : "Mở khóa";
-        const blockBtnClass = u.status === "active" ? "action-btn btn-sm btn-warn" : "action-btn btn-sm";
-        const resetPasswordButton = u.role === "user"
-          ? `<button class="action-btn btn-sm" onclick="resetUserPassword('${u.id}', '${escapeHtml(u.username)}', this)">Reset mật khẩu</button>`
-          : "";
+        const blockItemClass = u.status === "active" ? "action-dropdown-item is-danger" : "action-dropdown-item";
+        const isUserRole = u.role !== "admin";
+        const resetPasswordItem = isUserRole
+          ? `<button type="button" class="action-dropdown-item" role="menuitem" data-action="reset">Reset mật khẩu</button>`
+          : `<button type="button" class="action-dropdown-item is-disabled" role="menuitem" disabled title="Chỉ áp dụng cho tài khoản người dùng">Reset mật khẩu</button>`;
         const rank = u.rank || {};
-        const rankCell = `<span class="rank-cell-badge">${escapeHtml(rank.badge || "🎧")}</span> ${escapeHtml(rank.name || "Người mới bắt nhịp")}<small>${Number(rank.xp || 0).toLocaleString("vi-VN")} XP</small>`;
+        const rankCell = `
+          <div class="rank-name-line">
+            <span class="rank-cell-badge">${escapeHtml(rank.badge || "🎧")}</span>
+            <span class="rank-cell-title">${escapeHtml(rank.name || "Người mới bắt nhịp")}</span>
+          </div>
+          <small class="rank-xp-line">${Number(rank.xp || 0).toLocaleString("vi-VN")} XP</small>
+        `;
 
         return `
-          <tr>
-            <td><span class="user-cell"><span class="table-avatar" data-avatar-url="${escapeHtml(u.avatarUrl || "")}" data-avatar-name="${escapeHtml(u.display_name || u.username)}"></span><strong>${escapeHtml(u.username)}</strong></span></td>
-            <td>${escapeHtml(u.display_name)}</td>
+          <tr data-user-id="${escapeHtml(u.id)}" data-username="${escapeHtml(u.username)}" data-balance="${Number(u.points_balance || 0)}" data-status="${escapeHtml(u.status)}">
+            <td>
+              <div class="user-cell">
+                <span class="table-avatar" data-avatar-url="${escapeHtml(u.avatarUrl || "")}" data-avatar-name="${escapeHtml(u.display_name || u.username)}"></span>
+                <div class="user-meta">
+                  <strong class="user-display-name">${escapeHtml(u.display_name || u.username)}</strong>
+                  <span class="user-handle">@${escapeHtml(u.username)}</span>
+                </div>
+              </div>
+            </td>
             <td>${roleBadge}</td>
             <td>${statusBadge}</td>
-            <td><strong class="delta-pos">${u.points_balance}</strong> điểm</td>
-            <td>${u.current_streak} ngày</td>
+            <td class="points-cell"><strong>${Number(u.points_balance || 0).toLocaleString("vi-VN")}</strong> <span class="points-unit">điểm</span></td>
+            <td class="streak-cell"><span class="streak-fire" aria-hidden="true">🔥</span> <strong>${Number(u.current_streak || 0)}</strong></td>
             <td class="rank-cell">${rankCell}</td>
-            <td>${escapeHtml(u.last_checkin_date || "—")}</td>
-            <td>
-              <button class="action-btn btn-sm" onclick="openPointsModal('${u.id}', '${escapeHtml(u.username)}', ${u.points_balance})">Điểm ±</button>
-              <button class="action-btn btn-sm" onclick="openUserLedger('${u.id}', '${escapeHtml(u.username)}')">Ledger</button>
-              ${resetPasswordButton}
-              <button class="${blockBtnClass}" onclick="toggleUserStatus('${u.id}', '${u.status}')">${blockBtnText}</button>
+            <td class="checkin-cell">${escapeHtml(u.last_checkin_date || "—")}</td>
+            <td class="action-cell">
+              <div class="action-menu-wrap">
+                <button type="button" class="action-menu-trigger" aria-haspopup="true" aria-expanded="false" data-action-trigger>
+                  <span class="action-dots">•••</span> Thao tác
+                </button>
+                <div class="action-dropdown" role="menu">
+                  <button type="button" class="action-dropdown-item" role="menuitem" data-action="points">Điểm ±</button>
+                  <button type="button" class="action-dropdown-item" role="menuitem" data-action="ledger">Ledger</button>
+                  ${resetPasswordItem}
+                  <button type="button" class="${blockItemClass}" role="menuitem" data-action="toggle-status">${blockBtnText}</button>
+                </div>
+              </div>
             </td>
           </tr>
         `;
@@ -276,7 +396,7 @@ async function loadUsers() {
       });
     });
   } catch (err) {
-    tbody.innerHTML = `<tr><td colspan="9" class="text-center">Lỗi mạng: ${escapeHtml(err.message)}</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="8" class="text-center">Lỗi mạng: ${escapeHtml(err.message)}</td></tr>`;
   }
 }
 
@@ -1311,27 +1431,54 @@ function debounce(fn, delay) {
 function renderPagination(containerId, page, total, limit, onPage) {
   const container = document.getElementById(containerId);
   if (!container) return;
-  container.replaceChildren();
-  const pageCount = Math.ceil(Number(total || 0) / limit);
-  if (pageCount <= 1) return;
+  const numTotal = Number(total || 0);
+  const pageCount = Math.ceil(numTotal / limit);
+  if (numTotal === 0) {
+    container.innerHTML = "";
+    return;
+  }
 
-  const previous = document.createElement("button");
-  previous.type = "button";
-  previous.className = "action-btn";
-  previous.textContent = "Trang trước";
-  previous.disabled = page <= 1;
-  previous.addEventListener("click", () => onPage(page - 1));
+  const start = (page - 1) * limit + 1;
+  const end = Math.min(page * limit, numTotal);
 
-  const status = document.createElement("span");
-  status.className = "pagination-status";
-  status.textContent = `Trang ${page} / ${pageCount}`;
+  let pagesHtml = "";
+  if (pageCount > 1) {
+    const prevDisabled = page <= 1 ? "disabled" : "";
+    const nextDisabled = page >= pageCount ? "disabled" : "";
 
-  const next = document.createElement("button");
-  next.type = "button";
-  next.className = "action-btn";
-  next.textContent = "Trang sau";
-  next.disabled = page >= pageCount;
-  next.addEventListener("click", () => onPage(page + 1));
+    let startPage = Math.max(1, page - 2);
+    let endPage = Math.min(pageCount, startPage + 4);
+    if (endPage - startPage < 4) {
+      startPage = Math.max(1, endPage - 4);
+    }
 
-  container.append(previous, status, next);
+    let pageNumsHtml = "";
+    for (let p = startPage; p <= endPage; p++) {
+      const activeClass = p === page ? "page-btn is-active" : "page-btn";
+      const ariaCurrent = p === page ? 'aria-current="page"' : "";
+      pageNumsHtml += `<button type="button" class="${activeClass}" data-page="${p}" ${ariaCurrent}>${p}</button>`;
+    }
+
+    pagesHtml = `
+      <div class="pagination-controls">
+        <button type="button" class="page-btn page-prev" data-page="${page - 1}" ${prevDisabled} aria-label="Trang trước">&lsaquo;</button>
+        ${pageNumsHtml}
+        <button type="button" class="page-btn page-next" data-page="${page + 1}" ${nextDisabled} aria-label="Trang sau">&rsaquo;</button>
+      </div>
+    `;
+  }
+
+  container.innerHTML = `
+    <div class="pagination-info">Hiển thị ${start}-${end} trong số ${numTotal}</div>
+    ${pagesHtml}
+  `;
+
+  container.querySelectorAll("[data-page]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const targetPage = Number(btn.dataset.page);
+      if (targetPage >= 1 && targetPage <= pageCount && targetPage !== page) {
+        onPage(targetPage);
+      }
+    });
+  });
 }

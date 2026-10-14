@@ -3437,8 +3437,8 @@ function shutdown(signal) {
   try {
     server.close((error) => {
       clearTimeout(forceExit);
-      closeDb();
-      if (error && error.code !== "ERR_SERVER_NOT_RUNNING") {
+      const isNotRunning = !error || error.code === "ERR_SERVER_NOT_RUNNING" || String(error.message || "").includes("not running") || String(error).includes("ERR_SERVER_NOT_RUNNING");
+      if (!isNotRunning) {
         console.error("[server] graceful shutdown failed", error);
         process.exit(1);
       }
