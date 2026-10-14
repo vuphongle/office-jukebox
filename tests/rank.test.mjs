@@ -34,11 +34,11 @@ test("11-rank ladder has the approved names and XP thresholds", () => {
     RANK_LEVELS.slice(5).map((rank) => [rank.level, rank.minXp, rank.name]),
     [
       [6, 3_000, "Biểu tượng âm nhạc"],
-      [7, 5_000, "Phù thủy âm thanh"],
+      [7, 5_000, "Phù thủy âm nhạc"],
       [8, 10_000, "Tượng đài âm nhạc"],
       [9, 15_000, "Chúa tể Jukebox"],
       [10, 20_000, "Huyền thoại Jukebox"],
-      [11, 30_000, "Vị thần âm thanh"],
+      [11, 30_000, "Vị thần âm nhạc"],
     ]
   );
   // Levels 1-5 are untouched.
@@ -95,7 +95,7 @@ test("new ranks reward crossing users once and never retroactively reward users 
 
   const promoted = rankRepo.awardXp({ userId: crossing.id, activityType: "test", sourceId: "a", deltaXp: 10 });
   assert.equal(promoted.profile.rankLevel, 7);
-  assert.equal(promoted.profile.rankName, "Phù thủy âm thanh");
+  assert.equal(promoted.profile.rankName, "Phù thủy âm nhạc");
   // Level 7: +35 personal and +50 for the first member to reach it.
   assert.equal(promoted.pointsAwarded, 85);
   assert.equal(userRepo.findById(crossing.id).points_balance, 85);

@@ -506,10 +506,13 @@ function openCheckinModal() {
 
   const streak = displayStreak;
   const cycle = streak % 30;
-  document.getElementById("ms-3").classList.toggle("achieved", cycle >= 3);
-  document.getElementById("ms-7").classList.toggle("achieved", cycle >= 7);
-  document.getElementById("ms-14").classList.toggle("achieved", cycle >= 14);
-  document.getElementById("ms-30").classList.toggle("achieved", cycle === 0 && streak > 0);
+  document.getElementById("ms-3")?.classList.toggle("achieved", cycle >= 3);
+  document.getElementById("ms-7")?.classList.toggle("achieved", cycle >= 7);
+  document.getElementById("ms-14")?.classList.toggle("achieved", cycle >= 14);
+  document.getElementById("ms-30")?.classList.toggle("achieved", cycle === 0 && streak > 0);
+  document.getElementById("ms-100")?.classList.toggle("achieved", streak >= 100);
+  document.getElementById("ms-200")?.classList.toggle("achieved", streak >= 200);
+  document.getElementById("ms-365")?.classList.toggle("achieved", streak >= 365);
 
   const checkinBtn = document.getElementById("do-checkin-btn");
   const isCheckedIn = streakView ? streakView.checkedInToday : Boolean(currentUser.hasCheckedInToday);
