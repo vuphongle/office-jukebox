@@ -59,7 +59,7 @@ async function loadRankBenefits() {
   rankBenefitsPromise = fetch("/api/rank/benefits")
     .then((response) => response.json())
     .then((data) => {
-      rankBenefits = data.ok && Array.isArray(data.benefits) ? data.benefits.slice(0, 6) : [];
+      rankBenefits = data.ok && Array.isArray(data.benefits) ? data.benefits.slice(0, 20) : [];
       return rankBenefits;
     })
     .catch(() => {

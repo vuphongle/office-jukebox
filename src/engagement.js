@@ -16,8 +16,10 @@ export const STREAK_TIERS = Object.freeze([
 
 export const STREAK_MILESTONE_REWARDS = Object.freeze({
   10: 3,
-  20: 5,
   30: 10,
+  100: 20,
+  200: 50,
+  365: 100,
 });
 
 export const RANK_MILESTONE_REWARDS = Object.freeze({
@@ -26,12 +28,19 @@ export const RANK_MILESTONE_REWARDS = Object.freeze({
   4: 10,
   5: 15,
   6: 25,
+  7: 35,
+  8: 50,
+  9: 75,
+  10: 100,
+  11: 150,
 });
 
 export const STREAK_PODIUM_REWARDS = Object.freeze({
   10: Object.freeze({ 1: 5, 2: 3 }),
-  20: Object.freeze({ 1: 10, 2: 5 }),
   30: Object.freeze({ 1: 20, 2: 10 }),
+  100: Object.freeze({ 1: 30, 2: 15 }),
+  200: Object.freeze({ 1: 50, 2: 25 }),
+  365: Object.freeze({ 1: 100, 2: 50 }),
 });
 
 export const RANK_PODIUM_REWARDS = Object.freeze({
@@ -40,6 +49,11 @@ export const RANK_PODIUM_REWARDS = Object.freeze({
   4: Object.freeze({ 1: 15, 2: 8 }),
   5: Object.freeze({ 1: 25, 2: 12 }),
   6: Object.freeze({ 1: 40, 2: 20 }),
+  7: Object.freeze({ 1: 50, 2: 25 }),
+  8: Object.freeze({ 1: 70, 2: 35 }),
+  9: Object.freeze({ 1: 100, 2: 50 }),
+  10: Object.freeze({ 1: 150, 2: 75 }),
+  11: Object.freeze({ 1: 200, 2: 100 }),
 });
 
 export const CLAIMABLE_DROP_DURATION_PRESETS = Object.freeze([1, 4, 8, 24]);
@@ -75,11 +89,16 @@ export function getEngagementRules() {
     },
     streak: {
       tiers: STREAK_TIERS.map((tier) => ({ ...tier })),
+      // `repeats: true` milestones loop every 30 days; the others fire once
+      // at that exact streak day and are added to the base check-in reward.
       legacyMilestones: [
-        { day: 3, points: 2 },
-        { day: 7, points: 5 },
-        { day: 14, points: 10 },
-        { day: 30, points: 20 },
+        { day: 3, points: 2, repeats: true },
+        { day: 7, points: 5, repeats: true },
+        { day: 14, points: 10, repeats: true },
+        { day: 30, points: 20, repeats: true },
+        { day: 100, points: 50, repeats: false },
+        { day: 200, points: 100, repeats: false },
+        { day: 365, points: 150, repeats: false },
       ],
       personalRewards: Object.entries(STREAK_MILESTONE_REWARDS).map(([day, points]) => ({
         day: Number(day),

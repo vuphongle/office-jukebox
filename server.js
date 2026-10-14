@@ -315,6 +315,11 @@ const RANK_BADGE_ICONS = Object.freeze({
   turntable: "🎛️",
   "stage-star": "🌟",
   "neon-crown": "👑",
+  diamond: "💎",
+  wand: "🪄",
+  monument: "🏛️",
+  galaxy: "🌌",
+  trident: "🔱",
 });
 
 function publicRank(userId) {

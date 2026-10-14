@@ -474,7 +474,8 @@ test("public rank benefits expose every check-in reward", async () => {
     const response = await fetch(`${baseUrl}/api/rank/benefits`);
     assert.equal(response.status, 200);
     const payload = await response.json();
-    assert.deepEqual(payload.benefits.map((benefit) => benefit.checkinPoints), [1, 2, 3, 4, 5, 6]);
+    assert.deepEqual(payload.benefits.map((benefit) => benefit.checkinPoints), [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]);
+    assert.ok(payload.benefits.every((benefit) => typeof benefit.badge === "string" && benefit.badge.length > 0));
     assert.equal(Object.hasOwn(payload.benefits[0], "minXp"), true);
     assert.equal(Object.hasOwn(payload.benefits[0], "passwordHash"), false);
   } finally {

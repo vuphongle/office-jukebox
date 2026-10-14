@@ -5,6 +5,11 @@ const rankBadgeIcons = Object.freeze({
   turntable: "🎛️",
   "stage-star": "🌟",
   "neon-crown": "👑",
+  diamond: "💎",
+  wand: "🪄",
+  monument: "🏛️",
+  galaxy: "🌌",
+  trident: "🔱",
 });
 
 const leaderboardModes = Object.freeze({

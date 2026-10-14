@@ -131,7 +131,14 @@ export function computeStreakView(user, now = new Date(), timezone = null) {
   };
 }
 
+// One-time long-term check-in milestones (absolute streak day, never repeat).
+const LONG_TERM_MILESTONE_BONUS = Object.freeze({ 100: 50, 200: 100, 365: 150 });
+
 export function calculateMilestoneBonus(streakAfter) {
+  // Long-term milestones: day 100: +50, day 200: +100, day 365: +150.
+  const longTermBonus = LONG_TERM_MILESTONE_BONUS[streakAfter];
+  if (longTermBonus) return { bonus: longTermBonus, isMilestone: true, milestoneDay: streakAfter };
+
   // Milestone bonuses: day 3: +2, day 7: +5, day 14: +10, day 30: +20.
   // After day 30, the cycle repeats modulo 30.
   const cycleDay = ((streakAfter - 1) % 30) + 1;

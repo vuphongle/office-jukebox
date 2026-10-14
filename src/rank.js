@@ -7,7 +7,12 @@ export const RANK_LEVELS = Object.freeze([
   Object.freeze({ level: 3, minXp: 300, name: "Tạo vibe", badge: "flame", checkinPoints: 3 }),
   Object.freeze({ level: 4, minXp: 700, name: "DJ cộng đồng", badge: "turntable", checkinPoints: 4 }),
   Object.freeze({ level: 5, minXp: 1_500, name: "Headliner", badge: "stage-star", checkinPoints: 5 }),
-  Object.freeze({ level: 6, minXp: 3_000, name: "Huyền thoại", badge: "neon-crown", checkinPoints: 6 }),
+  Object.freeze({ level: 6, minXp: 3_000, name: "Biểu tượng âm nhạc", badge: "diamond", checkinPoints: 6 }),
+  Object.freeze({ level: 7, minXp: 5_000, name: "Phù thủy âm thanh", badge: "wand", checkinPoints: 7 }),
+  Object.freeze({ level: 8, minXp: 10_000, name: "Tượng đài âm nhạc", badge: "monument", checkinPoints: 8 }),
+  Object.freeze({ level: 9, minXp: 15_000, name: "Chúa tể Jukebox", badge: "neon-crown", checkinPoints: 9 }),
+  Object.freeze({ level: 10, minXp: 20_000, name: "Huyền thoại Jukebox", badge: "galaxy", checkinPoints: 10 }),
+  Object.freeze({ level: 11, minXp: 30_000, name: "Vị thần âm thanh", badge: "trident", checkinPoints: 11 }),
 ]);
 
 export const RANK_XP_DEFAULTS = Object.freeze({
@@ -21,7 +26,7 @@ const DEFAULT_DURATION_SECONDS = 210;
 
 /**
  * Return the rank descriptor for a cumulative XP value.
- * Levels are one-based (1..6) to match the user-facing rank labels.
+ * Levels are one-based (1..11) to match the user-facing rank labels.
  */
 export function rankForXp(xp) {
   const normalizedXp = normalizeXp(xp);

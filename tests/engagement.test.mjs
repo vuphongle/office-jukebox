@@ -32,6 +32,112 @@ test("engagement rules expose highest-tier streak bonuses and conservative rewar
   assert.equal(rules.weeklyLeaderboard.lifetimeXpReset, false);
 });
 
+test("rules expose the approved long-term streak and rank rewards without a day-20 award", () => {
+  const { streak, ranks } = getEngagementRules();
+  const personal = Object.fromEntries(streak.personalRewards.map((item) => [item.day, item.points]));
+  assert.deepEqual(personal, { 10: 3, 30: 10, 100: 20, 200: 50, 365: 100 });
+  const podium = Object.fromEntries(streak.podiumRewards.map((item) => [
+    item.day,
+    item.places.map((place) => place.points),
+  ]));
+  assert.deepEqual(podium, { 10: [5, 3], 30: [20, 10], 100: [30, 15], 200: [50, 25], 365: [100, 50] });
+  assert.equal(streak.personalRewards.some((item) => item.day === 20), false);
+  assert.equal(streak.podiumRewards.some((item) => item.day === 20), false);
+  // Recurring tiers are not part of this change.
+  assert.deepEqual(streak.tiers.map((tier) => tier.minStreak), [0, 10, 20, 30]);
+  assert.deepEqual(
+    streak.legacyMilestones.map((item) => [item.day, item.points, item.repeats]),
+    [[3, 2, true], [7, 5, true], [14, 10, true], [30, 20, true], [100, 50, false], [200, 100, false], [365, 150, false]]
+  );
+
+  assert.deepEqual(
+    ranks.personalRewards.map((item) => [item.level, item.points]),
+    [[2, 3], [3, 5], [4, 10], [5, 15], [6, 25], [7, 35], [8, 50], [9, 75], [10, 100], [11, 150]]
+  );
+  assert.deepEqual(
+    ranks.podiumRewards.map((item) => [item.level, item.places.map((place) => place.points)]),
+    [[2, [5, 3]], [3, [10, 5]], [4, [15, 8]], [5, [25, 12]], [6, [40, 20]], [7, [50, 25]], [8, [70, 35]], [9, [100, 50]], [10, [150, 75]], [11, [200, 100]]]
+  );
+  assert.equal(ranks.personalRewards.find((item) => item.level === 6).name, "Biểu tượng âm nhạc");
+  assert.equal(ranks.levels.length, 11);
+});
+
+test("streak 100/200/365 grant personal and top-2 podium rewards once; day 20 grants nothing", () => {
+  const db = initDb({ dbPath: ":memory:" });
+  const userRepo = new UserRepository(db);
+  const engagementRepo = new EngagementRepository(db);
+  const users = ["a", "b", "c"].map((name) => userRepo.create({ username: `long-streak-${name}`, passwordHash: "p" }));
+  const expected = {
+    100: { personal: 20, podium: [30, 15] },
+    200: { personal: 50, podium: [50, 25] },
+    365: { personal: 100, podium: [100, 50] },
+  };
+
+  for (const [day, reward] of Object.entries(expected)) {
+    const results = users.map((user) => engagementRepo.awardStreakMilestones({ userId: user.id, streakAfter: Number(day) }));
+    assert.deepEqual(results.map((result) => result.pointsAwarded), [
+      reward.personal + reward.podium[0],
+      reward.personal + reward.podium[1],
+      reward.personal,
+    ]);
+    // Re-awarding is idempotent.
+    assert.equal(engagementRepo.awardStreakMilestones({ userId: users[0].id, streakAfter: Number(day) }).pointsAwarded, 0);
+  }
+
+  assert.equal(engagementRepo.awardStreakMilestones({ userId: users[0].id, streakAfter: 20 }).pointsAwarded, 0);
+});
+
+test("rank 7-11 promotion rewards match the approved table", () => {
+  const db = initDb({ dbPath: ":memory:" });
+  const userRepo = new UserRepository(db);
+  const engagementRepo = new EngagementRepository(db);
+  const first = userRepo.create({ username: "rank-table-first", passwordHash: "p" });
+  const second = userRepo.create({ username: "rank-table-second", passwordHash: "p" });
+  const third = userRepo.create({ username: "rank-table-third", passwordHash: "p" });
+  const personal = { 7: 35, 8: 50, 9: 75, 10: 100, 11: 150 };
+  const podium = { 7: [50, 25], 8: [70, 35], 9: [100, 50], 10: [150, 75], 11: [200, 100] };
+
+  for (const level of [7, 8, 9, 10, 11]) {
+    const totals = [first, second, third].map((user) => (
+      engagementRepo.awardRankMilestones({ userId: user.id, crossedLevels: [level] }).pointsAwarded
+    ));
+    assert.deepEqual(totals, [
+      personal[level] + podium[level][0],
+      personal[level] + podium[level][1],
+      personal[level],
+    ]);
+  }
+});
+
+test("day-100 check-in adds the +50 milestone, one-time reward and podium on top of the base reward", () => {
+  const db = initDb({ dbPath: ":memory:", adminUser: "admin", adminPass: "p" });
+  const userRepo = new UserRepository(db);
+  const notificationRepo = new NotificationRepository(db);
+  const engagementRepo = new EngagementRepository(db, { notificationRepo });
+  const user = userRepo.create({ username: "streak-hundred", passwordHash: "p" });
+  db.run(
+    "UPDATE users SET current_streak = 99, last_checkin_date = '2026-08-29' WHERE id = ?",
+    [user.id]
+  );
+
+  const result = performCheckin(db, user.id, {
+    now: new Date("2026-08-30T10:00:00.000Z"),
+    notificationRepo,
+    engagementRepo,
+  });
+
+  assert.equal(result.streak, 100);
+  assert.equal(result.isMilestone, true);
+  assert.equal(result.basePoints, 1);
+  assert.equal(result.bonusPoints, 50);
+  assert.equal(result.tierBonusPoints, 3);
+  // +20 one-time and +30 podium (first member to reach day 100).
+  assert.equal(result.achievementPoints, 50);
+  assert.equal(result.pointsAwarded, 104);
+  assert.equal(userRepo.findById(user.id).points_balance, 104);
+  assert.equal(result.newBalance, 104);
+});
+
 test("streak awards are transactional, idempotent, and podium rewards stop at second place", () => {
   const db = initDb({ dbPath: ":memory:" });
   const userRepo = new UserRepository(db);
