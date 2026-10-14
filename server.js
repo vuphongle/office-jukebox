@@ -3434,15 +3434,21 @@ function shutdown(signal) {
     process.exit(0);
   }, 1500);
   forceExit.unref?.();
-  server.close((error) => {
+  try {
+    server.close((error) => {
+      clearTimeout(forceExit);
+      closeDb();
+      if (error && error.code !== "ERR_SERVER_NOT_RUNNING") {
+        console.error("[server] graceful shutdown failed", error);
+        process.exit(1);
+      }
+      process.exit(0);
+    });
+  } catch (err) {
     clearTimeout(forceExit);
     closeDb();
-    if (error) {
-      console.error("[server] graceful shutdown failed", error);
-      process.exit(1);
-    }
     process.exit(0);
-  });
+  }
 }
 process.once("SIGINT", () => shutdown("SIGINT"));
 process.once("SIGTERM", () => shutdown("SIGTERM"));
