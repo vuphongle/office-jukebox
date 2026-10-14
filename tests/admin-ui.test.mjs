@@ -120,3 +120,59 @@ test("admin groups search source and order network lock under operations", () =>
   assert.ok(html.indexOf('id="order-network-lock-form"') < feedbackStart);
   assert.match(source, /currentTab === "tab-operations"/);
 });
+
+test("admin users table merges user details, isolates streak/points, and uses action dropdown", () => {
+  const html = readFileSync(path.join(ROOT, "public/admin.html"), "utf8");
+  const source = readFileSync(path.join(ROOT, "public/admin.js"), "utf8");
+
+  // Verify headers count in users table
+  const userTableStart = html.indexOf('id="tab-users"');
+  const userTableEnd = html.indexOf('id="tab-drops"');
+  const userSectionHtml = html.slice(userTableStart, userTableEnd);
+
+  // Checks 8 headers: Username, Vai trò, Trạng thái, Số dư điểm, Streak, Hạng hoạt động, Check-in cuối, Hành động
+  const thMatches = userSectionHtml.match(/<th\b[^>]*>.*?<\/th>/gi) || [];
+  assert.equal(thMatches.length, 8);
+  assert.ok(!userSectionHtml.includes("<th>Tên hiển thị</th>"));
+  assert.ok(userSectionHtml.includes('<th class="th-center">Số dư điểm</th>'));
+
+  // Check search icon shell exists in tab-users
+  assert.ok(userSectionHtml.includes('class="search-input-shell"'));
+
+  // Verify source markup has user-cell with display-name and handle
+  assert.match(source, /user-display-name/);
+  assert.match(source, /user-handle/);
+  assert.match(source, /streak-cell/);
+  assert.match(source, /🔥/);
+  assert.match(source, /action-menu-wrap/);
+  assert.match(source, /action-menu-trigger/);
+  assert.match(source, /action-dropdown/);
+  assert.match(source, /action-dropdown-item is-danger/);
+
+  // Verify dropdown uses fixed positioning in CSS to prevent clipping by table overflow
+  const css = readFileSync(path.join(ROOT, "public/admin.css"), "utf8");
+  assert.match(css, /\.action-dropdown\s*\{[^}]*position:\s*fixed/);
+
+  // Verify headers bold and white styling
+  assert.match(css, /\.data-table\s+th\s*\{[^}]*color:\s*#ffffff/);
+  assert.match(css, /\.data-table\s+th\s*\{[^}]*font-weight:\s*800/);
+
+  // Verify activity rank header and xp line are centered
+  assert.ok(userSectionHtml.includes('<th class="th-center">Hạng hoạt động</th>'));
+  assert.match(css, /\.rank-xp-line\s*\{[^}]*text-align:\s*center/);
+
+  // Verify points column is centered
+  assert.match(css, /\.points-cell\s*\{[^}]*text-align:\s*center/);
+
+  // Verify reset password action item exists in actions dropdown
+  assert.match(source, /data-action="reset">Reset mật khẩu/);
+
+  // Verify streak only contains flame icon + number, without "ngày"
+  assert.match(source, /streak-cell/);
+  assert.ok(!source.includes('${Number(u.current_streak || 0)} ngày'));
+  assert.ok(!source.includes('${u.current_streak} ngày'));
+
+  // Verify action trigger has no up/down caret
+  assert.ok(!source.includes("action-caret"));
+});
+

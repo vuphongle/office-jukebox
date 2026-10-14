@@ -229,6 +229,23 @@ h1 {
   outline: 2px solid var(--gold);
   outline-offset: 2px;
 }
+.search-input-shell {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+.search-input-shell .search-icon {
+  position: absolute;
+  left: 12px;
+  width: 15px;
+  height: 15px;
+  color: var(--muted);
+  pointer-events: none;
+}
+.search-input-shell input {
+  padding-left: 36px !important;
+  min-width: 250px;
+}
 
 .grid-2col {
   display: grid;
@@ -241,6 +258,8 @@ h1 {
 .table-responsive {
   width: 100%;
   overflow-x: auto;
+  position: relative;
+  min-height: 220px;
 }
 .data-table {
   width: 100%;
@@ -248,23 +267,232 @@ h1 {
   font-size: 13px;
   text-align: left;
 }
+.data-table thead th,
 .data-table th {
-  padding: 12px 14px;
-  border-bottom: 2px solid var(--line);
-  color: var(--warm);
-  font-weight: 700;
+  padding: 14px 16px;
+  border-bottom: 1px solid oklch(100% 0 0 / 0.12);
+  color: #ffffff !important;
+  font-weight: 800 !important;
   font-size: 12px;
   text-transform: uppercase;
-  letter-spacing: 0.04em;
+  letter-spacing: 0.06em;
+  white-space: nowrap;
+}
+.data-table th.th-center,
+.th-center {
+  text-align: center;
 }
 .data-table td {
-  padding: 12px 14px;
-  border-bottom: 1px solid var(--line);
+  padding: 16px;
+  border-bottom: 1px solid oklch(100% 0 0 / 0.06);
   color: var(--text);
+  vertical-align: middle;
+}
+.data-table tbody tr {
+  transition: background 120ms ease;
 }
 .data-table tbody tr:hover {
-  background: var(--fill);
+  background: oklch(100% 0 0 / 0.025);
 }
+
+/* User Meta Cell (Avatar + Names) */
+.user-cell {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.user-cell .table-avatar {
+  width: 38px;
+  height: 38px;
+  flex: 0 0 38px;
+  border-radius: 50%;
+  border: 1px solid oklch(100% 0 0 / 0.12);
+  background: oklch(80% 0.14 85 / 0.14);
+  color: var(--gold);
+  font-size: 13px;
+  font-weight: 800;
+  display: inline-grid;
+  place-items: center;
+  overflow: hidden;
+}
+.user-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.user-display-name {
+  color: var(--text-hi);
+  font-size: 14px;
+  font-weight: 700;
+  line-height: 1.3;
+  white-space: nowrap;
+}
+.user-handle {
+  color: oklch(62% 0.02 320);
+  font-size: 12px;
+  line-height: 1.2;
+}
+
+/* Specific Columns */
+.data-table td.points-cell,
+.points-cell {
+  text-align: center;
+  white-space: nowrap;
+}
+.points-cell strong {
+  color: var(--text-hi);
+  font-size: 14px;
+  font-weight: 700;
+}
+.points-unit {
+  color: oklch(80% 0.01 85);
+  font-size: 13px;
+}
+.streak-cell {
+  white-space: nowrap;
+  color: oklch(80% 0.01 85);
+  font-size: 13px;
+}
+.streak-cell strong {
+  color: var(--text-hi);
+  font-size: 14px;
+  font-weight: 700;
+}
+.streak-fire {
+  font-size: 15px;
+  margin-right: 2px;
+  display: inline-block;
+  vertical-align: -1px;
+}
+.data-table td.rank-cell,
+.rank-cell {
+  text-align: center;
+  min-width: 170px;
+}
+.rank-name-line {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  color: var(--text-hi);
+  font-size: 13px;
+  font-weight: 600;
+}
+.rank-cell-title {
+  white-space: nowrap;
+}
+.rank-xp-line {
+  display: block;
+  width: 100%;
+  text-align: center;
+  margin: 3px auto 0;
+  color: oklch(62% 0.02 320);
+  font-size: 11px;
+}
+.checkin-cell {
+  font-size: 13px;
+  color: oklch(78% 0.01 85);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* Action Dropdown Menu */
+.action-cell {
+  position: relative;
+  white-space: nowrap;
+}
+.action-menu-wrap {
+  position: relative;
+  display: inline-block;
+}
+.action-menu-trigger {
+  height: 34px;
+  padding: 0 14px;
+  border: 1px solid oklch(100% 0 0 / 0.12);
+  border-radius: 8px;
+  background: oklch(100% 0 0 / 0.06);
+  color: oklch(90% 0.01 85);
+  font-size: 12px;
+  font-weight: 600;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  transition: all 140ms ease;
+}
+.action-menu-trigger:hover {
+  background: oklch(100% 0 0 / 0.1);
+  border-color: oklch(100% 0 0 / 0.22);
+  color: #fff;
+}
+.action-menu-wrap.open .action-menu-trigger {
+  background: oklch(100% 0 0 / 0.12);
+  border-color: var(--gold);
+  color: #fff;
+}
+.action-dots {
+  letter-spacing: -1px;
+  font-size: 14px;
+}
+
+.action-dropdown {
+  position: fixed;
+  min-width: 140px;
+  background: oklch(22% 0.035 325 / 0.96);
+  backdrop-filter: blur(14px);
+  border: 1px solid oklch(100% 0 0 / 0.14);
+  border-radius: 12px;
+  padding: 6px;
+  box-shadow: 0 14px 34px rgba(0, 0, 0, 0.5);
+  z-index: 1000;
+  display: none;
+  flex-direction: column;
+  gap: 2px;
+}
+.action-menu-wrap.open .action-dropdown {
+  display: flex;
+  animation: dropdownAnim 140ms ease-out;
+}
+@keyframes dropdownAnim {
+  from { opacity: 0; transform: translateY(-4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.action-dropdown-item {
+  width: 100%;
+  height: 36px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: oklch(92% 0.01 85);
+  font-size: 13px;
+  font-weight: 500;
+  text-align: left;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  transition: background 120ms ease, color 120ms ease;
+  white-space: nowrap;
+}
+.action-dropdown-item:hover {
+  background: oklch(100% 0 0 / 0.08);
+  color: #fff;
+}
+.action-dropdown-item.is-danger {
+  color: oklch(72% 0.18 28);
+}
+.action-dropdown-item.is-danger:hover {
+  background: oklch(68% 0.18 32 / 0.18);
+  color: oklch(82% 0.18 28);
+}
+.action-dropdown-item:disabled,
+.action-dropdown-item.is-disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+  pointer-events: none;
+}
+
 .notification-history-scroll { max-height: 430px; overflow-y: auto; scrollbar-width: thin; scrollbar-color: oklch(100% 0 0 / .18) transparent; }
 .notification-history-table td { vertical-align: top; }
 .notification-history-copy { min-width: 180px; }
@@ -285,15 +513,33 @@ h1 {
 /* Badges */
 .badge {
   display: inline-block;
-  padding: 3px 8px;
-  border-radius: 6px;
-  font-size: 11px;
-  font-weight: 700;
+  padding: 4px 10px;
+  border-radius: 8px;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.3;
+  white-space: nowrap;
 }
-.badge-active { background: oklch(75% 0.16 145 / 0.18); color: var(--green); border: 1px solid oklch(75% 0.16 145 / 0.4); }
-.badge-blocked { background: oklch(68% 0.18 32 / 0.18); color: var(--red); border: 1px solid oklch(68% 0.18 32 / 0.4); }
-.badge-admin { background: oklch(80% 0.14 85 / 0.18); color: var(--gold); border: 1px solid oklch(80% 0.14 85 / 0.4); }
-.badge-user { background: var(--fill); color: var(--muted); border: 1px solid var(--line); }
+.badge-active {
+  background: oklch(75% 0.16 145 / 0.14);
+  color: oklch(80% 0.16 145);
+  border: 1px solid oklch(75% 0.16 145 / 0.35);
+}
+.badge-blocked {
+  background: oklch(68% 0.18 32 / 0.16);
+  color: oklch(75% 0.18 32);
+  border: 1px solid oklch(68% 0.18 32 / 0.4);
+}
+.badge-admin {
+  background: oklch(80% 0.14 85 / 0.15);
+  color: var(--gold);
+  border: 1px solid oklch(80% 0.14 85 / 0.4);
+}
+.badge-user {
+  background: oklch(100% 0 0 / 0.05);
+  color: oklch(85% 0.01 85);
+  border: 1px solid oklch(100% 0 0 / 0.12);
+}
 
 .delta-pos { color: var(--green); font-weight: 700; }
 .delta-neg { color: var(--red); font-weight: 700; }
@@ -367,9 +613,50 @@ h1 {
 .pagination {
   display: flex;
   align-items: center;
-  justify-content: flex-end;
-  gap: 8px;
-  margin-top: 16px;
+  justify-content: space-between;
+  gap: 16px;
+  margin-top: 20px;
+  padding-top: 14px;
+  border-top: 1px solid oklch(100% 0 0 / 0.05);
+}
+.pagination-info {
+  color: oklch(65% 0.02 320);
+  font-size: 13px;
+}
+.pagination-controls {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.page-btn {
+  min-width: 32px;
+  height: 32px;
+  padding: 0 8px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: oklch(75% 0.01 85);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 120ms ease;
+}
+.page-btn:hover:not(:disabled) {
+  background: oklch(100% 0 0 / 0.06);
+  color: #fff;
+}
+.page-btn.is-active {
+  background: oklch(100% 0 0 / 0.08);
+  border-color: oklch(100% 0 0 / 0.16);
+  color: #fff;
+  font-weight: 700;
+}
+.page-btn:disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
 }
 .pagination-status { color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
 

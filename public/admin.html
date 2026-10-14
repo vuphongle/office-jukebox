@@ -9,7 +9,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Noto+Serif:wght@600;700&family=Noto+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/admin.css" />
+  <link rel="stylesheet" href="/admin.css?v=20261014c" />
 </head>
 <body>
   <section id="admin-login-gate" class="admin-login-gate" aria-labelledby="admin-login-title">
@@ -84,7 +84,13 @@
         <div class="panel-header">
           <h2>Danh sách Người dùng</h2>
           <div class="filter-group">
-            <input id="user-search-input" type="search" placeholder="Tìm theo username hoặc tên…" aria-label="Tìm thành viên" />
+            <div class="search-input-shell">
+              <svg class="search-icon" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                <circle cx="8.5" cy="8.5" r="5.5"></circle>
+                <path d="M13 13l4 4" stroke-linecap="round"></path>
+              </svg>
+              <input id="user-search-input" type="search" placeholder="Tìm theo username hoặc tên…" aria-label="Tìm thành viên" />
+            </div>
             <select id="user-status-filter" aria-label="Lọc trạng thái thành viên">
               <option value="">Tất cả trạng thái</option>
               <option value="active">Đang hoạt động</option>
@@ -94,22 +100,21 @@
           </div>
         </div>
         <div class="table-responsive">
-          <table class="data-table">
+          <table class="data-table users-table">
             <thead>
               <tr>
                 <th>Username</th>
-                <th>Tên hiển thị</th>
                 <th>Vai trò</th>
                 <th>Trạng thái</th>
-                <th>Số dư điểm</th>
+                <th class="th-center">Số dư điểm</th>
                 <th>Streak</th>
-                <th>Hạng hoạt động</th>
+                <th class="th-center">Hạng hoạt động</th>
                 <th>Check-in cuối</th>
                 <th>Hành động</th>
               </tr>
             </thead>
             <tbody id="users-tbody">
-              <tr><td colspan="9" class="text-center">Đang tải dữ liệu…</td></tr>
+              <tr><td colspan="8" class="text-center">Đang tải dữ liệu…</td></tr>
             </tbody>
           </table>
         </div>
@@ -574,6 +579,6 @@
   </div>
 
   <script src="/avatar.js"></script>
-  <script src="/admin.js"></script>
+  <script src="/admin.js?v=20261014c"></script>
 </body>
 </html>
