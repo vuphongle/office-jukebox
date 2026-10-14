@@ -1,5 +1,6 @@
 import test, { afterEach } from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 
 import { closeDb, initDb } from "../src/db.js";
 import { RankRepository } from "../src/repositories/rankRepository.js";
@@ -67,3 +68,11 @@ test("public leaderboard returns the top ten active regular users without privat
   assert.equal(rows.some((row) => row.displayName === "Admin User"), false);
   assert.deepEqual(Object.keys(rows[0]).sort(), ["avatarUrl", "displayName", "position", "rank", "xpTotal"]);
 });
+
+test("leaderboard podium cards display official rank name instead of generic level number", () => {
+  const leaderboardJs = readFileSync(new URL("../public/leaderboard.js", import.meta.url), "utf8");
+  assert.match(leaderboardJs, /entry\.rank\?\.name/);
+  assert.doesNotMatch(leaderboardJs, /<small>Hạng \$\{/);
+  assert.match(leaderboardJs, /<small>\$\{escapeHtml\(rankName\)\} · \$\{score\} \$\{config\.scoreLabel\}<\/small>/);
+});
+

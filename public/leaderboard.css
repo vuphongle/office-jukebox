@@ -249,7 +249,13 @@ button:focus-visible, a:focus-visible {
   line-height: 1.3;
   overflow-wrap: anywhere;
 }
-.leaderboard-podium-card small { color: var(--text-muted); font-size: 11px; line-height: 1.3; }
+.leaderboard-podium-card small {
+  max-width: 100%;
+  color: var(--text-muted);
+  font-size: 11px;
+  line-height: 1.3;
+  overflow-wrap: anywhere;
+}
 .leaderboard-list { display: grid; gap: 8px; margin-top: 12px; }
 .leaderboard-row {
   min-width: 0;
