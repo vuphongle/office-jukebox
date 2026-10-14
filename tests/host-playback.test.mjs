@@ -70,8 +70,19 @@ function createHostContext({ hostToken = null } = {}) {
     },
   };
   const windowListeners = new Map();
+  const documentListeners = new Map();
   const spotifyListeners = new Map();
   const spotifyPlayer = {
+    activateElementCalls: 0,
+    resumeCalls: 0,
+    activateElement() {
+      this.activateElementCalls++;
+      return Promise.resolve();
+    },
+    resume() {
+      this.resumeCalls++;
+      return Promise.resolve();
+    },
     addListener(name, handler) {
       const list = spotifyListeners.get(name) || [];
       list.push(handler);
@@ -103,17 +114,29 @@ function createHostContext({ hostToken = null } = {}) {
       },
     },
   };
+  const documentObj = {
+    hidden: false,
+    activeElement: null,
+    addEventListener(name, handler) {
+      const list = documentListeners.get(name) || [];
+      list.push(handler);
+      documentListeners.set(name, list);
+    },
+    removeEventListener(name, handler) {
+      const list = documentListeners.get(name) || [];
+      documentListeners.set(name, list.filter((entry) => entry !== handler));
+    },
+    dispatch(name, event = {}) {
+      for (const h of documentListeners.get(name) || []) h(event);
+    },
+    createElement: () => new FakeElement(),
+    getElementById,
+    querySelectorAll: () => [],
+  };
   const context = vm.createContext({
     window,
     navigator: { onLine: true },
-    document: {
-      hidden: false,
-      activeElement: null,
-      addEventListener() {},
-      createElement: () => new FakeElement(),
-      getElementById,
-      querySelectorAll: () => [],
-    },
+    document: documentObj,
     Element: FakeElement,
     WebSocket: class {
       readyState = 1;
@@ -158,6 +181,9 @@ function createHostContext({ hostToken = null } = {}) {
     fetchCalls,
     spotifyListeners,
     windowListeners,
+    documentListeners,
+    spotifyPlayer,
+    document: documentObj,
     getElementById,
     getIntervalCallback: () => intervalCallback,
     getPlayerEvents: () => playerEvents,
@@ -852,5 +878,159 @@ test("host broadcasts playbackTick for YouTube playing and relative seek", () =>
   assert.ok(seekTicks.length >= 1, "Should broadcast seek playbackTick");
   assert.equal(seekTicks[seekTicks.length - 1].position, 55200);
 });
+
+test("host does not drift Spotify timer into the future when transitioning from YouTube in background tab", () => {
+  const { context, sent, spotifyListeners, document: doc } = createHostContext();
+  let fakeNow = 10000;
+  context.performance = { now: () => fakeNow };
+
+  const source = readFileSync(new URL("../public/host.js", import.meta.url), "utf8");
+  vm.runInContext(source, context);
+
+  context.connectWs();
+  context.window.onSpotifyWebPlaybackSDKReady();
+  const onReady = spotifyListeners.get("ready")?.[0];
+  const onPlayerState = spotifyListeners.get("player_state_changed")?.[0];
+
+  onReady({ device_id: "spotify-dev-1" });
+
+  // YouTube playing first
+  vm.runInContext(
+    'started = true; latestState = { nowPlaying: { videoId: "yt-song-1", provider: "youtube", playbackToken: "tok-yt-1" }, queue: [{ videoId: "sp-next-1", provider: "spotify" }] }; syncPlayer();',
+    context
+  );
+
+  // Tab is placed into background
+  doc.hidden = true;
+
+  // YouTube finishes, queue transitions to Spotify track
+  vm.runInContext(
+    'latestState = { nowPlaying: { videoId: "sp-next-1", provider: "spotify", playbackToken: "tok-sp-next", duration: "3:30" }, queue: [] }; syncPlayer();',
+    context
+  );
+
+  // Spotify SDK initial state arrives in background: position is 0
+  onPlayerState({
+    paused: false,
+    loading: false,
+    position: 0,
+    duration: 210000,
+    track_window: { current_track: { id: "sp-next-1" } },
+  });
+
+  // Verify interpolated position is 0 (NOT drifting into the future)
+  let curPos = vm.runInContext("getInterpolatedSpotifyPosition();", context);
+  assert.equal(curPos, 0, "Position must be 0 while audio has not actually started");
+
+  // Advance time by 20 seconds while still in background
+  fakeNow += 20000;
+
+  // Position must still be 0 because audio hasn't advanced past 0 in background!
+  curPos = vm.runInContext("getInterpolatedSpotifyPosition();", context);
+  assert.equal(curPos, 0, "Position must NOT phantom-run to 20s while audio is pending/blocked in background");
+
+  // Check broadcast tick: position must be 0, paused must be true
+  sent.length = 0;
+  vm.runInContext("broadcastSpotifyTick({ seek: false });", context);
+  const tick = sent.find((m) => m.type === "playbackTick");
+  assert.ok(tick, "Should broadcast a playbackTick");
+  assert.equal(tick.position, 0);
+  assert.equal(tick.paused, true, "Should report paused while audio is not actually progressing");
+});
+
+test("host activates element and resumes Spotify when tab becomes visible after background transition", () => {
+  const { context, spotifyListeners, spotifyPlayer, document: doc } = createHostContext();
+  let fakeNow = 50000;
+  context.performance = { now: () => fakeNow };
+
+  const source = readFileSync(new URL("../public/host.js", import.meta.url), "utf8");
+  vm.runInContext(source, context);
+
+  context.connectWs();
+  context.window.onSpotifyWebPlaybackSDKReady();
+  const onReady = spotifyListeners.get("ready")?.[0];
+  const onPlayerState = spotifyListeners.get("player_state_changed")?.[0];
+
+  onReady({ device_id: "spotify-dev-1" });
+
+  // Tab in background
+  doc.hidden = true;
+  vm.runInContext(
+    'started = true; latestState = { nowPlaying: { videoId: "sp-bg-1", provider: "spotify", playbackToken: "tok-bg-1", duration: "4:00" }, queue: [] }; syncPlayer();',
+    context
+  );
+
+  onPlayerState({
+    paused: false,
+    loading: false,
+    position: 0,
+    duration: 240000,
+    track_window: { current_track: { id: "sp-bg-1" } },
+  });
+
+  // User focuses/clicks back to the tab
+  doc.hidden = false;
+  doc.dispatch("visibilitychange");
+
+  // Verify that visibilitychange triggered resume and activateElement
+  assert.ok(spotifyPlayer.resumeCalls >= 1, "Should call spotifyPlayer.resume() on foreground return");
+  assert.ok(spotifyPlayer.activateElementCalls >= 1, "Should call spotifyPlayer.activateElement() on foreground return");
+
+  // Now Spotify SDK reports audio has genuinely started playing from 1.5 seconds (1500ms)
+  fakeNow += 500;
+  onPlayerState({
+    paused: false,
+    loading: false,
+    position: 1500,
+    duration: 240000,
+    track_window: { current_track: { id: "sp-bg-1" } },
+  });
+
+  // Now progress should track smoothly from 1500ms
+  fakeNow += 1000;
+  const pos = vm.runInContext("getInterpolatedSpotifyPosition();", context);
+  assert.ok(pos >= 2400 && pos <= 2600, `Position should be around 2500ms, got ${pos}`);
+});
+
+test("host handles Spotify autoplay_failed by showing recovery and suppressing fake progress", () => {
+  const { context, getElementById, spotifyListeners, spotifyPlayer } = createHostContext();
+  let fakeNow = 80000;
+  context.performance = { now: () => fakeNow };
+
+  const source = readFileSync(new URL("../public/host.js", import.meta.url), "utf8");
+  vm.runInContext(source, context);
+
+  context.connectWs();
+  context.window.onSpotifyWebPlaybackSDKReady();
+  const onReady = spotifyListeners.get("ready")?.[0];
+  const onAutoplayFailed = spotifyListeners.get("autoplay_failed")?.[0];
+
+  onReady({ device_id: "spotify-dev-1" });
+  vm.runInContext(
+    'started = true; latestState = { nowPlaying: { videoId: "sp-fail-1", provider: "spotify", playbackToken: "tok-f1", duration: "3:00" }, queue: [] }; syncPlayer();',
+    context
+  );
+
+  // Browser blocks background autoplay
+  assert.ok(typeof onAutoplayFailed === "function", "autoplay_failed listener should be registered");
+  onAutoplayFailed();
+
+  // Recovery UI should be revealed
+  const recoveryEl = getElementById("playback-recovery");
+  assert.equal(recoveryEl.classList.contains("hidden"), false, "Recovery overlay should be visible");
+
+  // Time elapses
+  fakeNow += 15000;
+  const curPos = vm.runInContext("getInterpolatedSpotifyPosition();", context);
+  assert.equal(curPos, 0, "Position must not advance when autoplay is blocked");
+
+  // User clicks resume-playback button
+  const prevResumeCalls = spotifyPlayer.resumeCalls;
+  const resumeBtn = getElementById("resume-playback");
+  resumeBtn.onclick();
+
+  assert.equal(recoveryEl.classList.contains("hidden"), true, "Recovery overlay should hide on resume click");
+});
+
 
 
