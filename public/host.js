@@ -351,6 +351,8 @@ window.onYouTubeIframeAPIReady = function () {
             iframe.setAttribute("allow", "autoplay; encrypted-media; picture-in-picture");
           }
         } catch {}
+        currentVideoId = null;
+        currentPlaybackToken = null;
         syncPlayer();
       },
       onStateChange: (e) => {
@@ -917,6 +919,9 @@ window.onSpotifyWebPlaybackSDKReady = function () {
         Math.floor(spotifyAnchorPos || spotifyPlayerState?.position || 0)
       );
       playSpotify(currentVideoId, resumePosMs);
+      if (currentPlaybackToken) {
+        armPlaybackWatchdog(currentVideoId, currentPlaybackToken);
+      }
     }
   });
 
@@ -1561,6 +1566,9 @@ function syncPlayer() {
   updatePlayPauseIcon();
 
   if (np.videoId !== currentVideoId || np.playbackToken !== currentPlaybackToken) {
+    if (provider === "youtube" && !playerReady) {
+      return;
+    }
     if (playbackEventHandlers && player?.removeEventListener) {
       player.removeEventListener("onStateChange", playbackEventHandlers.onStateChange);
       player.removeEventListener("onError", playbackEventHandlers.onError);
@@ -1890,7 +1898,7 @@ function armPlaybackWatchdog(videoId, playbackToken) {
         matchesTrack
       );
       if (isPlaying || isLyricsMode) return;
-      if ((!spotifyReady || !spotifyDeviceId || document.hidden) && watchdogHiddenExtendCount < 2) {
+      if ((!spotifyReady || !spotifyDeviceId || document.hidden) && watchdogHiddenExtendCount < 3) {
         watchdogHiddenExtendCount++;
         armPlaybackWatchdog(videoId, playbackToken);
         return;
@@ -1962,6 +1970,7 @@ function reconcilePlayback() {
 
   let actual = {
     provider: activePlayerProvider || expected.provider,
+    activeProvider: activePlayerProvider || expected.provider,
     videoId: null,
     playbackToken: null,
   };
@@ -3043,6 +3052,8 @@ document.getElementById("start-btn").onclick = () => {
   registerOrderNetworkHost();
   startOrderNetworkHostRefresh();
   startPlaybackReconciler();
+  currentVideoId = null;
+  currentPlaybackToken = null;
   syncPlayer();
 };
 

@@ -18,13 +18,15 @@
     mismatchCount = 0,
     elapsedMs = 0,
   } = {}) {
+    const activeProv = actual?.activeProvider || actual?.provider || null;
+
     if (!expected) {
-      if (actual && actual.activeProvider) return "stop_foreign_provider";
+      if (activeProv) return "stop_foreign_provider";
       return "ok";
     }
 
     // 1. Foreign provider active while another provider is expected
-    if (actual?.activeProvider && actual.activeProvider !== expected.provider) {
+    if (activeProv && activeProv !== expected.provider) {
       return "stop_foreign_provider";
     }
 
@@ -64,4 +66,6 @@
     module.exports = exportsObj;
   }
   global.JukeboxReconciler = Object.freeze(exportsObj);
+  global.PlaybackReconciler = Object.freeze(exportsObj);
 })(typeof window !== "undefined" ? window : globalThis);
+

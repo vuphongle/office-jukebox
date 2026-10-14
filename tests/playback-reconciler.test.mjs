@@ -80,4 +80,22 @@ describe("Playback Reconciler Pure Logic", () => {
     });
     expect(action).toBe("stop_and_skip");
   });
+
+  it("supports provider property as fallback for activeProvider", () => {
+    const action = decideReconcileAction({
+      expected: { provider: "youtube", videoId: "yt123", playbackToken: "tok1" },
+      actual: { provider: "tiktok", videoId: "tt999", playbackToken: "tok0" },
+      mismatchCount: 0,
+      elapsedMs: 1000,
+    });
+    expect(action).toBe("stop_foreign_provider");
+  });
+
+  it("exports both JukeboxReconciler and PlaybackReconciler on global scope", () => {
+    expect(globalThis.JukeboxReconciler).toBeDefined();
+    expect(globalThis.PlaybackReconciler).toBeDefined();
+    expect(typeof globalThis.PlaybackReconciler.decideReconcileAction).toBe("function");
+    expect(globalThis.PlaybackReconciler).toBe(globalThis.JukeboxReconciler);
+  });
 });
+
