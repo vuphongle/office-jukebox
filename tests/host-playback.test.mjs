@@ -133,11 +133,95 @@ function createHostContext({ hostToken = null } = {}) {
     getElementById,
     querySelectorAll: () => [],
   };
+  const wakeLockObj = {
+    released: false,
+    listeners: new Map(),
+    addEventListener(name, handler) {
+      const list = this.listeners.get(name) || [];
+      list.push(handler);
+      this.listeners.set(name, list);
+    },
+    release() {
+      this.released = true;
+      for (const h of this.listeners.get("release") || []) h();
+      return Promise.resolve();
+    },
+  };
+  const mediaSessionActionHandlers = new Map();
+  const mediaDevicesListeners = new Map();
+  const fakeNavigator = {
+    onLine: true,
+    wakeLock: {
+      requestCalls: 0,
+      request(type) {
+        this.requestCalls++;
+        wakeLockObj.released = false;
+        return Promise.resolve(wakeLockObj);
+      },
+    },
+    mediaSession: {
+      metadata: null,
+      playbackState: "none",
+      setActionHandler(action, handler) {
+        mediaSessionActionHandlers.set(action, handler);
+      },
+    },
+    locks: {
+      requestCalls: 0,
+      request(name, cb) {
+        this.requestCalls++;
+        cb();
+        return Promise.resolve();
+      },
+    },
+    mediaDevices: {
+      addEventListener(name, handler) {
+        const list = mediaDevicesListeners.get(name) || [];
+        list.push(handler);
+        mediaDevicesListeners.set(name, list);
+      },
+      removeEventListener(name, handler) {
+        const list = mediaDevicesListeners.get(name) || [];
+        mediaDevicesListeners.set(name, list.filter((l) => l !== handler));
+      },
+      dispatch(name, event = {}) {
+        for (const h of mediaDevicesListeners.get(name) || []) h(event);
+      },
+    },
+  };
+  const workerInstances = [];
+  class FakeWorker {
+    constructor(url) {
+      this.url = url;
+      this.messages = [];
+      this.terminated = false;
+      this.onmessage = null;
+      workerInstances.push(this);
+    }
+    postMessage(data) {
+      this.messages.push(data);
+    }
+    terminate() {
+      this.terminated = true;
+    }
+  }
+  class FakeBlob {
+    constructor(parts, options) {
+      this.parts = parts;
+      this.options = options;
+    }
+  }
   const context = vm.createContext({
     window,
-    navigator: { onLine: true },
+    navigator: fakeNavigator,
     document: documentObj,
     Element: FakeElement,
+    Worker: FakeWorker,
+    Blob: FakeBlob,
+    URL: {
+      createObjectURL: () => "blob:mock-worker-url",
+      revokeObjectURL: () => {},
+    },
     WebSocket: class {
       readyState = 1;
       constructor() { sockets.push(this); }
@@ -183,6 +267,10 @@ function createHostContext({ hostToken = null } = {}) {
     windowListeners,
     documentListeners,
     spotifyPlayer,
+    fakeNavigator,
+    wakeLockObj,
+    workerInstances,
+    mediaDevicesListeners,
     document: documentObj,
     getElementById,
     getIntervalCallback: () => intervalCallback,
@@ -1031,6 +1119,106 @@ test("host handles Spotify autoplay_failed by showing recovery and suppressing f
 
   assert.equal(recoveryEl.classList.contains("hidden"), true, "Recovery overlay should hide on resume click");
 });
+
+test("host unattended mode initializes wake lock, web locks, and worker heartbeat on start", async () => {
+  const { context, getElementById, fakeNavigator, workerInstances, getPlayerEvents } = createHostContext();
+  const source = readFileSync(new URL("../public/host.js", import.meta.url), "utf8");
+  vm.runInContext(source, context);
+
+  context.window.onYouTubeIframeAPIReady();
+  getPlayerEvents().onReady();
+
+  const startBtn = getElementById("start-btn");
+  startBtn.onclick();
+
+  // Allow promise tick for async wakeLock request
+  await new Promise((r) => setTimeout(r, 10));
+
+  assert.equal(fakeNavigator.wakeLock.requestCalls, 1, "Wake lock must be requested on host start");
+  assert.equal(fakeNavigator.locks.requestCalls, 1, "Web lock must be requested on host start");
+  assert.equal(workerInstances.length, 1, "Background worker heartbeat must be started");
+  assert.ok(workerInstances[0].messages.includes("start"), "Worker must receive 'start' message");
+
+  const unattendedPill = getElementById("unattended-mode-pill");
+  assert.equal(unattendedPill.classList.contains("on"), true, "Unattended mode pill should be active");
+  assert.ok(unattendedPill.textContent.includes("Treo máy"), "Pill text should mention Treo máy");
+
+  // On pagehide / shutdown, locks and worker should stop
+  context.window.dispatch("pagehide");
+  assert.equal(workerInstances[0].terminated, true, "Worker should be terminated on pagehide");
+});
+
+test("host unattended background heartbeat detects YouTube end-of-track fallback when paused near end", () => {
+  const { context, getElementById, player, sent, workerInstances, getPlayerEvents } = createHostContext();
+  const source = readFileSync(new URL("../public/host.js", import.meta.url), "utf8");
+  vm.runInContext(source, context);
+
+  context.window.onYouTubeIframeAPIReady();
+  getPlayerEvents().onReady();
+  getElementById("start-btn").onclick();
+
+  // Simulate YouTube playing a song
+  vm.runInContext(
+    'latestState = { nowPlaying: { videoId: "yt-end-1", provider: "youtube", playbackToken: "tok-yt1", duration: "3:00" }, queue: [] }; syncPlayer();',
+    context
+  );
+
+  // Video reaches 179.8s out of 180s, but gets stuck in PAUSED state (YouTube background iframe glitch)
+  player.state = 2; // PAUSED
+  player.getCurrentTime = () => 179.8;
+  player.getDuration = () => 180;
+
+  // Pulse background worker tick
+  assert.ok(workerInstances.length > 0, "Background worker must exist");
+  workerInstances[0].onmessage({ data: { type: "heartbeat", ts: Date.now() } });
+
+  const endedMsg = sent.find((m) => m.type === "ended" && m.videoId === "yt-end-1" && m.playbackToken === "tok-yt1");
+  assert.ok(endedMsg, "Host must emit 'ended' when YouTube finishes/pauses near the end in background");
+});
+
+test("host unattended background heartbeat proactively recovers stalled Spotify track", () => {
+  const { context, getElementById, spotifyPlayer, workerInstances, spotifyListeners } = createHostContext();
+  let fakeNow = 50000;
+  context.performance = { now: () => fakeNow };
+
+  const source = readFileSync(new URL("../public/host.js", import.meta.url), "utf8");
+  vm.runInContext(source, context);
+
+  context.window.onSpotifyWebPlaybackSDKReady();
+  spotifyListeners.get("ready")?.[0]({ device_id: "spotify-dev-1" });
+  getElementById("start-btn").onclick();
+
+  // Start Spotify track
+  vm.runInContext(
+    'latestState = { nowPlaying: { videoId: "sp-stall-1", provider: "spotify", playbackToken: "tok-sp1", duration: "3:30" }, queue: [] }; syncPlayer();',
+    context
+  );
+
+  const prevResumeCalls = spotifyPlayer.resumeCalls;
+  const prevActivateCalls = spotifyPlayer.activateElementCalls;
+
+  // 5 seconds elapsed without track playing
+  fakeNow += 5000;
+  workerInstances[0].onmessage({ data: { type: "heartbeat", ts: Date.now() } });
+
+  assert.ok(spotifyPlayer.resumeCalls > prevResumeCalls, "Heartbeat should call resume() on stalled Spotify track");
+  assert.ok(spotifyPlayer.activateElementCalls > prevActivateCalls, "Heartbeat should call activateElement() on stalled Spotify track");
+});
+
+test("host unattended mode handles devicechange by re-activating audio sinks", () => {
+  const { context, getElementById, spotifyPlayer, fakeNavigator } = createHostContext();
+  const source = readFileSync(new URL("../public/host.js", import.meta.url), "utf8");
+  vm.runInContext(source, context);
+
+  context.window.onSpotifyWebPlaybackSDKReady();
+  getElementById("start-btn").onclick();
+
+  const prevActivateCalls = spotifyPlayer.activateElementCalls;
+  fakeNavigator.mediaDevices.dispatch("devicechange");
+
+  assert.ok(spotifyPlayer.activateElementCalls > prevActivateCalls, "Audio device change should re-activate Spotify element");
+});
+
 
 
 

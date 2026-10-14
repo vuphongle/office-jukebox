@@ -217,6 +217,20 @@ html, body {
   color: var(--warm-soft);
 }
 #controls #cooldown-toggle.pill.on:hover { background: var(--fill-hover); }
+#controls #unattended-mode-pill.pill {
+  transition: all 0.25s ease;
+  border-color: oklch(100% 0 0 / 0.14);
+}
+#controls #unattended-mode-pill.pill.on {
+  background: oklch(24% 0.06 160 / 0.9);
+  border-color: oklch(65% 0.16 160 / 0.65);
+  color: oklch(92% 0.09 160);
+  box-shadow: 0 0 14px oklch(65% 0.16 160 / 0.18);
+}
+#controls #unattended-mode-pill.pill.on:hover {
+  background: oklch(28% 0.08 160);
+  border-color: oklch(72% 0.18 160 / 0.8);
+}
 .filter-hint { font-size: 0.8rem; color: var(--red); }
 
 #order-network-host-status {

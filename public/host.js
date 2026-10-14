@@ -55,6 +55,14 @@ let isSpotifyLoadingTrack = false;
 let isSpotifyAutoplayBlocked = false;
 let spotifyAutoPlayTimer = null;
 let silentAudioEl = null;
+let screenWakeLock = null;
+let isWakeLockRequested = false;
+let backgroundWorker = null;
+let hostWebLockHeld = false;
+let lastUnattendedTrackId = null;
+let lastUnattendedPosition = -1;
+let lastUnattendedProgressTimestamp = Date.now();
+let unattendedStallRecoveryCount = 0;
 let scWidget = null;
 let scReady = false;
 let scIsPlaying = false;
@@ -149,9 +157,20 @@ function reportIfEnded() {
   ) {
     let ended = false;
     let playedSeconds = null;
-    if (activePlayerProvider === "youtube" && playerReady && player?.getPlayerState && player.getPlayerState() === YT.PlayerState.ENDED) {
-      ended = true;
-      playedSeconds = player.getCurrentTime ? player.getCurrentTime() : null;
+    if (activePlayerProvider === "youtube" && playerReady && player?.getPlayerState) {
+      const s = player.getPlayerState();
+      const dur = Number(player.getDuration ? player.getDuration() : 0) || 0;
+      const cur = Number(player.getCurrentTime ? player.getCurrentTime() : 0) || 0;
+      const ytEndedState = typeof YT !== "undefined" && YT?.PlayerState ? YT.PlayerState.ENDED : 0;
+      const ytPausedState = typeof YT !== "undefined" && YT?.PlayerState ? YT.PlayerState.PAUSED : 2;
+      const ytBufferingState = typeof YT !== "undefined" && YT?.PlayerState ? YT.PlayerState.BUFFERING : 3;
+      if (s === ytEndedState) {
+        ended = true;
+        playedSeconds = cur;
+      } else if (dur > 0 && cur >= Math.max(1, dur - 0.5) && (s === ytPausedState || s === -1 || s === ytBufferingState)) {
+        ended = true;
+        playedSeconds = dur;
+      }
     } else if (activePlayerProvider === "spotify" && spotifyPlayerState) {
       const dur = spotifyPlayerState.duration || 0;
       const reachedNearEnd = Boolean(
@@ -904,6 +923,12 @@ function broadcastYouTubeTick({ seek = false, forcedPaused = null, forcedPositio
         seek: Boolean(seek),
         videoId: currentVideoId,
       });
+      if (paused && player?.getDuration) {
+        const durSec = Number(player.getDuration()) || 0;
+        if (durSec > 0 && curTimeSec >= Math.max(1, durSec - 0.5)) {
+          reportIfEnded();
+        }
+      }
     } catch (err) {
       console.warn("[youtube] broadcastYouTubeTick error:", err);
     }
@@ -2130,6 +2155,11 @@ function initSilentAudioKeeper() {
     const AudioContextClass = window.AudioContext || window.webkitAudioContext;
     if (!AudioContextClass) return;
     silentAudioCtx = new AudioContextClass();
+    silentAudioCtx.onstatechange = () => {
+      if (silentAudioCtx && silentAudioCtx.state === "suspended" && started) {
+        silentAudioCtx.resume().catch(() => {});
+      }
+    };
     const osc = silentAudioCtx.createOscillator();
     const gain = silentAudioCtx.createGain();
     gain.gain.value = 0.00001;
@@ -2141,11 +2171,319 @@ function initSilentAudioKeeper() {
   }
 }
 
+// ---- Unattended Host & Screen Wake Lock System -----------------------------
+
+async function requestScreenWakeLock() {
+  if (typeof navigator === "undefined" || !("wakeLock" in navigator)) return false;
+  if (!started) return false;
+  try {
+    if (screenWakeLock && !screenWakeLock.released) return true;
+    isWakeLockRequested = true;
+    screenWakeLock = await navigator.wakeLock.request("screen");
+    console.log("[unattended] Screen Wake Lock acquired — OS display/CPU sleep prevented.");
+    updateUnattendedUI();
+    screenWakeLock.addEventListener("release", () => {
+      console.log("[unattended] Screen Wake Lock released.");
+      screenWakeLock = null;
+      updateUnattendedUI();
+      if (started && isWakeLockRequested && typeof document !== "undefined" && !document.hidden) {
+        requestScreenWakeLock().catch(() => {});
+      }
+    });
+    return true;
+  } catch (err) {
+    console.warn("[unattended] Screen Wake Lock request failed:", err?.message || err);
+    updateUnattendedUI();
+    return false;
+  }
+}
+
+function releaseScreenWakeLock() {
+  isWakeLockRequested = false;
+  if (screenWakeLock) {
+    try {
+      screenWakeLock.release().catch(() => {});
+    } catch {}
+    screenWakeLock = null;
+  }
+  updateUnattendedUI();
+}
+
+function updateUnattendedUI() {
+  const pill = document.getElementById("unattended-mode-pill");
+  if (!pill) return;
+  if (!started) {
+    pill.classList.remove("on");
+    pill.textContent = "⚡ Treo máy: Sẵn sàng";
+    pill.title = "Chế độ treo máy: Tự động kích hoạt khi bạn nhấn Bắt đầu";
+    return;
+  }
+  pill.classList.add("on");
+  if (screenWakeLock && !screenWakeLock.released) {
+    pill.textContent = "⚡ Treo máy: Đang giữ nguồn";
+    pill.title = "Chế độ treo máy: Đang giữ màn hình & CPU không ngủ (Screen Wake Lock) và bảo vệ âm thanh mượt mà";
+  } else {
+    pill.textContent = "⚡ Treo máy: Đang bật";
+    pill.title = "Chế độ treo máy: Bảo vệ âm thanh liên tục và chống đóng băng tab";
+  }
+}
+
+function holdHostWebLock() {
+  if (hostWebLockHeld) return;
+  if (typeof navigator !== "undefined" && navigator.locks?.request) {
+    hostWebLockHeld = true;
+    navigator.locks.request("office-jukebox-host-active", () => {
+      return new Promise((resolve) => {
+        const check = setInterval(() => {
+          if (!started) {
+            clearInterval(check);
+            hostWebLockHeld = false;
+            resolve();
+          }
+        }, 3000);
+      });
+    }).catch((err) => {
+      hostWebLockHeld = false;
+      console.warn("[unattended] navigator.locks error:", err);
+    });
+  }
+}
+
+function startBackgroundWorker() {
+  if (backgroundWorker || typeof Worker === "undefined" || typeof Blob === "undefined" || typeof URL === "undefined") return;
+  try {
+    const workerScript = `
+      let timer = null;
+      self.onmessage = function(e) {
+        if (e.data === 'start') {
+          if (!timer) {
+            timer = setInterval(function() {
+              self.postMessage({ type: 'heartbeat', ts: Date.now() });
+            }, 1000);
+          }
+        } else if (e.data === 'stop') {
+          if (timer) {
+            clearInterval(timer);
+            timer = null;
+          }
+        }
+      };
+    `;
+    const blob = new Blob([workerScript], { type: "application/javascript" });
+    const blobUrl = URL.createObjectURL(blob);
+    backgroundWorker = new Worker(blobUrl);
+    backgroundWorker.onmessage = (e) => {
+      if (e.data?.type === "heartbeat") {
+        onBackgroundHeartbeat();
+      }
+    };
+    backgroundWorker.postMessage("start");
+    console.log("[unattended] Background worker heartbeat active (unthrottled 1s pulse).");
+  } catch (err) {
+    console.warn("[unattended] Failed to start background worker:", err);
+  }
+}
+
+function stopBackgroundWorker() {
+  if (backgroundWorker) {
+    try {
+      backgroundWorker.postMessage("stop");
+      backgroundWorker.terminate();
+    } catch {}
+    backgroundWorker = null;
+  }
+}
+
+function isAnyAudioPlaying() {
+  if (activePlayerProvider === "youtube") {
+    const ytPlaying = typeof YT !== "undefined" && YT?.PlayerState ? YT.PlayerState.PLAYING : 1;
+    return Boolean(playerReady && player?.getPlayerState && player.getPlayerState() === ytPlaying);
+  }
+  if (activePlayerProvider === "spotify") {
+    return Boolean(spotifyPlayerState && !spotifyPlayerState.paused);
+  }
+  if (activePlayerProvider === "soundcloud") {
+    return Boolean(scIsPlaying);
+  }
+  if (activePlayerProvider === "tiktok") {
+    return Boolean(tiktokIsPlaying || (tiktokAudio && !tiktokAudio.paused));
+  }
+  return false;
+}
+
+function onBackgroundHeartbeat() {
+  if (!started) return;
+
+  // 1. Silent audio keeper pulse
+  if (silentAudioCtx && silentAudioCtx.state === "suspended") {
+    silentAudioCtx.resume().catch(() => {});
+  }
+  if (silentAudioEl && silentAudioEl.paused) {
+    silentAudioEl.play().catch(() => {});
+  }
+
+  // 2. Screen Wake Lock re-acquisition if released while tab is visible
+  if (typeof document !== "undefined" && !document.hidden && isWakeLockRequested && (!screenWakeLock || screenWakeLock.released)) {
+    requestScreenWakeLock().catch(() => {});
+  }
+
+  // 3. MediaSession playbackState check
+  if (typeof navigator !== "undefined" && "mediaSession" in navigator) {
+    try {
+      const playing = isAnyAudioPlaying();
+      const expected = playing ? "playing" : (latestState?.nowPlaying ? "paused" : "none");
+      if (navigator.mediaSession.playbackState !== expected) {
+        navigator.mediaSession.playbackState = expected;
+      }
+    } catch {}
+  }
+
+  // 4. Fallback check for YouTube end-of-track in background
+  if (activePlayerProvider === "youtube" && playerReady && player?.getCurrentTime && player?.getDuration) {
+    try {
+      const dur = Number(player.getDuration()) || 0;
+      const cur = Number(player.getCurrentTime()) || 0;
+      const state = player.getPlayerState ? player.getPlayerState() : -1;
+      const ytEndedState = typeof YT !== "undefined" && YT?.PlayerState ? YT.PlayerState.ENDED : 0;
+      const ytPausedState = typeof YT !== "undefined" && YT?.PlayerState ? YT.PlayerState.PAUSED : 2;
+      const ytBufferingState = typeof YT !== "undefined" && YT?.PlayerState ? YT.PlayerState.BUFFERING : 3;
+      const nearEnd = dur > 0 && cur >= Math.max(1, dur - 0.5);
+      if (nearEnd) {
+        const isPausedOrEndedOrStuck =
+          state === ytPausedState ||
+          state === ytEndedState ||
+          state === ytBufferingState ||
+          state === -1;
+        if (isPausedOrEndedOrStuck) {
+          console.log(`[unattended] YouTube reached end of track in background (${cur.toFixed(1)}s / ${dur.toFixed(1)}s) — reporting ended`);
+          stopYouTubeSync();
+          reportIfEnded();
+        }
+      }
+    } catch (e) {
+      console.warn("[unattended] error checking YouTube state:", e);
+    }
+  }
+
+  // 5. Fallback check for Spotify loading or stalled in background
+  if (activePlayerProvider === "spotify" && latestState?.nowPlaying?.videoId === currentVideoId) {
+    if (spotifyPlayer && (isSpotifyLoadingTrack || isSpotifyAutoplayBlocked || (spotifyPlayerState?.paused && !spotifyWasPlaying))) {
+      const elapsedSincePlay = performance.now() - spotifyAnchorTime;
+      if (elapsedSincePlay > 4000) {
+        console.log(`[unattended] Spotify track pending in background for ${Math.round(elapsedSincePlay)}ms — attempting resume`);
+        if (spotifyPlayer.activateElement) {
+          spotifyPlayer.activateElement().catch(() => {});
+        }
+        spotifyPlayer.resume().catch(() => {});
+      }
+    }
+  }
+
+  // 6. Fallback check for TikTok audio stalled in background
+  if (activePlayerProvider === "tiktok" && tiktokAudio && !tiktokAudio.paused) {
+    if (tiktokAudio.duration > 0 && tiktokAudio.currentTime >= tiktokAudio.duration - 0.5) {
+      console.log("[unattended] TikTok reached end in background — triggering ended");
+      tiktokAudio.pause();
+      const token = tiktokAudio.dataset.playbackToken;
+      if (token && terminalReportedForToken !== token) {
+        terminalReportedForToken = token;
+        send({
+          type: "ended",
+          videoId: currentVideoId,
+          playbackToken: token,
+          playedSeconds: tiktokAudio.currentTime || null,
+        });
+      }
+    }
+  }
+
+  // 7. Watchdog progress verification
+  checkUnattendedProgress();
+}
+
+function checkUnattendedProgress() {
+  const np = latestState?.nowPlaying;
+  if (!np || !started) {
+    lastUnattendedTrackId = null;
+    lastUnattendedPosition = -1;
+    unattendedStallRecoveryCount = 0;
+    return;
+  }
+
+  if (lastUnattendedTrackId !== np.videoId) {
+    lastUnattendedTrackId = np.videoId;
+    lastUnattendedPosition = -1;
+    lastUnattendedProgressTimestamp = Date.now();
+    unattendedStallRecoveryCount = 0;
+    return;
+  }
+
+  let curPos = -1;
+  let isPlaying = false;
+  if (activePlayerProvider === "youtube" && playerReady && player?.getCurrentTime) {
+    try {
+      curPos = Number(player.getCurrentTime()) || 0;
+      const ytPlaying = typeof YT !== "undefined" && YT?.PlayerState ? YT.PlayerState.PLAYING : 1;
+      isPlaying = player.getPlayerState?.() === ytPlaying;
+    } catch {}
+  } else if (activePlayerProvider === "spotify") {
+    curPos = (spotifyPlayerState?.position || 0) / 1000;
+    isPlaying = Boolean(spotifyPlayerState && !spotifyPlayerState.paused);
+  } else if (activePlayerProvider === "tiktok" && tiktokAudio) {
+    curPos = Number(tiktokAudio.currentTime) || 0;
+    isPlaying = !tiktokAudio.paused;
+  } else if (activePlayerProvider === "soundcloud") {
+    curPos = scCurrentPosition / 1000;
+    isPlaying = scIsPlaying;
+  }
+
+  if (curPos > lastUnattendedPosition + 0.2) {
+    lastUnattendedPosition = curPos;
+    lastUnattendedProgressTimestamp = Date.now();
+    unattendedStallRecoveryCount = 0;
+    return;
+  }
+
+  const stallDuration = Date.now() - lastUnattendedProgressTimestamp;
+  if (stallDuration > 25000 && unattendedStallRecoveryCount < 3) {
+    unattendedStallRecoveryCount++;
+    lastUnattendedProgressTimestamp = Date.now();
+    console.warn(`[unattended] Playback stalled for 25s on ${np.videoId} (${activePlayerProvider}) — triggering recovery attempt ${unattendedStallRecoveryCount}`);
+    if (activePlayerProvider === "youtube") {
+      player?.playVideo?.();
+    } else if (activePlayerProvider === "spotify") {
+      spotifyPlayer?.activateElement?.().catch(() => {});
+      spotifyPlayer?.resume?.().catch(() => {});
+    } else if (activePlayerProvider === "tiktok") {
+      tiktokAudio?.play?.().catch(() => {});
+    }
+    if (unattendedStallRecoveryCount >= 2) {
+      reconcilePlayback();
+    }
+  }
+}
+
+if (typeof navigator !== "undefined" && navigator.mediaDevices?.addEventListener) {
+  navigator.mediaDevices.addEventListener("devicechange", () => {
+    console.log("[unattended] Audio output device changed — re-activating audio sinks");
+    if (silentAudioCtx && silentAudioCtx.state === "suspended") {
+      silentAudioCtx.resume().catch(() => {});
+    }
+    if (silentAudioEl && silentAudioEl.paused) {
+      silentAudioEl.play().catch(() => {});
+    }
+    if (spotifyPlayer?.activateElement) {
+      spotifyPlayer.activateElement().catch(() => {});
+    }
+  });
+}
+
 // ---- Media Session API -----------------------------------------------------
 function updateMediaSession(np) {
   if (!("mediaSession" in navigator)) return;
   if (!np) {
     navigator.mediaSession.metadata = null;
+    try { navigator.mediaSession.playbackState = "none"; } catch {}
     return;
   }
   try {
@@ -2154,6 +2492,7 @@ function updateMediaSession(np) {
       artist: np.channel || "",
       artwork: np.thumbnail ? [{ src: np.thumbnail, sizes: "512x512", type: "image/jpeg" }] : [],
     });
+    navigator.mediaSession.playbackState = "playing";
     navigator.mediaSession.setActionHandler("play", () => {
       document.getElementById("playpause")?.click();
     });
@@ -2171,6 +2510,9 @@ function updateMediaSession(np) {
 window.addEventListener("pageshow", (e) => {
   if (!e.persisted) return;
   clearTimeout(playbackWatchdog);
+  releaseScreenWakeLock();
+  stopBackgroundWorker();
+  updateUnattendedUI();
   if (playbackEventHandlers && player?.removeEventListener) {
     player.removeEventListener("onStateChange", playbackEventHandlers.onStateChange);
     player.removeEventListener("onError", playbackEventHandlers.onError);
@@ -2191,6 +2533,11 @@ window.addEventListener("pageshow", (e) => {
   hidePlaybackRecovery();
   document.getElementById("start-overlay").classList.remove("hidden");
   document.getElementById("stage").classList.add("hidden");
+});
+
+window.addEventListener("pagehide", () => {
+  releaseScreenWakeLock();
+  stopBackgroundWorker();
 });
 
 // ---- Rendering -------------------------------------------------------------
@@ -2532,6 +2879,11 @@ function updatePlayPauseIcon() {
   if (playPauseBtn) {
     playPauseBtn.innerHTML = playing ? PAUSE_SVG : PLAY_SVG;
   }
+  if (typeof navigator !== "undefined" && "mediaSession" in navigator) {
+    try {
+      navigator.mediaSession.playbackState = playing ? "playing" : (latestState?.nowPlaying ? "paused" : "none");
+    } catch {}
+  }
 }
 
 // ---- Controls --------------------------------------------------------------
@@ -2693,6 +3045,23 @@ function wireControls() {
   document.getElementById("vote-sort-toggle").onclick = () => {
     send({ type: "setVoteSort", on: !voteSortOn });
   };
+  const unattendedPill = document.getElementById("unattended-mode-pill");
+  if (unattendedPill) {
+    unattendedPill.onclick = () => {
+      if (!started) return;
+      if (screenWakeLock && !screenWakeLock.released) {
+        setOrderNetworkHostStatus("Chế độ treo máy đang hoạt động (Màn hình & CPU không ngủ).", "ok");
+      } else {
+        requestScreenWakeLock().then((ok) => {
+          if (ok) {
+            setOrderNetworkHostStatus("Đã kích hoạt giữ nguồn màn hình (Wake Lock)!", "ok");
+          } else {
+            setOrderNetworkHostStatus("Chế độ treo máy đang bảo vệ âm thanh mượt mà.", "ok");
+          }
+        });
+      }
+    };
+  }
   // Event-context editor: the context control reveals the input and Save sends its contents.
   const ctxRow = document.getElementById("context-row");
   const ctxInput = document.getElementById("context-input");
@@ -3139,6 +3508,10 @@ document.getElementById("start-btn").onclick = () => {
   if (spotifyPlayer?.activateElement) {
     spotifyPlayer.activateElement().catch(() => {});
   }
+  requestScreenWakeLock();
+  startBackgroundWorker();
+  holdHostWebLock();
+  updateUnattendedUI();
   if (hostCoordinationChannel) {
     hostCoordinationChannel.postMessage({ type: "host_claimed_playback", tabId: myTabId });
   }
@@ -3154,6 +3527,9 @@ document.getElementById("start-btn").onclick = () => {
 
 document.addEventListener("visibilitychange", () => {
   if (!document.hidden) {
+    if (started) {
+      requestScreenWakeLock();
+    }
     if (silentAudioCtx && silentAudioCtx.state === "suspended") {
       silentAudioCtx.resume().catch(() => {});
     }
