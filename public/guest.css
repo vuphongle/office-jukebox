@@ -1953,7 +1953,7 @@ header .desktop-intro { display: none; }
   display: grid;
   grid-template-columns: repeat(2, 1fr);
   gap: 10px;
-  margin-bottom: 20px;
+  margin-bottom: 12px;
 }
 .milestone-step {
   display: flex;
@@ -1968,39 +1968,30 @@ header .desktop-intro { display: none; }
   border-color: var(--gold);
   background: oklch(80% 0.14 85 / 0.1);
 }
+.milestone-step.full-width {
+  grid-column: span 2;
+}
 .ms-circle {
-  width: 32px;
-  height: 32px;
+  width: 34px;
+  height: 34px;
+  flex-shrink: 0;
   border-radius: 50%;
   background: var(--card);
   display: flex;
   align-items: center;
   justify-content: center;
   font-weight: 800;
-  font-size: 12px;
+  font-size: 11px;
+  letter-spacing: -0.3px;
   color: var(--gold);
   border: 1px solid var(--line);
 }
 .ms-info strong { display: block; font-size: 12px; color: var(--text-hi); }
 .ms-info span { font-size: 11px; color: var(--green); font-weight: 700; }
 
-.do-checkin-btn {
-  width: 100%;
-  height: 48px;
-  border-radius: 14px;
-  border: 0;
-  background: linear-gradient(135deg, var(--gold), oklch(74% 0.15 62));
-  color: var(--gold-ink);
-  font: 800 15px/1 var(--sans);
-  cursor: pointer;
-  transition: transform 150ms ease;
-}
-.do-checkin-btn:hover { transform: translateY(-1px); }
-.do-checkin-btn:disabled { opacity: 0.6; cursor: not-allowed; }
-
 /* Streak Restore Card (TikTok style) */
 .streak-restore-card {
-  margin-bottom: 14px;
+  margin-bottom: 12px;
   padding: 12px 14px;
   background: linear-gradient(135deg, rgba(249, 115, 22, 0.12), rgba(239, 68, 68, 0.12));
   border: 1px solid rgba(249, 115, 22, 0.35);
@@ -2056,36 +2047,88 @@ header .desktop-intro { display: none; }
   cursor: not-allowed;
 }
 
-/* Push Reminder Area */
-.push-reminder-area {
-  margin-bottom: 14px;
-  display: flex;
-  justify-content: center;
+/* Check-in & Push Reminder Actions Row */
+.checkin-actions-row {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  align-items: stretch;
+  margin-top: 2px;
 }
-.push-reminder-toggle-btn {
-  display: inline-flex;
+
+.checkin-actions-row:has(.push-reminder-area.hidden) .checkin-action-area,
+.push-reminder-area.hidden + .checkin-action-area {
+  grid-column: 1 / -1;
+}
+
+.push-reminder-area,
+.checkin-action-area {
+  display: flex;
+  margin: 0;
+  width: 100%;
+}
+
+.push-reminder-toggle-btn,
+.do-checkin-btn {
+  width: 100%;
+  min-height: 52px;
+  box-sizing: border-box;
+  border-radius: 12px;
+  padding: 8px 10px;
+  font-family: var(--sans);
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1.35;
+  text-align: center;
+  display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 8px 14px;
-  border-radius: 10px;
+  justify-content: center;
+  word-break: break-word;
+  transition: transform 150ms ease, background 150ms ease, border-color 150ms ease, opacity 150ms ease, filter 150ms ease;
+}
+
+.push-reminder-toggle-btn {
+  gap: 6px;
   border: 1px solid var(--line);
   background: var(--fill);
-  color: var(--text);
-  font: 600 12px/1 var(--sans);
+  color: var(--text-hi);
   cursor: pointer;
-  transition: all 150ms ease;
 }
-.push-reminder-toggle-btn:hover {
+
+.push-reminder-toggle-btn:hover:not(:disabled) {
   border-color: var(--gold);
   background: oklch(80% 0.14 85 / 0.1);
+  transform: translateY(-1px);
 }
+
 .push-reminder-toggle-btn.subscribed {
-  border-color: rgba(34, 197, 94, 0.4);
-  background: rgba(34, 197, 94, 0.1);
+  border-color: rgba(34, 197, 94, 0.45);
+  background: rgba(34, 197, 94, 0.12);
   color: #4ade80;
 }
+
 .push-bell-icon {
-  font-size: 14px;
+  font-size: 15px;
+  line-height: 1;
+  flex-shrink: 0;
+}
+
+.do-checkin-btn {
+  border: 1px solid transparent;
+  background: linear-gradient(135deg, var(--gold), oklch(74% 0.15 62));
+  color: var(--gold-ink);
+  cursor: pointer;
+}
+
+.do-checkin-btn:hover:not(:disabled) {
+  transform: translateY(-1px);
+  filter: brightness(1.05);
+}
+
+.do-checkin-btn:disabled {
+  opacity: 0.7;
+  cursor: default;
+  transform: none;
 }
 
 @media (prefers-reduced-motion: reduce) {

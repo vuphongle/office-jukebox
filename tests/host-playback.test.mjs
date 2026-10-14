@@ -70,8 +70,19 @@ function createHostContext({ hostToken = null } = {}) {
     },
   };
   const windowListeners = new Map();
+  const documentListeners = new Map();
   const spotifyListeners = new Map();
   const spotifyPlayer = {
+    activateElementCalls: 0,
+    resumeCalls: 0,
+    activateElement() {
+      this.activateElementCalls++;
+      return Promise.resolve();
+    },
+    resume() {
+      this.resumeCalls++;
+      return Promise.resolve();
+    },
     addListener(name, handler) {
       const list = spotifyListeners.get(name) || [];
       list.push(handler);
@@ -103,18 +114,114 @@ function createHostContext({ hostToken = null } = {}) {
       },
     },
   };
+  const documentObj = {
+    hidden: false,
+    activeElement: null,
+    addEventListener(name, handler) {
+      const list = documentListeners.get(name) || [];
+      list.push(handler);
+      documentListeners.set(name, list);
+    },
+    removeEventListener(name, handler) {
+      const list = documentListeners.get(name) || [];
+      documentListeners.set(name, list.filter((entry) => entry !== handler));
+    },
+    dispatch(name, event = {}) {
+      for (const h of documentListeners.get(name) || []) h(event);
+    },
+    createElement: () => new FakeElement(),
+    getElementById,
+    querySelectorAll: () => [],
+  };
+  const wakeLockObj = {
+    released: false,
+    listeners: new Map(),
+    addEventListener(name, handler) {
+      const list = this.listeners.get(name) || [];
+      list.push(handler);
+      this.listeners.set(name, list);
+    },
+    release() {
+      this.released = true;
+      for (const h of this.listeners.get("release") || []) h();
+      return Promise.resolve();
+    },
+  };
+  const mediaSessionActionHandlers = new Map();
+  const mediaDevicesListeners = new Map();
+  const fakeNavigator = {
+    onLine: true,
+    wakeLock: {
+      requestCalls: 0,
+      request(type) {
+        this.requestCalls++;
+        wakeLockObj.released = false;
+        return Promise.resolve(wakeLockObj);
+      },
+    },
+    mediaSession: {
+      metadata: null,
+      playbackState: "none",
+      setActionHandler(action, handler) {
+        mediaSessionActionHandlers.set(action, handler);
+      },
+    },
+    locks: {
+      requestCalls: 0,
+      request(name, cb) {
+        this.requestCalls++;
+        cb();
+        return Promise.resolve();
+      },
+    },
+    mediaDevices: {
+      addEventListener(name, handler) {
+        const list = mediaDevicesListeners.get(name) || [];
+        list.push(handler);
+        mediaDevicesListeners.set(name, list);
+      },
+      removeEventListener(name, handler) {
+        const list = mediaDevicesListeners.get(name) || [];
+        mediaDevicesListeners.set(name, list.filter((l) => l !== handler));
+      },
+      dispatch(name, event = {}) {
+        for (const h of mediaDevicesListeners.get(name) || []) h(event);
+      },
+    },
+  };
+  const workerInstances = [];
+  class FakeWorker {
+    constructor(url) {
+      this.url = url;
+      this.messages = [];
+      this.terminated = false;
+      this.onmessage = null;
+      workerInstances.push(this);
+    }
+    postMessage(data) {
+      this.messages.push(data);
+    }
+    terminate() {
+      this.terminated = true;
+    }
+  }
+  class FakeBlob {
+    constructor(parts, options) {
+      this.parts = parts;
+      this.options = options;
+    }
+  }
   const context = vm.createContext({
     window,
-    navigator: { onLine: true },
-    document: {
-      hidden: false,
-      activeElement: null,
-      addEventListener() {},
-      createElement: () => new FakeElement(),
-      getElementById,
-      querySelectorAll: () => [],
-    },
+    navigator: fakeNavigator,
+    document: documentObj,
     Element: FakeElement,
+    Worker: FakeWorker,
+    Blob: FakeBlob,
+    URL: {
+      createObjectURL: () => "blob:mock-worker-url",
+      revokeObjectURL: () => {},
+    },
     WebSocket: class {
       readyState = 1;
       constructor() { sockets.push(this); }
@@ -158,6 +265,13 @@ function createHostContext({ hostToken = null } = {}) {
     fetchCalls,
     spotifyListeners,
     windowListeners,
+    documentListeners,
+    spotifyPlayer,
+    fakeNavigator,
+    wakeLockObj,
+    workerInstances,
+    mediaDevicesListeners,
+    document: documentObj,
     getElementById,
     getIntervalCallback: () => intervalCallback,
     getPlayerEvents: () => playerEvents,
@@ -852,5 +966,276 @@ test("host broadcasts playbackTick for YouTube playing and relative seek", () =>
   assert.ok(seekTicks.length >= 1, "Should broadcast seek playbackTick");
   assert.equal(seekTicks[seekTicks.length - 1].position, 55200);
 });
+
+test("host does not drift Spotify timer into the future when transitioning from YouTube in background tab", () => {
+  const { context, sent, spotifyListeners, document: doc } = createHostContext();
+  let fakeNow = 10000;
+  context.performance = { now: () => fakeNow };
+
+  const source = readFileSync(new URL("../public/host.js", import.meta.url), "utf8");
+  vm.runInContext(source, context);
+
+  context.connectWs();
+  context.window.onSpotifyWebPlaybackSDKReady();
+  const onReady = spotifyListeners.get("ready")?.[0];
+  const onPlayerState = spotifyListeners.get("player_state_changed")?.[0];
+
+  onReady({ device_id: "spotify-dev-1" });
+
+  // YouTube playing first
+  vm.runInContext(
+    'started = true; latestState = { nowPlaying: { videoId: "yt-song-1", provider: "youtube", playbackToken: "tok-yt-1" }, queue: [{ videoId: "sp-next-1", provider: "spotify" }] }; syncPlayer();',
+    context
+  );
+
+  // Tab is placed into background
+  doc.hidden = true;
+
+  // YouTube finishes, queue transitions to Spotify track
+  vm.runInContext(
+    'latestState = { nowPlaying: { videoId: "sp-next-1", provider: "spotify", playbackToken: "tok-sp-next", duration: "3:30" }, queue: [] }; syncPlayer();',
+    context
+  );
+
+  // Spotify SDK initial state arrives in background: position is 0
+  onPlayerState({
+    paused: false,
+    loading: false,
+    position: 0,
+    duration: 210000,
+    track_window: { current_track: { id: "sp-next-1" } },
+  });
+
+  // Verify interpolated position is 0 (NOT drifting into the future)
+  let curPos = vm.runInContext("getInterpolatedSpotifyPosition();", context);
+  assert.equal(curPos, 0, "Position must be 0 while audio has not actually started");
+
+  // Advance time by 20 seconds while still in background
+  fakeNow += 20000;
+
+  // Position must still be 0 because audio hasn't advanced past 0 in background!
+  curPos = vm.runInContext("getInterpolatedSpotifyPosition();", context);
+  assert.equal(curPos, 0, "Position must NOT phantom-run to 20s while audio is pending/blocked in background");
+
+  // Check broadcast tick: position must be 0, paused must be true
+  sent.length = 0;
+  vm.runInContext("broadcastSpotifyTick({ seek: false });", context);
+  const tick = sent.find((m) => m.type === "playbackTick");
+  assert.ok(tick, "Should broadcast a playbackTick");
+  assert.equal(tick.position, 0);
+  assert.equal(tick.paused, true, "Should report paused while audio is not actually progressing");
+});
+
+test("host activates element and resumes Spotify when tab becomes visible after background transition", () => {
+  const { context, spotifyListeners, spotifyPlayer, document: doc } = createHostContext();
+  let fakeNow = 50000;
+  context.performance = { now: () => fakeNow };
+
+  const source = readFileSync(new URL("../public/host.js", import.meta.url), "utf8");
+  vm.runInContext(source, context);
+
+  context.connectWs();
+  context.window.onSpotifyWebPlaybackSDKReady();
+  const onReady = spotifyListeners.get("ready")?.[0];
+  const onPlayerState = spotifyListeners.get("player_state_changed")?.[0];
+
+  onReady({ device_id: "spotify-dev-1" });
+
+  // Tab in background
+  doc.hidden = true;
+  vm.runInContext(
+    'started = true; latestState = { nowPlaying: { videoId: "sp-bg-1", provider: "spotify", playbackToken: "tok-bg-1", duration: "4:00" }, queue: [] }; syncPlayer();',
+    context
+  );
+
+  onPlayerState({
+    paused: false,
+    loading: false,
+    position: 0,
+    duration: 240000,
+    track_window: { current_track: { id: "sp-bg-1" } },
+  });
+
+  // User focuses/clicks back to the tab
+  doc.hidden = false;
+  doc.dispatch("visibilitychange");
+
+  // Verify that visibilitychange triggered resume and activateElement
+  assert.ok(spotifyPlayer.resumeCalls >= 1, "Should call spotifyPlayer.resume() on foreground return");
+  assert.ok(spotifyPlayer.activateElementCalls >= 1, "Should call spotifyPlayer.activateElement() on foreground return");
+
+  // Now Spotify SDK reports audio has genuinely started playing from 1.5 seconds (1500ms)
+  fakeNow += 500;
+  onPlayerState({
+    paused: false,
+    loading: false,
+    position: 1500,
+    duration: 240000,
+    track_window: { current_track: { id: "sp-bg-1" } },
+  });
+
+  // Now progress should track smoothly from 1500ms
+  fakeNow += 1000;
+  const pos = vm.runInContext("getInterpolatedSpotifyPosition();", context);
+  assert.ok(pos >= 2400 && pos <= 2600, `Position should be around 2500ms, got ${pos}`);
+});
+
+test("host handles Spotify autoplay_failed by showing recovery and suppressing fake progress", () => {
+  const { context, getElementById, spotifyListeners, spotifyPlayer } = createHostContext();
+  let fakeNow = 80000;
+  context.performance = { now: () => fakeNow };
+
+  const source = readFileSync(new URL("../public/host.js", import.meta.url), "utf8");
+  vm.runInContext(source, context);
+
+  context.connectWs();
+  context.window.onSpotifyWebPlaybackSDKReady();
+  const onReady = spotifyListeners.get("ready")?.[0];
+  const onAutoplayFailed = spotifyListeners.get("autoplay_failed")?.[0];
+
+  onReady({ device_id: "spotify-dev-1" });
+  vm.runInContext(
+    'started = true; latestState = { nowPlaying: { videoId: "sp-fail-1", provider: "spotify", playbackToken: "tok-f1", duration: "3:00" }, queue: [] }; syncPlayer();',
+    context
+  );
+
+  // Browser blocks background autoplay
+  assert.ok(typeof onAutoplayFailed === "function", "autoplay_failed listener should be registered");
+  onAutoplayFailed();
+
+  // Recovery UI should be revealed
+  const recoveryEl = getElementById("playback-recovery");
+  assert.equal(recoveryEl.classList.contains("hidden"), false, "Recovery overlay should be visible");
+
+  // Time elapses
+  fakeNow += 15000;
+  const curPos = vm.runInContext("getInterpolatedSpotifyPosition();", context);
+  assert.equal(curPos, 0, "Position must not advance when autoplay is blocked");
+
+  // User clicks resume-playback button
+  const prevResumeCalls = spotifyPlayer.resumeCalls;
+  const resumeBtn = getElementById("resume-playback");
+  resumeBtn.onclick();
+
+  assert.equal(recoveryEl.classList.contains("hidden"), true, "Recovery overlay should hide on resume click");
+});
+
+test("host unattended mode defaults to OFF, turns ON on click, and turns OFF on click again", async () => {
+  const { context, getElementById, fakeNavigator, workerInstances, getPlayerEvents } = createHostContext();
+  const source = readFileSync(new URL("../public/host.js", import.meta.url), "utf8");
+  vm.runInContext(source, context);
+
+  context.window.onYouTubeIframeAPIReady();
+  getPlayerEvents().onReady();
+
+  const startBtn = getElementById("start-btn");
+  startBtn.onclick();
+
+  await new Promise((r) => setTimeout(r, 10));
+
+  const unattendedPill = getElementById("unattended-mode-pill");
+
+  // 1. By default, unattended mode must be OFF
+  assert.equal(unattendedPill.classList.contains("on"), false, "Unattended mode pill should default to OFF");
+  assert.equal(unattendedPill.textContent, "⚡ Treo máy: Tắt", "Pill text should be '⚡ Treo máy: Tắt' by default");
+  assert.equal(fakeNavigator.wakeLock.requestCalls, 0, "Wake lock must NOT be requested by default");
+  assert.equal(workerInstances.length, 0, "Background worker must NOT be started by default");
+
+  // 2. Click to turn ON
+  unattendedPill.onclick();
+  await new Promise((r) => setTimeout(r, 10));
+
+  assert.equal(unattendedPill.classList.contains("on"), true, "Pill should have 'on' class when clicked");
+  assert.equal(unattendedPill.textContent, "⚡ Treo máy: Bật", "Pill text should be '⚡ Treo máy: Bật' when ON");
+  assert.equal(fakeNavigator.wakeLock.requestCalls, 1, "Wake lock must be requested when toggled ON");
+  assert.equal(workerInstances.length, 1, "Background worker heartbeat must be started when toggled ON");
+  assert.ok(workerInstances[0].messages.includes("start"), "Worker must receive 'start' message");
+
+  // 3. Click again to turn OFF
+  unattendedPill.onclick();
+  await new Promise((r) => setTimeout(r, 10));
+
+  assert.equal(unattendedPill.classList.contains("on"), false, "Pill should remove 'on' class when toggled OFF");
+  assert.equal(unattendedPill.textContent, "⚡ Treo máy: Tắt", "Pill text should return to '⚡ Treo máy: Tắt' when OFF");
+  assert.equal(workerInstances[0].terminated, true, "Worker should be terminated when toggled OFF");
+
+  // On pagehide / shutdown, locks and worker should stop
+  context.window.dispatch("pagehide");
+});
+
+test("host unattended background heartbeat detects YouTube end-of-track fallback when paused near end", () => {
+  const { context, getElementById, player, sent, workerInstances, getPlayerEvents } = createHostContext();
+  const source = readFileSync(new URL("../public/host.js", import.meta.url), "utf8");
+  vm.runInContext(source, context);
+
+  context.window.onYouTubeIframeAPIReady();
+  getPlayerEvents().onReady();
+  getElementById("start-btn").onclick();
+  getElementById("unattended-mode-pill").onclick(); // Turn ON unattended mode
+
+  // Simulate YouTube playing a song
+  vm.runInContext(
+    'latestState = { nowPlaying: { videoId: "yt-end-1", provider: "youtube", playbackToken: "tok-yt1", duration: "3:00" }, queue: [] }; syncPlayer();',
+    context
+  );
+
+  // Video reaches 179.8s out of 180s, but gets stuck in PAUSED state (YouTube background iframe glitch)
+  player.state = 2; // PAUSED
+  player.getCurrentTime = () => 179.8;
+  player.getDuration = () => 180;
+
+  // Pulse background worker tick
+  assert.ok(workerInstances.length > 0, "Background worker must exist");
+  workerInstances[0].onmessage({ data: { type: "heartbeat", ts: Date.now() } });
+
+  const endedMsg = sent.find((m) => m.type === "ended" && m.videoId === "yt-end-1" && m.playbackToken === "tok-yt1");
+  assert.ok(endedMsg, "Host must emit 'ended' when YouTube finishes/pauses near the end in background");
+});
+
+test("host unattended background heartbeat proactively recovers stalled Spotify track", () => {
+  const { context, getElementById, spotifyPlayer, workerInstances, spotifyListeners } = createHostContext();
+  let fakeNow = 50000;
+  context.performance = { now: () => fakeNow };
+
+  const source = readFileSync(new URL("../public/host.js", import.meta.url), "utf8");
+  vm.runInContext(source, context);
+
+  context.window.onSpotifyWebPlaybackSDKReady();
+  spotifyListeners.get("ready")?.[0]({ device_id: "spotify-dev-1" });
+  getElementById("start-btn").onclick();
+  getElementById("unattended-mode-pill").onclick(); // Turn ON unattended mode
+
+  // Start Spotify track
+  vm.runInContext(
+    'latestState = { nowPlaying: { videoId: "sp-stall-1", provider: "spotify", playbackToken: "tok-sp1", duration: "3:30" }, queue: [] }; syncPlayer();',
+    context
+  );
+
+  const prevResumeCalls = spotifyPlayer.resumeCalls;
+  const prevActivateCalls = spotifyPlayer.activateElementCalls;
+
+  // 5 seconds elapsed without track playing
+  fakeNow += 5000;
+  workerInstances[0].onmessage({ data: { type: "heartbeat", ts: Date.now() } });
+
+  assert.ok(spotifyPlayer.resumeCalls > prevResumeCalls, "Heartbeat should call resume() on stalled Spotify track");
+  assert.ok(spotifyPlayer.activateElementCalls > prevActivateCalls, "Heartbeat should call activateElement() on stalled Spotify track");
+});
+
+test("host unattended mode handles devicechange by re-activating audio sinks", () => {
+  const { context, getElementById, spotifyPlayer, fakeNavigator } = createHostContext();
+  const source = readFileSync(new URL("../public/host.js", import.meta.url), "utf8");
+  vm.runInContext(source, context);
+
+  context.window.onSpotifyWebPlaybackSDKReady();
+  getElementById("start-btn").onclick();
+
+  const prevActivateCalls = spotifyPlayer.activateElementCalls;
+  fakeNavigator.mediaDevices.dispatch("devicechange");
+
+  assert.ok(spotifyPlayer.activateElementCalls > prevActivateCalls, "Audio device change should re-activate Spotify element");
+});
+
+
 
 

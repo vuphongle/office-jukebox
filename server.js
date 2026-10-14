@@ -315,6 +315,11 @@ const RANK_BADGE_ICONS = Object.freeze({
   turntable: "🎛️",
   "stage-star": "🌟",
   "neon-crown": "👑",
+  diamond: "💎",
+  wand: "🪄",
+  monument: "🏛️",
+  galaxy: "🌌",
+  trident: "🔱",
 });
 
 function publicRank(userId) {
@@ -2614,6 +2619,9 @@ function broadcastToAll(data) {
 const dayRolloverScheduler = startDayRolloverScheduler({
   timezone: process.env.APP_TIMEZONE,
   broadcast: (msg) => broadcastToAll(msg),
+  onRollover: () => {
+    reconcileStalePlayback();
+  },
 });
 
 const checkinReminderScheduler = startCheckinReminderScheduler({
@@ -2984,6 +2992,43 @@ function settleRankTransition(transition) {
   if (updatedUsers.size) broadcastState();
 }
 
+function hasActiveHost() {
+  for (const client of wss.clients) {
+    if (client.readyState === 1 && (client.hostAuthenticated || canUseHostControls(client, refreshSocketIdentity(client, sessionRepo)))) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function reconcileStalePlayback() {
+  try {
+    const stale = state.retireStaleNowPlaying({ graceSeconds: 60 });
+    if (stale?.transition) {
+      latestPlaybackTick = null;
+      latestSpotifyPlaybackTick = null;
+      settleRankTransition(stale.transition);
+      broadcastState();
+      return true;
+    }
+  } catch (err) {
+    console.error("[playback] Error retiring stale nowPlaying:", err);
+  }
+  return false;
+}
+
+function reconcileHostArrivalPlayback() {
+  const retired = reconcileStalePlayback();
+  if (!retired && state.nowPlaying && !latestPlaybackTick && !latestSpotifyPlaybackTick) {
+    const durSec = durationSeconds(state.nowPlaying.duration);
+    const elapsedSec = (Date.now() - (state.nowPlaying.startedAt || 0)) / 1000;
+    if (elapsedSec > durSec) {
+      state.ensureFreshPlayback();
+      broadcastState();
+    }
+  }
+}
+
 function revokeSocket(client, reason) {
   if (client.readyState === 1) client.send(JSON.stringify({ type: "sessionRevoked", reason }));
   client.sessionToken = null;
@@ -3012,6 +3057,7 @@ const dropExpiryTimer = setInterval(() => {
   } catch (err) {
     console.error(`[point-drops] expiry sweep failed: ${err.message}`);
   }
+  reconcileStalePlayback();
 }, 60_000);
 dropExpiryTimer.unref?.();
 
@@ -3024,6 +3070,8 @@ wss.on("connection", (ws, request) => {
   ws.sessionToken = getSessionTokenFromCookieHeader(request.headers.cookie);
   ws.hostAuthenticated = !HOST_PASSWORD;
   refreshSocketIdentity(ws, sessionRepo);
+
+  reconcileStalePlayback();
 
   ws.send(stateMessage());
   if (chatOn && chatMessages.length) {
@@ -3059,7 +3107,10 @@ wss.on("connection", (ws, request) => {
       const currentSession = refreshSocketIdentity(ws, sessionRepo);
 
       if (msg.type === "auth") {
-        if (!HOST_PASSWORD || (msg.token && msg.token === hostToken)) ws.hostAuthenticated = true;
+        if (!HOST_PASSWORD || (msg.token && msg.token === hostToken)) {
+          ws.hostAuthenticated = true;
+          reconcileHostArrivalPlayback();
+        }
         return;
       }
       if (msg.type === "chatSend") {
@@ -3184,6 +3235,7 @@ wss.on("connection", (ws, request) => {
             return;
           }
         }
+        reconcileHostArrivalPlayback();
         ws.send(JSON.stringify({ type: "orderNetworkHostUpdated" }));
         return;
       }
@@ -3382,15 +3434,21 @@ function shutdown(signal) {
     process.exit(0);
   }, 1500);
   forceExit.unref?.();
-  server.close((error) => {
+  try {
+    server.close((error) => {
+      clearTimeout(forceExit);
+      closeDb();
+      if (error && error.code !== "ERR_SERVER_NOT_RUNNING") {
+        console.error("[server] graceful shutdown failed", error);
+        process.exit(1);
+      }
+      process.exit(0);
+    });
+  } catch (err) {
     clearTimeout(forceExit);
     closeDb();
-    if (error) {
-      console.error("[server] graceful shutdown failed", error);
-      process.exit(1);
-    }
     process.exit(0);
-  });
+  }
 }
 process.once("SIGINT", () => shutdown("SIGINT"));
 process.once("SIGTERM", () => shutdown("SIGTERM"));

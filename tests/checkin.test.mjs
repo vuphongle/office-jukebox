@@ -36,6 +36,19 @@ test("Milestone bonus calculation according to modulo 30 cycle", () => {
   assert.deepEqual(calculateMilestoneBonus(60), { bonus: 20, isMilestone: true, milestoneDay: 30 });
 });
 
+test("Long-term milestones 100/200/365 are one-time and do not disturb the 30-day cycle", () => {
+  assert.deepEqual(calculateMilestoneBonus(100), { bonus: 50, isMilestone: true, milestoneDay: 100 });
+  assert.deepEqual(calculateMilestoneBonus(200), { bonus: 100, isMilestone: true, milestoneDay: 200 });
+  assert.deepEqual(calculateMilestoneBonus(365), { bonus: 150, isMilestone: true, milestoneDay: 365 });
+  // Neighbouring days keep the previous modulo-30 behaviour.
+  assert.deepEqual(calculateMilestoneBonus(99), { bonus: 0, isMilestone: false, milestoneDay: 9 });
+  assert.deepEqual(calculateMilestoneBonus(101), { bonus: 0, isMilestone: false, milestoneDay: 11 });
+  assert.deepEqual(calculateMilestoneBonus(364), { bonus: 0, isMilestone: false, milestoneDay: 4 });
+  assert.deepEqual(calculateMilestoneBonus(366), { bonus: 0, isMilestone: false, milestoneDay: 6 });
+  assert.deepEqual(calculateMilestoneBonus(90), { bonus: 20, isMilestone: true, milestoneDay: 30 });
+  assert.deepEqual(calculateMilestoneBonus(93), { bonus: 2, isMilestone: true, milestoneDay: 3 });
+});
+
 test("Local date reads APP_TIMEZONE at call time", () => {
   const previous = process.env.APP_TIMEZONE;
   const nearMidnightUtc = new Date("2026-08-01T23:30:00Z");

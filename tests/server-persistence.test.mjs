@@ -9,6 +9,7 @@ import { WebSocket } from "ws";
 import { closeDb, initDb } from "../src/db.js";
 import { hashPassword } from "../src/password.js";
 import { QueueRepository } from "../src/repositories/queueRepository.js";
+import { RankRepository } from "../src/repositories/rankRepository.js";
 import { UserRepository } from "../src/repositories/userRepository.js";
 
 const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
@@ -474,7 +475,8 @@ test("public rank benefits expose every check-in reward", async () => {
     const response = await fetch(`${baseUrl}/api/rank/benefits`);
     assert.equal(response.status, 200);
     const payload = await response.json();
-    assert.deepEqual(payload.benefits.map((benefit) => benefit.checkinPoints), [1, 2, 3, 4, 5, 6]);
+    assert.deepEqual(payload.benefits.map((benefit) => benefit.checkinPoints), [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]);
+    assert.ok(payload.benefits.every((benefit) => typeof benefit.badge === "string" && benefit.badge.length > 0));
     assert.equal(Object.hasOwn(payload.benefits[0], "minXp"), true);
     assert.equal(Object.hasOwn(payload.benefits[0], "passwordHash"), false);
   } finally {
@@ -790,3 +792,78 @@ test("admin password reset replaces member credentials and revokes existing sess
     await rmRecursiveRetry(dataDir);
   }
 });
+
+test("server startup preserves pre-existing user data and dynamically reflects Rank 6 as Biểu tượng âm nhạc", async () => {
+  const dataDir = mkdtempSync(path.join(os.tmpdir(), "office-jukebox-legacy-rank6-"));
+  const dbPath = path.join(dataDir, "jukebox.db");
+  let child;
+  let baseUrl;
+  try {
+    // 1. Pre-seed database simulating pre-deployment database state
+    const seedDb = initDb({ dbPath, adminUser: "review-admin", adminPass: "review-password-123" });
+    const userRepo = new UserRepository(seedDb);
+    const rankRepo = new RankRepository(seedDb);
+
+    const bayberry = userRepo.create({
+      username: "bayberry",
+      passwordHash: hashPassword("bayberry-pass-123"),
+      displayName: "Bayberry",
+    });
+    userRepo.updatePoints(bayberry.id, 50, { type: "admin_adjustment", reason: "existing balance" });
+    rankRepo.ensureProfile(bayberry.id);
+
+    const now = new Date().toISOString();
+    seedDb.run(
+      "UPDATE user_rank_profiles SET xp_total = 3154, rank_level = 6, updated_at = ? WHERE user_id = ?",
+      [now, bayberry.id]
+    );
+
+    closeDb(seedDb);
+
+    // 2. Start the live server against the pre-existing database
+    ({ child, baseUrl } = await startServer(dataDir));
+
+    // 3. Check public leaderboard endpoint
+    const leaderboardRes = await fetch(`${baseUrl}/api/rank/leaderboard`);
+    assert.equal(leaderboardRes.status, 200);
+    const leaderboardPayload = await leaderboardRes.json();
+    assert.equal(leaderboardPayload.ok, true);
+    assert.ok(Array.isArray(leaderboardPayload.leaderboard));
+    const entry = leaderboardPayload.leaderboard.find((row) => row.displayName === "Bayberry");
+    assert.ok(entry, "Bayberry should appear on leaderboard");
+    assert.equal(entry.xpTotal, 3154, "XP total must be exact");
+    assert.equal(entry.rank.level, 6, "Rank level must remain 6");
+    assert.equal(entry.rank.name, "Biểu tượng âm nhạc", "Rank name must be Biểu tượng âm nhạc");
+    assert.equal(entry.rank.badge, "diamond");
+
+    // 4. Login as Bayberry and check personal rank
+    const cookie = await loginAs(baseUrl, "bayberry", "bayberry-pass-123");
+    const meRankRes = await fetch(`${baseUrl}/api/me/rank`, {
+      headers: { Cookie: cookie },
+    });
+    assert.equal(meRankRes.status, 200);
+    const meRankPayload = await meRankRes.json();
+    assert.equal(meRankPayload.ok, true);
+    assert.equal(meRankPayload.rank.xp, 3154);
+    assert.equal(meRankPayload.rank.level, 6);
+    assert.equal(meRankPayload.rank.name, "Biểu tượng âm nhạc");
+    assert.equal(meRankPayload.rank.checkinPoints, 6);
+    assert.equal(meRankPayload.rank.nextLevel, 7);
+    assert.equal(meRankPayload.rank.nextMinXp, 5000);
+    assert.equal(meRankPayload.rank.xpToNext, 1846);
+
+    // 5. Check points balance
+    const meRes = await fetch(`${baseUrl}/api/me`, {
+      headers: { Cookie: cookie },
+    });
+    assert.equal(meRes.status, 200);
+    const mePayload = await meRes.json();
+    assert.equal(mePayload.user.pointsBalance, 50, "Points balance must remain untouched");
+    assert.equal(mePayload.user.rank.name, "Biểu tượng âm nhạc");
+    assert.equal(mePayload.user.rank.level, 6);
+  } finally {
+    if (child) await stopServer(child);
+    await rmRecursiveRetry(dataDir);
+  }
+});
+

@@ -354,6 +354,20 @@
             <div class="ms-circle">30d</div>
             <div class="ms-info"><strong>Mốc 30 ngày</strong><span>+20 điểm</span></div>
           </div>
+          <div class="milestone-step" id="ms-100">
+            <div class="ms-circle">100d</div>
+            <div class="ms-info"><strong>Mốc 100 ngày</strong><span>+50 điểm</span></div>
+          </div>
+          <div class="milestone-step" id="ms-200">
+            <div class="ms-circle">200d</div>
+            <div class="ms-info"><strong>Mốc 200 ngày</strong><span>+100 điểm</span></div>
+          </div>
+          <div class="milestone-step full-width" id="ms-365">
+            <div class="ms-circle">365d</div>
+            <div class="ms-info"><strong>Mốc 365 ngày (1 năm)</strong><span>+150 điểm</span></div>
+          </div>
+        </div>
+
         <!-- Streak Restore Card (TikTok style) -->
         <div id="streak-restore-card" class="streak-restore-card hidden">
           <div class="restore-card-content">
@@ -366,16 +380,19 @@
           </div>
         </div>
 
-        <!-- Web Push Reminder Opt-in -->
-        <div id="push-reminder-area" class="push-reminder-area">
-          <button id="push-reminder-toggle-btn" class="push-reminder-toggle-btn" type="button">
-            <span class="push-bell-icon" aria-hidden="true">🔔</span>
-            <span id="push-reminder-btn-label">Bật nhắc nhở lúc 22:00</span>
-          </button>
-        </div>
+        <!-- Checkin & Reminder Actions Row -->
+        <div class="checkin-actions-row">
+          <!-- Web Push Reminder Opt-in -->
+          <div id="push-reminder-area" class="push-reminder-area">
+            <button id="push-reminder-toggle-btn" class="push-reminder-toggle-btn" type="button">
+              <span class="push-bell-icon" aria-hidden="true">🔔</span>
+              <span id="push-reminder-btn-label">Nhắc tôi điểm danh lúc 22:00</span>
+            </button>
+          </div>
 
-        <div class="checkin-action-area">
-          <button id="do-checkin-btn" class="do-checkin-btn" type="button">✨ Điểm Danh Nhận Điểm (+1 🪙)</button>
+          <div class="checkin-action-area">
+            <button id="do-checkin-btn" class="do-checkin-btn" type="button">✨ Điểm danh nhận điểm (+1 🪙)</button>
+          </div>
         </div>
       </div>
     </div>

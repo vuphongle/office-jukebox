@@ -32,29 +32,42 @@ export class JukeboxState {
     try {
       const active = this.queueRepo.getActiveOrPlaying();
       if (active) {
-        this.nowPlaying = {
-          id: active.id,
-          videoId: active.video_id,
-          provider: active.provider || "youtube",
-          title: active.title,
-          channel: active.channel || "",
-          artists: parseArtistListFromString(active.channel || ""),
-          duration: normalizeDuration(active.duration),
-          thumbnail: active.thumbnail || null,
-          addedBy: active.added_by || "",
-          requesterId: active.requester_id || "",
-          addedByUserId: active.added_by_user_id || null,
-          requesterIp: active.requester_ip || "",
-          deviceId: active.device_id || "",
-          queueSequence: active.queue_sequence,
-          voteScore: active.vote_score || 0,
-          voteRankSequence: active.vote_rank_sequence || 0,
-          pinned: active.pinned === 1,
-          pinnedOrder: active.pinned_order || 0,
-          addedAt: active.added_at,
-          startedAt: active.started_at || Date.now(),
-          playbackToken: randomUUID(),
-        };
+        const durSec = durationSeconds(active.duration);
+        const startedAt = active.started_at || 0;
+        const elapsedSec = (Date.now() - startedAt) / 1000;
+        if (startedAt > 0 && elapsedSec > durSec + 60) {
+          // Stale playing item left from prior run — cleanly retire it in DB
+          this.queueRepo.updateStatus(active.id, "played", {
+            finishedAt: startedAt + durSec * 1000,
+            finishReason: "ended",
+            playedSeconds: durSec,
+          });
+          this.nowPlaying = null;
+        } else {
+          this.nowPlaying = {
+            id: active.id,
+            videoId: active.video_id,
+            provider: active.provider || "youtube",
+            title: active.title,
+            channel: active.channel || "",
+            artists: parseArtistListFromString(active.channel || ""),
+            duration: normalizeDuration(active.duration),
+            thumbnail: active.thumbnail || null,
+            addedBy: active.added_by || "",
+            requesterId: active.requester_id || "",
+            addedByUserId: active.added_by_user_id || null,
+            requesterIp: active.requester_ip || "",
+            deviceId: active.device_id || "",
+            queueSequence: active.queue_sequence,
+            voteScore: active.vote_score || 0,
+            voteRankSequence: active.vote_rank_sequence || 0,
+            pinned: active.pinned === 1,
+            pinnedOrder: active.pinned_order || 0,
+            addedAt: active.added_at,
+            startedAt: active.started_at || Date.now(),
+            playbackToken: randomUUID(),
+          };
+        }
       }
 
       const items = this.queueRepo.getQueuedItems("default_event", this.voteSortOn);
@@ -328,7 +341,10 @@ export class JukeboxState {
       if (this.history.length > 100) this.history.shift();
     }
     this.nowPlaying = this.queue.shift() || null;
-    if (this.nowPlaying) this.nowPlaying.startedAt = transitionedAt;
+    if (this.nowPlaying) {
+      this.nowPlaying.startedAt = transitionedAt;
+      this.nowPlaying.playbackToken = randomUUID();
+    }
     this._emit();
     if (isError) {
       this._emitBalanceChanges(refunds, `Hoàn điểm do lỗi phát bài hát (${providerLabel})`);
@@ -344,6 +360,45 @@ export class JukeboxState {
       voters,
       refunds,
     };
+  }
+
+  isNowPlayingStale({ now = Date.now(), graceSeconds = 60 } = {}) {
+    if (!this.nowPlaying) return false;
+    const startedAt = this.nowPlaying.startedAt;
+    if (!startedAt || typeof startedAt !== "number") return false;
+    const durSec = durationSeconds(this.nowPlaying.duration);
+    if (!Number.isFinite(durSec) || durSec <= 0) return false;
+    const elapsedSec = (now - startedAt) / 1000;
+    return elapsedSec > (durSec + graceSeconds);
+  }
+
+  retireStaleNowPlaying({ now = Date.now(), graceSeconds = 60 } = {}) {
+    if (!this.nowPlaying || !this.isNowPlayingStale({ now, graceSeconds })) {
+      return null;
+    }
+    const finishedItem = this.nowPlaying;
+    const durSec = durationSeconds(finishedItem.duration);
+    const transition = this.advance(finishedItem.videoId, {
+      isError: false,
+      finishReason: "ended",
+      playedSeconds: durSec,
+      playbackToken: finishedItem.playbackToken,
+    });
+    return {
+      retiredItem: finishedItem,
+      transition,
+    };
+  }
+
+  ensureFreshPlayback({ now = Date.now() } = {}) {
+    if (!this.nowPlaying) return false;
+    this.nowPlaying.startedAt = now;
+    this.nowPlaying.playbackToken = randomUUID();
+    if (this.queueRepo) {
+      this.queueRepo.updateStatus(this.nowPlaying.id, "playing", { startedAt: now });
+    }
+    this._emit();
+    return true;
   }
 
   // Host control: skip the current song regardless of what is playing.

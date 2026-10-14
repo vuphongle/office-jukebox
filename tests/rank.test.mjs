@@ -12,7 +12,7 @@ afterEach(() => closeDb());
 test("rank helpers map cumulative XP and bounded skip threshold", () => {
   assert.equal(rankForXp(0).level, 1);
   assert.equal(rankForXp(300).name, "Tạo vibe");
-  assert.equal(rankForXp(5_000).level, 6);
+  assert.equal(rankForXp(5_000).level, 7);
   assert.equal(qualifiedPlayThreshold("3:20"), 60);
   assert.equal(qualifiedPlayThreshold("10:00"), 90);
   assert.equal(qualifiedPlayThreshold("0:30"), 30);
@@ -23,10 +23,97 @@ test("rank helpers map cumulative XP and bounded skip threshold", () => {
 });
 
 test("rank descriptors expose the approved check-in reward", () => {
-  const expected = [1, 2, 3, 4, 5, 6];
+  const expected = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11];
   assert.deepEqual(RANK_LEVELS.map((rank) => rank.checkinPoints), expected);
   assert.equal(rankForXp(300).checkinPoints, 3);
   assert.equal(rankForXp(3_000).checkinPoints, 6);
+});
+
+test("11-rank ladder has the approved names and XP thresholds", () => {
+  assert.deepEqual(
+    RANK_LEVELS.slice(5).map((rank) => [rank.level, rank.minXp, rank.name]),
+    [
+      [6, 3_000, "Biểu tượng âm nhạc"],
+      [7, 5_000, "Phù thủy âm nhạc"],
+      [8, 10_000, "Tượng đài âm nhạc"],
+      [9, 15_000, "Chúa tể Jukebox"],
+      [10, 20_000, "Huyền thoại Jukebox"],
+      [11, 30_000, "Vị thần âm nhạc"],
+    ]
+  );
+  // Levels 1-5 are untouched.
+  assert.deepEqual(RANK_LEVELS.slice(0, 5).map((rank) => rank.minXp), [0, 100, 300, 700, 1_500]);
+  assert.equal(new Set(RANK_LEVELS.map((rank) => rank.badge)).size, RANK_LEVELS.length);
+
+  assert.equal(rankForXp(2_999).level, 5);
+  assert.equal(rankForXp(4_999).level, 6);
+  assert.equal(rankForXp(9_999).level, 7);
+  assert.equal(rankForXp(14_999).level, 8);
+  assert.equal(rankForXp(19_999).level, 9);
+  assert.equal(rankForXp(29_999).level, 10);
+  const top = rankForXp(30_000);
+  assert.equal(top.level, 11);
+  assert.equal(top.nextLevel, null);
+  assert.equal(top.xpToNext, 0);
+  assert.equal(rankForXp(1_000_000).level, 11);
+});
+
+test("former top-rank users keep level 6 and are only renamed, with no DB writes", () => {
+  const db = initDb({ dbPath: ":memory:" });
+  const userRepo = new UserRepository(db);
+  const rankRepo = new RankRepository(db);
+  const legend = userRepo.create({ username: "former-legend", passwordHash: "p" });
+  const overflow = userRepo.create({ username: "former-legend-overflow", passwordHash: "p" });
+  rankRepo.ensureProfile(legend.id);
+  rankRepo.ensureProfile(overflow.id);
+  db.run("UPDATE user_rank_profiles SET xp_total = 3200, rank_level = 6 WHERE user_id = ?", [legend.id]);
+  db.run("UPDATE user_rank_profiles SET xp_total = 6000, rank_level = 6 WHERE user_id = ?", [overflow.id]);
+  const balanceBefore = userRepo.findById(legend.id).points_balance;
+  const rowsBefore = db.query("SELECT * FROM user_rank_profiles ORDER BY user_id").all();
+
+  const kept = rankRepo.getRank(legend.id);
+  assert.equal(kept.rankLevel, 6);
+  assert.equal(kept.rankName, "Biểu tượng âm nhạc");
+  assert.equal(kept.checkinPoints, 6);
+  // A user already past 5,000 XP is shown at the level their XP earns.
+  assert.equal(rankRepo.getRank(overflow.id).rankLevel, 7);
+
+  assert.equal(userRepo.findById(legend.id).points_balance, balanceBefore);
+  assert.deepEqual(db.query("SELECT * FROM user_rank_profiles ORDER BY user_id").all(), rowsBefore);
+});
+
+test("new ranks reward crossing users once and never retroactively reward users already past them", () => {
+  const db = initDb({ dbPath: ":memory:" });
+  const userRepo = new UserRepository(db);
+  const rankRepo = new RankRepository(db);
+  const crossing = userRepo.create({ username: "crossing-5000", passwordHash: "p" });
+  const alreadyPast = userRepo.create({ username: "already-past-5000", passwordHash: "p" });
+  rankRepo.ensureProfile(crossing.id);
+  rankRepo.ensureProfile(alreadyPast.id);
+  db.run("UPDATE user_rank_profiles SET xp_total = 4995, rank_level = 6 WHERE user_id = ?", [crossing.id]);
+  db.run("UPDATE user_rank_profiles SET xp_total = 6000, rank_level = 6 WHERE user_id = ?", [alreadyPast.id]);
+
+  const promoted = rankRepo.awardXp({ userId: crossing.id, activityType: "test", sourceId: "a", deltaXp: 10 });
+  assert.equal(promoted.profile.rankLevel, 7);
+  assert.equal(promoted.profile.rankName, "Phù thủy âm nhạc");
+  // Level 7: +35 personal and +50 for the first member to reach it.
+  assert.equal(promoted.pointsAwarded, 85);
+  assert.equal(userRepo.findById(crossing.id).points_balance, 85);
+
+  const quiet = rankRepo.awardXp({ userId: alreadyPast.id, activityType: "test", sourceId: "b", deltaXp: 10 });
+  assert.equal(quiet.profile.rankLevel, 7);
+  assert.equal(quiet.pointsAwarded, 0);
+  assert.equal(userRepo.findById(alreadyPast.id).points_balance, 0);
+  // The cached column simply catches up through the normal write path.
+  assert.equal(db.query("SELECT rank_level FROM user_rank_profiles WHERE user_id = ?").get(alreadyPast.id).rank_level, 7);
+
+  // Existing level-6 users earning XP below 5,000 get nothing extra.
+  const steady = userRepo.create({ username: "steady-legend", passwordHash: "p" });
+  rankRepo.ensureProfile(steady.id);
+  db.run("UPDATE user_rank_profiles SET xp_total = 3500, rank_level = 6 WHERE user_id = ?", [steady.id]);
+  const steadyResult = rankRepo.awardXp({ userId: steady.id, activityType: "test", sourceId: "c", deltaXp: 10 });
+  assert.equal(steadyResult.pointsAwarded, 0);
+  assert.equal(steadyResult.profile.rankLevel, 6);
 });
 
 test("rank XP awards are append-only and idempotent per activity source", () => {

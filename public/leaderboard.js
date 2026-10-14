@@ -5,6 +5,11 @@ const rankBadgeIcons = Object.freeze({
   turntable: "🎛️",
   "stage-star": "🌟",
   "neon-crown": "👑",
+  diamond: "💎",
+  wand: "🪄",
+  monument: "🏛️",
+  galaxy: "🌌",
+  trident: "🔱",
 });
 
 const leaderboardModes = Object.freeze({
@@ -105,14 +110,14 @@ function renderLeaderboard(items, mode) {
   status.textContent = `Top ${items.length} thành viên theo ${config.scoreLabel}`;
   podium.innerHTML = items.slice(0, 3).map((entry) => {
     const position = Number(entry.position) || 0;
-    const level = Number(entry.rank?.level || 1);
+    const rankName = entry.rank?.name || "Người mới bắt nhịp";
     const icon = rankBadgeIcons[entry.rank?.badge] || "🎧";
     const score = config.score(entry).toLocaleString("vi-VN");
     return `<article class="leaderboard-podium-card place-${position}">
       <span class="leaderboard-place">#${position}</span>
       <span class="leaderboard-avatar" data-avatar-url="${escapeHtml(entry.avatarUrl || "")}" data-avatar-name="${escapeHtml(icon)}" aria-hidden="true">${icon}</span>
       <strong>${escapeHtml(entry.displayName || "Thành viên")}</strong>
-      <small>Hạng ${level} · ${score} ${config.scoreLabel}</small>
+      <small>${escapeHtml(rankName)} · ${score} ${config.scoreLabel}</small>
     </article>`;
   }).join("");
 
