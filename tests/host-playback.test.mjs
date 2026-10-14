@@ -1120,7 +1120,7 @@ test("host handles Spotify autoplay_failed by showing recovery and suppressing f
   assert.equal(recoveryEl.classList.contains("hidden"), true, "Recovery overlay should hide on resume click");
 });
 
-test("host unattended mode initializes wake lock, web locks, and worker heartbeat on start", async () => {
+test("host unattended mode defaults to OFF, turns ON on click, and turns OFF on click again", async () => {
   const { context, getElementById, fakeNavigator, workerInstances, getPlayerEvents } = createHostContext();
   const source = readFileSync(new URL("../public/host.js", import.meta.url), "utf8");
   vm.runInContext(source, context);
@@ -1131,21 +1131,36 @@ test("host unattended mode initializes wake lock, web locks, and worker heartbea
   const startBtn = getElementById("start-btn");
   startBtn.onclick();
 
-  // Allow promise tick for async wakeLock request
   await new Promise((r) => setTimeout(r, 10));
 
-  assert.equal(fakeNavigator.wakeLock.requestCalls, 1, "Wake lock must be requested on host start");
-  assert.equal(fakeNavigator.locks.requestCalls, 1, "Web lock must be requested on host start");
-  assert.equal(workerInstances.length, 1, "Background worker heartbeat must be started");
+  const unattendedPill = getElementById("unattended-mode-pill");
+
+  // 1. By default, unattended mode must be OFF
+  assert.equal(unattendedPill.classList.contains("on"), false, "Unattended mode pill should default to OFF");
+  assert.equal(unattendedPill.textContent, "⚡ Treo máy: Tắt", "Pill text should be '⚡ Treo máy: Tắt' by default");
+  assert.equal(fakeNavigator.wakeLock.requestCalls, 0, "Wake lock must NOT be requested by default");
+  assert.equal(workerInstances.length, 0, "Background worker must NOT be started by default");
+
+  // 2. Click to turn ON
+  unattendedPill.onclick();
+  await new Promise((r) => setTimeout(r, 10));
+
+  assert.equal(unattendedPill.classList.contains("on"), true, "Pill should have 'on' class when clicked");
+  assert.equal(unattendedPill.textContent, "⚡ Treo máy: Bật", "Pill text should be '⚡ Treo máy: Bật' when ON");
+  assert.equal(fakeNavigator.wakeLock.requestCalls, 1, "Wake lock must be requested when toggled ON");
+  assert.equal(workerInstances.length, 1, "Background worker heartbeat must be started when toggled ON");
   assert.ok(workerInstances[0].messages.includes("start"), "Worker must receive 'start' message");
 
-  const unattendedPill = getElementById("unattended-mode-pill");
-  assert.equal(unattendedPill.classList.contains("on"), true, "Unattended mode pill should be active");
-  assert.ok(unattendedPill.textContent.includes("Treo máy"), "Pill text should mention Treo máy");
+  // 3. Click again to turn OFF
+  unattendedPill.onclick();
+  await new Promise((r) => setTimeout(r, 10));
+
+  assert.equal(unattendedPill.classList.contains("on"), false, "Pill should remove 'on' class when toggled OFF");
+  assert.equal(unattendedPill.textContent, "⚡ Treo máy: Tắt", "Pill text should return to '⚡ Treo máy: Tắt' when OFF");
+  assert.equal(workerInstances[0].terminated, true, "Worker should be terminated when toggled OFF");
 
   // On pagehide / shutdown, locks and worker should stop
   context.window.dispatch("pagehide");
-  assert.equal(workerInstances[0].terminated, true, "Worker should be terminated on pagehide");
 });
 
 test("host unattended background heartbeat detects YouTube end-of-track fallback when paused near end", () => {
@@ -1156,6 +1171,7 @@ test("host unattended background heartbeat detects YouTube end-of-track fallback
   context.window.onYouTubeIframeAPIReady();
   getPlayerEvents().onReady();
   getElementById("start-btn").onclick();
+  getElementById("unattended-mode-pill").onclick(); // Turn ON unattended mode
 
   // Simulate YouTube playing a song
   vm.runInContext(
@@ -1187,6 +1203,7 @@ test("host unattended background heartbeat proactively recovers stalled Spotify 
   context.window.onSpotifyWebPlaybackSDKReady();
   spotifyListeners.get("ready")?.[0]({ device_id: "spotify-dev-1" });
   getElementById("start-btn").onclick();
+  getElementById("unattended-mode-pill").onclick(); // Turn ON unattended mode
 
   // Start Spotify track
   vm.runInContext(

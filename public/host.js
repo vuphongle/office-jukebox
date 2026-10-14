@@ -55,6 +55,7 @@ let isSpotifyLoadingTrack = false;
 let isSpotifyAutoplayBlocked = false;
 let spotifyAutoPlayTimer = null;
 let silentAudioEl = null;
+let unattendedModeEnabled = false;
 let screenWakeLock = null;
 let isWakeLockRequested = false;
 let backgroundWorker = null;
@@ -2175,7 +2176,7 @@ function initSilentAudioKeeper() {
 
 async function requestScreenWakeLock() {
   if (typeof navigator === "undefined" || !("wakeLock" in navigator)) return false;
-  if (!started) return false;
+  if (!started || !unattendedModeEnabled) return false;
   try {
     if (screenWakeLock && !screenWakeLock.released) return true;
     isWakeLockRequested = true;
@@ -2186,7 +2187,7 @@ async function requestScreenWakeLock() {
       console.log("[unattended] Screen Wake Lock released.");
       screenWakeLock = null;
       updateUnattendedUI();
-      if (started && isWakeLockRequested && typeof document !== "undefined" && !document.hidden) {
+      if (started && unattendedModeEnabled && isWakeLockRequested && typeof document !== "undefined" && !document.hidden) {
         requestScreenWakeLock().catch(() => {});
       }
     });
@@ -2212,35 +2213,60 @@ function releaseScreenWakeLock() {
 function updateUnattendedUI() {
   const pill = document.getElementById("unattended-mode-pill");
   if (!pill) return;
-  if (!started) {
+  if (!unattendedModeEnabled) {
     pill.classList.remove("on");
-    pill.textContent = "⚡ Treo máy: Sẵn sàng";
-    pill.title = "Chế độ treo máy: Tự động kích hoạt khi bạn nhấn Bắt đầu";
+    pill.textContent = "⚡ Treo máy: Tắt";
+    pill.title = "Chế độ treo máy (Chống tắt màn hình / Wake Lock & Chống đóng băng âm thanh) — nhấp để bật";
     return;
   }
   pill.classList.add("on");
+  pill.textContent = "⚡ Treo máy: Bật";
   if (screenWakeLock && !screenWakeLock.released) {
-    pill.textContent = "⚡ Treo máy: Đang giữ nguồn";
-    pill.title = "Chế độ treo máy: Đang giữ màn hình & CPU không ngủ (Screen Wake Lock) và bảo vệ âm thanh mượt mà";
+    pill.title = "Chế độ treo máy: Đang bật (Đang giữ màn hình & CPU không ngủ qua Screen Wake Lock, bảo vệ âm thanh mượt mà) — nhấp để tắt";
   } else {
-    pill.textContent = "⚡ Treo máy: Đang bật";
-    pill.title = "Chế độ treo máy: Bảo vệ âm thanh liên tục và chống đóng băng tab";
+    pill.title = "Chế độ treo máy: Đang bật (Bảo vệ âm thanh liên tục và chống đóng băng tab) — nhấp để tắt";
   }
 }
 
+function toggleUnattendedMode() {
+  unattendedModeEnabled = !unattendedModeEnabled;
+  if (unattendedModeEnabled) {
+    if (started) {
+      initSilentAudioKeeper();
+      initSilentAudioElement();
+      startBackgroundWorker();
+      holdHostWebLock();
+      requestScreenWakeLock().then((ok) => {
+        if (ok) {
+          setOrderNetworkHostStatus("Đã bật chế độ treo máy (Màn hình & CPU không ngủ)!", "ok");
+        } else {
+          setOrderNetworkHostStatus("Đã bật chế độ treo máy (Bảo vệ âm thanh mượt mà).", "ok");
+        }
+      });
+    } else {
+      setOrderNetworkHostStatus("Đã bật chế độ treo máy — sẽ kích hoạt khi bạn nhấn Bắt đầu.", "ok");
+    }
+  } else {
+    releaseScreenWakeLock();
+    stopBackgroundWorker();
+    setOrderNetworkHostStatus("Đã tắt chế độ treo máy.", "ok");
+  }
+  updateUnattendedUI();
+}
+
 function holdHostWebLock() {
-  if (hostWebLockHeld) return;
+  if (hostWebLockHeld || !unattendedModeEnabled) return;
   if (typeof navigator !== "undefined" && navigator.locks?.request) {
     hostWebLockHeld = true;
     navigator.locks.request("office-jukebox-host-active", () => {
       return new Promise((resolve) => {
         const check = setInterval(() => {
-          if (!started) {
+          if (!started || !unattendedModeEnabled) {
             clearInterval(check);
             hostWebLockHeld = false;
             resolve();
           }
-        }, 3000);
+        }, 1000);
       });
     }).catch((err) => {
       hostWebLockHeld = false;
@@ -2250,6 +2276,7 @@ function holdHostWebLock() {
 }
 
 function startBackgroundWorker() {
+  if (!unattendedModeEnabled) return;
   if (backgroundWorker || typeof Worker === "undefined" || typeof Blob === "undefined" || typeof URL === "undefined") return;
   try {
     const workerScript = `
@@ -2312,7 +2339,7 @@ function isAnyAudioPlaying() {
 }
 
 function onBackgroundHeartbeat() {
-  if (!started) return;
+  if (!started || !unattendedModeEnabled) return;
 
   // 1. Silent audio keeper pulse
   if (silentAudioCtx && silentAudioCtx.state === "suspended") {
@@ -2403,7 +2430,7 @@ function onBackgroundHeartbeat() {
 
 function checkUnattendedProgress() {
   const np = latestState?.nowPlaying;
-  if (!np || !started) {
+  if (!np || !started || !unattendedModeEnabled) {
     lastUnattendedTrackId = null;
     lastUnattendedPosition = -1;
     unattendedStallRecoveryCount = 0;
@@ -3048,20 +3075,10 @@ function wireControls() {
   const unattendedPill = document.getElementById("unattended-mode-pill");
   if (unattendedPill) {
     unattendedPill.onclick = () => {
-      if (!started) return;
-      if (screenWakeLock && !screenWakeLock.released) {
-        setOrderNetworkHostStatus("Chế độ treo máy đang hoạt động (Màn hình & CPU không ngủ).", "ok");
-      } else {
-        requestScreenWakeLock().then((ok) => {
-          if (ok) {
-            setOrderNetworkHostStatus("Đã kích hoạt giữ nguồn màn hình (Wake Lock)!", "ok");
-          } else {
-            setOrderNetworkHostStatus("Chế độ treo máy đang bảo vệ âm thanh mượt mà.", "ok");
-          }
-        });
-      }
+      toggleUnattendedMode();
     };
   }
+  updateUnattendedUI();
   // Event-context editor: the context control reveals the input and Save sends its contents.
   const ctxRow = document.getElementById("context-row");
   const ctxInput = document.getElementById("context-input");
@@ -3508,9 +3525,11 @@ document.getElementById("start-btn").onclick = () => {
   if (spotifyPlayer?.activateElement) {
     spotifyPlayer.activateElement().catch(() => {});
   }
-  requestScreenWakeLock();
-  startBackgroundWorker();
-  holdHostWebLock();
+  if (unattendedModeEnabled) {
+    requestScreenWakeLock();
+    startBackgroundWorker();
+    holdHostWebLock();
+  }
   updateUnattendedUI();
   if (hostCoordinationChannel) {
     hostCoordinationChannel.postMessage({ type: "host_claimed_playback", tabId: myTabId });
@@ -3527,7 +3546,7 @@ document.getElementById("start-btn").onclick = () => {
 
 document.addEventListener("visibilitychange", () => {
   if (!document.hidden) {
-    if (started) {
+    if (started && unattendedModeEnabled) {
       requestScreenWakeLock();
     }
     if (silentAudioCtx && silentAudioCtx.state === "suspended") {
