@@ -423,14 +423,14 @@ async function updatePushReminderUI() {
     const sub = await reg.pushManager.getSubscription();
     if (sub) {
       btn.classList.add("subscribed");
-      label.textContent = "✓ Đang bật nhắc nhở 22:00 (Nhấn để tắt)";
+      label.textContent = "Đã bật nhắc 22:00 (Nhấn để tắt)";
     } else {
       btn.classList.remove("subscribed");
-      label.textContent = "🔔 Nhắc tôi điểm danh lúc 22:00";
+      label.textContent = "Nhắc tôi điểm danh lúc 22:00";
     }
   } catch {
     btn.classList.remove("subscribed");
-    label.textContent = "🔔 Nhắc tôi điểm danh lúc 22:00";
+    label.textContent = "Nhắc tôi điểm danh lúc 22:00";
   }
 }
 
