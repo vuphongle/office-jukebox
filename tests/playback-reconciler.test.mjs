@@ -67,6 +67,47 @@ describe("Playback Reconciler Pure Logic", () => {
     expect(action).toBe("ok");
   });
 
+  it("supports Spotify track relinking with spotify:track: URI format in actual or expected", () => {
+    const action = decideReconcileAction({
+      expected: { provider: "spotify", videoId: "sp_target_123", playbackToken: "tok_sp" },
+      actual: {
+        activeProvider: "spotify",
+        videoId: "spotify:track:sp_relinked_456",
+        uri: "spotify:track:sp_relinked_456",
+        linkedFromId: "spotify:track:sp_target_123",
+        playbackToken: "tok_sp",
+      },
+      mismatchCount: 0,
+      elapsedMs: 2000,
+    });
+    expect(action).toBe("ok");
+  });
+
+  it("supports Spotify track relinking via linkedFromUri", () => {
+    const action = decideReconcileAction({
+      expected: { provider: "spotify", videoId: "sp_target_abc", playbackToken: "tok_sp" },
+      actual: {
+        activeProvider: "spotify",
+        videoId: "sp_market_xyz",
+        linkedFromUri: "spotify:track:sp_target_abc",
+        playbackToken: "tok_sp",
+      },
+      mismatchCount: 0,
+      elapsedMs: 2000,
+    });
+    expect(action).toBe("ok");
+  });
+
+  it("does not stop_and_skip on first mismatch even if elapsedMs >= 6000", () => {
+    const action = decideReconcileAction({
+      expected: { provider: "spotify", videoId: "sp_current", playbackToken: "tok_sp" },
+      actual: { activeProvider: "spotify", videoId: "sp_transient_blip", playbackToken: "tok_sp" },
+      mismatchCount: 0,
+      elapsedMs: 30000, // song has played for 30 seconds
+    });
+    expect(action).toBe("reload");
+  });
+
   it("handles TikTok token checking", () => {
     const action = decideReconcileAction({
       expected: { provider: "tiktok", videoId: "tt_song", playbackToken: "token_curr" },

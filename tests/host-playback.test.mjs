@@ -613,10 +613,10 @@ test("host reports ended for Spotify when track_window indicates current track m
     context
   );
 
-  // Track A was playing
+  // Track A was playing near end of track (202s of 210s)
   onPlayerState({
     paused: false,
-    position: 100000,
+    position: 202000,
     duration: 210000,
   });
 
@@ -635,6 +635,91 @@ test("host reports ended for Spotify when track_window indicates current track m
   assert.equal(endedReports.length, 1);
   assert.equal(endedReports[0].videoId, "spotify-track-a");
   assert.equal(endedReports[0].playbackToken, "token-ta");
+});
+
+test("host does not report ended for Spotify if track moves to previous_tracks mid-song without reaching near end", () => {
+  const { context, sent, spotifyListeners } = createHostContext();
+  const source = readFileSync(new URL("../public/host.js", import.meta.url), "utf8");
+  vm.runInContext(source, context);
+
+  context.connectWs();
+  context.window.onSpotifyWebPlaybackSDKReady();
+  const onReady = spotifyListeners.get("ready")?.[0];
+  const onPlayerState = spotifyListeners.get("player_state_changed")?.[0];
+
+  onReady({ device_id: "spotify-dev-1" });
+  vm.runInContext(
+    'started = true; latestState = { nowPlaying: { videoId: "spotify-track-mid", provider: "spotify", playbackToken: "token-mid", duration: "3:30" }, queue: [{ videoId: "spotify-track-next" }] }; syncPlayer();',
+    context
+  );
+
+  // Track was playing mid-song (e.g. 45s of 210s)
+  onPlayerState({
+    paused: false,
+    position: 45000,
+    duration: 210000,
+    track_window: {
+      current_track: { id: "spotify-track-mid" },
+      previous_tracks: [],
+    },
+  });
+
+  // Spotify SDK emits an unexpected state or track transition mid-song
+  onPlayerState({
+    paused: false,
+    position: 0,
+    duration: 210000,
+    track_window: {
+      current_track: { id: "spotify-track-other" },
+      previous_tracks: [{ id: "spotify-track-mid" }],
+    },
+  });
+
+  const endedReports = sent.filter((m) => m.type === "ended");
+  assert.equal(endedReports.length, 0, "Must NOT report ended when track was only mid-song (45s of 210s)");
+});
+
+test("host recognizes relinked Spotify track via linked_from and does not trigger watchdog skip", () => {
+  const { context, sent, spotifyListeners } = createHostContext();
+  const source = readFileSync(new URL("../public/host.js", import.meta.url), "utf8");
+  vm.runInContext(source, context);
+
+  context.connectWs();
+  context.window.onSpotifyWebPlaybackSDKReady();
+  const onReady = spotifyListeners.get("ready")?.[0];
+  const onPlayerState = spotifyListeners.get("player_state_changed")?.[0];
+
+  onReady({ device_id: "spotify-dev-1" });
+  vm.runInContext(
+    'started = true; latestState = { nowPlaying: { videoId: "spotify-requested-id", provider: "spotify", playbackToken: "token-relink", duration: "3:30" }, queue: [] }; syncPlayer();',
+    context
+  );
+
+  // Spotify streams a market-relinked track (different id, but linked_from matches)
+  onPlayerState({
+    paused: false,
+    position: 5000,
+    duration: 210000,
+    track_window: {
+      current_track: {
+        id: "spotify-market-relinked-id",
+        uri: "spotify:track:spotify-market-relinked-id",
+        linked_from: {
+          id: "spotify-requested-id",
+          uri: "spotify:track:spotify-requested-id",
+        },
+      },
+      previous_tracks: [],
+    },
+  });
+
+  const wasPlaying = vm.runInContext('spotifyWasPlaying', context);
+  const currentPlayingId = vm.runInContext('spotifyCurrentlyPlayingTrackId', context);
+  assert.equal(wasPlaying, true, "spotifyWasPlaying must be true for relinked track");
+  assert.equal(currentPlayingId, "spotify-requested-id", "spotifyCurrentlyPlayingTrackId must match requested videoId");
+
+  const errorReports = sent.filter((m) => m.type === "error");
+  assert.equal(errorReports.length, 0, "Must not report error for relinked track");
 });
 
 test("host does not report ended when user pauses near the end of a Spotify song", () => {

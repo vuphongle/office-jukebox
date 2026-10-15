@@ -263,6 +263,9 @@ function closeAuthModal() {
 }
 
 document.getElementById("auth-modal-close")?.addEventListener("click", closeAuthModal);
+document.getElementById("auth-modal")?.addEventListener("click", (e) => {
+  if (e.target.id === "auth-modal") closeAuthModal();
+});
 document.getElementById("auth-tab-login")?.addEventListener("click", () => openAuthModal("login"));
 document.getElementById("auth-tab-register")?.addEventListener("click", () => openAuthModal("register"));
 
@@ -539,6 +542,22 @@ function closeCheckinModal() {
 }
 
 document.getElementById("checkin-modal-close")?.addEventListener("click", closeCheckinModal);
+document.getElementById("checkin-modal")?.addEventListener("click", (e) => {
+  if (e.target.id === "checkin-modal") closeCheckinModal();
+});
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape") {
+    const checkinModal = document.getElementById("checkin-modal");
+    if (checkinModal && !checkinModal.classList.contains("hidden")) {
+      closeCheckinModal();
+      return;
+    }
+    const authModal = document.getElementById("auth-modal");
+    if (authModal && !authModal.classList.contains("hidden")) {
+      closeAuthModal();
+    }
+  }
+});
 
 document.getElementById("do-restore-btn")?.addEventListener("click", async () => {
   const btn = document.getElementById("do-restore-btn");
@@ -1044,6 +1063,13 @@ function setChatOpen(open) {
   if (open) {
     chatUnreadCount = 0;
     renderChatUnread();
+    if (queueWs && queueWs.readyState === WebSocket.OPEN) {
+      if (chatStatus && chatStatus.textContent.includes("Mất kết nối")) {
+        setChatStatus("");
+      }
+    } else if (!queueWs || queueWs.readyState === WebSocket.CLOSED) {
+      connectWs();
+    }
     // The history can arrive while the panel is hidden, when scrollHeight is
     // not measurable yet. Scroll again after the panel is visible so a reopen
     // always starts at the newest message instead of the first one.
@@ -3117,6 +3143,7 @@ function startGuestLyricsSyncLoop() {
         else if (typeof curNp.duration === "string" && curNp.duration.includes(":")) {
           const p = curNp.duration.split(":").map(Number);
           if (p.length === 2) durMs = (p[0] * 60 + p[1]) * 1000;
+          else if (p.length === 3) durMs = (p[0] * 3600 + p[1] * 60 + p[2]) * 1000;
         }
       }
 
@@ -3199,13 +3226,8 @@ function initGuestLyrics() {
     }
   });
   document.addEventListener("visibilitychange", () => {
-    if (!document.hidden) {
-      if (guestLyricsActive && queueWs?.readyState === WebSocket.OPEN) {
-        queueWs.send(JSON.stringify({ type: "requestPlaybackTick" }));
-      }
-      if (currentUser) {
-        fetchMe();
-      }
+    if (!document.hidden && guestLyricsActive && queueWs?.readyState === WebSocket.OPEN) {
+      queueWs.send(JSON.stringify({ type: "requestPlaybackTick" }));
     }
   });
 }
@@ -3233,6 +3255,9 @@ function connectWs() {
   const ws = new WebSocket(`${proto}://${location.host}`);
   queueWs = ws;
   ws.onopen = () => {
+    if (chatStatus && chatStatus.textContent.includes("Mất kết nối")) {
+      setChatStatus("");
+    }
     if (guestLyricsActive && queueWs?.readyState === WebSocket.OPEN) {
       queueWs.send(JSON.stringify({ type: "requestPlaybackTick" }));
     }
@@ -3245,6 +3270,9 @@ function connectWs() {
       return;
     }
     if (!msg || typeof msg !== "object" || Array.isArray(msg)) return;
+    if (chatStatus && chatStatus.textContent.includes("Mất kết nối")) {
+      setChatStatus("");
+    }
     window.JukeboxNotifications?.handleSocketMessage(msg);
     if (msg.type === "day_rollover") {
       fetchMe();
@@ -3437,7 +3465,9 @@ function connectWs() {
     queueWs = null;
     pendingOwnSkips.clear();
     resetChatPending();
-    setChatStatus("Mất kết nối chat, đang thử kết nối lại…", "bad");
+    if (chatOpen) {
+      setChatStatus("Mất kết nối chat, đang thử kết nối lại…", "bad");
+    }
     setTimeout(() => {
       if (!queueWs) connectWs();
     }, 2000);
@@ -4035,6 +4065,29 @@ function setupHistoryInfiniteScroll() {
   document.getElementById("tab-btn-history")?.addEventListener("click", () => switchQueueTab("history"));
 }
 
+function initConnectionLifecycle() {
+  document.addEventListener("visibilitychange", () => {
+    if (!document.hidden) {
+      if (!queueWs || queueWs.readyState === WebSocket.CLOSED) {
+        connectWs();
+      }
+      if (currentUser) {
+        fetchMe();
+      }
+    }
+  });
+  window.addEventListener("online", () => {
+    if (!queueWs || queueWs.readyState === WebSocket.CLOSED) {
+      connectWs();
+    }
+  });
+  window.addEventListener("focus", () => {
+    if (!queueWs || queueWs.readyState === WebSocket.CLOSED) {
+      connectWs();
+    }
+  });
+}
+
 renderSingers();
 selectGenre("All"); // render the tab and load real songs on page open
 renderRequestSettings();
@@ -4042,6 +4095,7 @@ renderFeedback();
 setupHistoryInfiniteScroll();
 initSearchPlatformTabs();
 initGuestLyrics();
+initConnectionLifecycle();
 window.addEventListener("jukebox:notification", (event) => {
   if (currentUser) toast("info", "🔔", "Bạn có thông báo mới", { sub: event.detail?.title || "Mở chuông để xem cập nhật." });
 });

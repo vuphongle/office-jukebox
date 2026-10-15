@@ -47,6 +47,11 @@ export class QueueRepository {
     return this.db.query("SELECT * FROM queue_items WHERE id = ?").get(id) || null;
   }
 
+  updateDuration(id, duration) {
+    if (!id || !duration) return;
+    this.db.run("UPDATE queue_items SET duration = ? WHERE id = ?", [duration, id]);
+  }
+
   getActiveOrPlaying(eventId = "default_event") {
     return this.db.query("SELECT * FROM queue_items WHERE event_id = ? AND status = 'playing' LIMIT 1").get(eventId) || null;
   }

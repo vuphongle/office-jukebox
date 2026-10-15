@@ -1745,6 +1745,10 @@ header .desktop-intro { display: none; }
   align-items: center;
   justify-content: center;
   backdrop-filter: blur(4px);
+  padding: 16px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  box-sizing: border-box;
 }
 .guest-modal-card {
   width: min(440px, calc(100% - 32px));
@@ -1753,12 +1757,15 @@ header .desktop-intro { display: none; }
   background: var(--card);
   border: 1px solid var(--line);
   box-shadow: 0 20px 48px rgba(0, 0, 0, 0.5);
+  margin: auto;
+  box-sizing: border-box;
 }
 .guest-modal-head {
   display: flex;
   justify-content: space-between;
   align-items: center;
   margin-bottom: 16px;
+  flex-shrink: 0;
 }
 .guest-modal-head h3 { font: 700 18px/1.2 var(--serif); color: var(--text-hi); }
 .modal-x-btn {
@@ -1892,6 +1899,34 @@ header .desktop-intro { display: none; }
 }
 
 /* Checkin Modal Styles */
+.checkin-modal-card {
+  width: min(460px, calc(100% - 32px));
+  max-height: min(90dvh, 760px);
+  display: flex;
+  flex-direction: column;
+  padding: 24px 20px 16px;
+}
+.checkin-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding-right: 6px;
+  margin-right: -2px;
+  scrollbar-width: thin;
+  scrollbar-color: oklch(100% 0 0 / 0.18) transparent;
+}
+.checkin-body::-webkit-scrollbar {
+  width: 5px;
+}
+.checkin-body::-webkit-scrollbar-track {
+  background: transparent;
+}
+.checkin-body::-webkit-scrollbar-thumb {
+  background: oklch(100% 0 0 / 0.18);
+  border-radius: 999px;
+}
+
 .checkin-streak-hero {
   display: flex;
   align-items: center;
@@ -2053,7 +2088,31 @@ header .desktop-intro { display: none; }
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 10px;
   align-items: stretch;
-  margin-top: 2px;
+  margin-top: 10px;
+  flex-shrink: 0;
+  position: sticky;
+  bottom: 0;
+  background: linear-gradient(180deg, oklch(22% 0.035 325 / 0.88) 0%, var(--card) 25%);
+  padding-top: 10px;
+  padding-bottom: 2px;
+  z-index: 2;
+}
+
+@media (max-height: 480px) {
+  .checkin-modal-card {
+    max-height: none;
+  }
+  .checkin-body {
+    overflow-y: visible;
+    padding-right: 0;
+    margin-right: 0;
+  }
+  .checkin-actions-row {
+    position: static;
+    background: transparent;
+    padding-top: 4px;
+    box-shadow: none;
+  }
 }
 
 .checkin-actions-row:has(.push-reminder-area.hidden) .checkin-action-area,

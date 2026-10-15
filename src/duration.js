@@ -8,3 +8,15 @@ export function parseDurationSeconds(value, { maxSeconds = Infinity } = {}) {
   if (!Number.isSafeInteger(seconds) || seconds <= 0 || seconds > maxSeconds) return null;
   return seconds;
 }
+
+export function formatSecondsToDuration(rawSeconds) {
+  const sec = Math.max(0, Math.floor(Number(rawSeconds) || 0));
+  if (sec <= 0) return "0:00";
+  const h = Math.floor(sec / 3600);
+  const m = Math.floor((sec % 3600) / 60);
+  const s = sec % 60;
+  if (h > 0) {
+    return `${h}:${m.toString().padStart(2, "0")}:${s.toString().padStart(2, "0")}`;
+  }
+  return `${m}:${s.toString().padStart(2, "0")}`;
+}

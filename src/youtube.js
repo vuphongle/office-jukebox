@@ -7,6 +7,8 @@
 //    before queueing. Embed-disabled videos still return 200 here, so the host
 //    player also skips iframe error codes 101/150.
 
+import { formatSecondsToDuration } from "./duration.js";
+
 const UA =
   "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) " +
   "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36";
@@ -563,11 +565,14 @@ export async function fetchVideoDetails(videoId, { timeoutMs = 5000 } = {}) {
     const data = JSON.parse(m[1]);
     const vd = data.videoDetails || {};
     const mf = data.microformat?.playerMicroformatRenderer || {};
+    const lengthSeconds = parseInt(vd.lengthSeconds || mf.lengthSeconds, 10);
     return {
       author: vd.author || "",
       category: mf.category || "",
       isFamilySafe: mf.isFamilySafe,
       description: (vd.shortDescription || "").slice(0, 500),
+      durationSeconds: Number.isFinite(lengthSeconds) && lengthSeconds > 0 ? lengthSeconds : null,
+      duration: Number.isFinite(lengthSeconds) && lengthSeconds > 0 ? formatSecondsToDuration(lengthSeconds) : "",
     };
   } catch {
     return null;
