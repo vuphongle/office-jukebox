@@ -140,6 +140,27 @@ describe("Unified media link detection and resolution", () => {
     assert.equal(res.song.provider, "youtube");
   });
 
+  test("resolves YouTube link and populates duration when fetchDetails is provided", async () => {
+    const mockFetchYouTube = async () => ({
+      videoId: "dQw4w9WgXcQ",
+      title: "YouTube Song Title",
+      channel: "YouTube Channel",
+      duration: "",
+      thumbnail: "https://i.ytimg.com/vi/dQw4w9WgXcQ/hqdefault.jpg",
+    });
+    const mockFetchDetails = async () => ({
+      duration: "14:15",
+      durationSeconds: 855,
+    });
+
+    const res = await resolveMediaLink("https://youtu.be/dQw4w9WgXcQ", {
+      fetchYouTube: mockFetchYouTube,
+      fetchDetails: mockFetchDetails,
+    });
+    assert.ok(res.ok);
+    assert.equal(res.song.duration, "14:15");
+  });
+
   test("resolves Spotify link directly with spotify provider", async () => {
     const mockFetch = async (url) => {
       if (url.includes("/v1/tracks/")) {

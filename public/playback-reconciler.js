@@ -33,12 +33,23 @@
     const actualId = actual?.videoId || "";
     const expectedId = expected?.videoId || "";
 
-    // 2. Track relinking check for Spotify
+    // 2. Track relinking check for Spotify (with URI normalization)
+    const cleanActualId = String(actualId).replace(/^spotify:track:/, "");
+    const cleanExpectedId = String(expectedId).replace(/^spotify:track:/, "");
+    const cleanLinkedFromId = String(actual?.linkedFromId || "").replace(/^spotify:track:/, "");
+    const cleanActualUri = String(actual?.uri || "").replace(/^spotify:track:/, "");
+    const cleanLinkedFromUri = String(actual?.linkedFromUri || "").replace(/^spotify:track:/, "");
+
     const isSpotifyMatch =
       expected.provider === "spotify" &&
-      (actualId === expectedId || (actual?.linkedFromId && actual.linkedFromId === expectedId));
+      (
+        cleanActualId === cleanExpectedId ||
+        cleanActualUri === cleanExpectedId ||
+        (cleanLinkedFromId && cleanLinkedFromId === cleanExpectedId) ||
+        (cleanLinkedFromUri && cleanLinkedFromUri === cleanExpectedId)
+      );
 
-    const isMatch = isSpotifyMatch || (actualId && expectedId && actualId === expectedId);
+    const isMatch = isSpotifyMatch || (cleanActualId && cleanExpectedId && cleanActualId === cleanExpectedId);
 
     // 3. Token checking if actual has token
     const tokenMismatch = Boolean(
@@ -47,9 +58,11 @@
       expected.playbackToken !== actual.playbackToken
     );
 
-    // If ID mismatches or token mismatches
+    // If ID mismatches or token mismatches:
+    // Require at least 2 consecutive mismatch counts before stop_and_skip to prevent
+    // premature skips during transient network drops or track loading.
     if ((actualId && !isMatch) || tokenMismatch) {
-      if (mismatchCount >= 2 || elapsedMs >= 6000) {
+      if (mismatchCount >= 2 && elapsedMs >= 6000) {
         return "stop_and_skip";
       }
       return "reload";

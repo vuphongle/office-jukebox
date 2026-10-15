@@ -67,11 +67,14 @@ let unattendedStallRecoveryCount = 0;
 let scWidget = null;
 let scReady = false;
 let scIsPlaying = false;
+let scCurrentPosition = 0;
+let scDurationSec = 0;
 let tiktokAudio = null;
 let tiktokIsPlaying = false;
 let tiktokResumeTime = 0;
 let tiktokRetryCount = 0;
 let tiktokRetryTimer = null;
+let lastTikTokTickTime = 0;
 let filterOn = false;
 let moderationMode = "default"; // "default" | "strict" (protocol values)
 let moderationConfigured = false;
@@ -619,6 +622,22 @@ function resetLyrics() {
 }
 
 // ---- Spotify Web Playback SDK ----------------------------------------------
+function matchesSpotifyTrack(trackObj, targetId) {
+  if (!trackObj || !targetId) return false;
+  const cleanTarget = String(targetId).replace(/^spotify:track:/, "");
+  const trackId = String(trackObj.id || "").replace(/^spotify:track:/, "");
+  const trackUri = String(trackObj.uri || "").replace(/^spotify:track:/, "");
+  const linkedId = String(trackObj.linked_from?.id || "").replace(/^spotify:track:/, "");
+  const linkedUri = String(trackObj.linked_from?.uri || "").replace(/^spotify:track:/, "");
+
+  return (
+    trackId === cleanTarget ||
+    trackUri === cleanTarget ||
+    (Boolean(linkedId) && linkedId === cleanTarget) ||
+    (Boolean(linkedUri) && linkedUri === cleanTarget)
+  );
+}
+
 function formatSpotifyTime(sec) {
   const s = Math.max(0, Math.floor(sec || 0));
   const m = Math.floor(s / 60);
@@ -818,10 +837,13 @@ async function reAnchorFromSdk() {
     if (!currentState) return;
     spotifyPlayerState = currentState;
 
-    const currentTrackId = currentState.track_window?.current_track?.id;
-    const isCurrentTrackInSdk = !currentTrackId || currentTrackId === currentVideoId;
+    const curTrack = currentState.track_window?.current_track;
+    const isCurrentTrackInSdk = Boolean(
+      currentVideoId &&
+      (!curTrack || matchesSpotifyTrack(curTrack, currentVideoId))
+    );
 
-    const dur = currentState.duration || 0;
+    const dur = currentState.duration || (latestState?.nowPlaying?.durationMs) || (durationSeconds(latestState?.nowPlaying?.duration) * 1000) || 0;
     if (isCurrentTrackInSdk && currentState.position > 0) {
       spotifyMaxPositionMs = Math.max(spotifyMaxPositionMs, currentState.position);
       spotifyWasPlaying = true;
@@ -831,8 +853,8 @@ async function reAnchorFromSdk() {
 
     const reachedEnd = Boolean(
       dur > 0 && (
-        spotifyMaxPositionMs >= Math.max(1000, dur - 5000) ||
-        spotifyMaxPositionMs >= dur * 0.95
+        spotifyMaxPositionMs >= Math.max(1000, dur - 12000) ||
+        spotifyMaxPositionMs >= dur * 0.90
       )
     );
 
@@ -917,18 +939,17 @@ function broadcastYouTubeTick({ seek = false, forcedPaused = null, forcedPositio
         ? state === YT.PlayerState.PLAYING
         : state === 1;
       const paused = forcedPaused != null ? forcedPaused : !isPlaying;
+      const durSec = Number(player?.getDuration ? player.getDuration() : 0) || 0;
       send({
         type: "playbackTick",
         position: Math.max(0, Math.floor(curTimeSec * 1000)),
+        duration: durSec > 0 ? durSec : undefined,
         paused,
         seek: Boolean(seek),
         videoId: currentVideoId,
       });
-      if (paused && player?.getDuration) {
-        const durSec = Number(player.getDuration()) || 0;
-        if (durSec > 0 && curTimeSec >= Math.max(1, durSec - 0.5)) {
-          reportIfEnded();
-        }
+      if (paused && durSec > 0 && curTimeSec >= Math.max(1, durSec - 0.5)) {
+        reportIfEnded();
       }
     } catch (err) {
       console.warn("[youtube] broadcastYouTubeTick error:", err);
@@ -1000,12 +1021,12 @@ window.onSpotifyWebPlaybackSDKReady = function () {
       }
       updatePlayPauseIcon();
 
-      const currentTrackId = state.track_window?.current_track?.id;
-      const prevTrackIds = (state.track_window?.previous_tracks || []).map((t) => t?.id).filter(Boolean);
+      const currentTrack = state.track_window?.current_track;
+      const prevTracks = state.track_window?.previous_tracks || [];
 
       const isCurrentTrackInSdk = Boolean(
         currentVideoId &&
-        (!currentTrackId || currentTrackId === currentVideoId)
+        (!currentTrack || matchesSpotifyTrack(currentTrack, currentVideoId))
       );
 
       // Verify whether current track has actually started audio playback
@@ -1032,21 +1053,27 @@ window.onSpotifyWebPlaybackSDKReady = function () {
       // Check whether this is a genuine end-of-track:
       // Spotify has paused and reset position to 0 (or track transitioned to previous),
       // and playback had reached the final seconds of the track.
+      const effectiveDuration = state.duration > 0
+        ? state.duration
+        : (latestState?.nowPlaying?.durationMs || (durationSeconds(latestState?.nowPlaying?.duration) * 1000) || 0);
+
       const reachedNearEnd = Boolean(
-        state.duration > 0 && (
-          spotifyMaxPositionMs >= Math.max(1000, state.duration - 5000) ||
-          spotifyMaxPositionMs >= state.duration * 0.95 ||
-          prevAnchorPos >= Math.max(1000, state.duration - 5000) ||
-          prevAnchorPos >= state.duration * 0.95
+        effectiveDuration > 0 && (
+          spotifyMaxPositionMs >= Math.max(1000, effectiveDuration - 12000) ||
+          spotifyMaxPositionMs >= effectiveDuration * 0.90 ||
+          prevAnchorPos >= Math.max(1000, effectiveDuration - 12000) ||
+          prevAnchorPos >= effectiveDuration * 0.90
         )
       );
+
+      const hasTrackInPrevious = prevTracks.some((t) => matchesSpotifyTrack(t, currentVideoId));
 
       const trackMovedToPrevious = Boolean(
         currentVideoId &&
         spotifyCurrentlyPlayingTrackId === currentVideoId &&
-        prevTrackIds.includes(currentVideoId) &&
-        currentTrackId !== currentVideoId &&
-        (reachedNearEnd || spotifyMaxPositionMs >= 5000)
+        hasTrackInPrevious &&
+        !matchesSpotifyTrack(currentTrack, currentVideoId) &&
+        reachedNearEnd
       );
 
       const isSongFinished = Boolean(
@@ -1279,10 +1306,44 @@ function initSoundCloudWidget() {
     clearTimeout(playbackWatchdog);
     hidePlaybackRecovery();
     updatePlayPauseIcon();
+    scWidget.getDuration((d) => {
+      scDurationSec = Math.round((d || 0) / 1000);
+      if (scDurationSec > 0 && activePlayerProvider === "soundcloud") {
+        send({
+          type: "playbackTick",
+          position: Math.max(0, Math.floor(scCurrentPosition || 0)),
+          duration: scDurationSec,
+          paused: false,
+          videoId: currentVideoId,
+        });
+      }
+    });
+  });
+  scWidget.bind(window.SC.Widget.Events.PLAY_PROGRESS, (data) => {
+    const posMs = data?.currentPosition || 0;
+    scCurrentPosition = posMs;
+    if (activePlayerProvider === "soundcloud") {
+      send({
+        type: "playbackTick",
+        position: Math.max(0, Math.floor(posMs)),
+        duration: scDurationSec > 0 ? scDurationSec : undefined,
+        paused: false,
+        videoId: currentVideoId,
+      });
+    }
   });
   scWidget.bind(window.SC.Widget.Events.PAUSE, () => {
     scIsPlaying = false;
     updatePlayPauseIcon();
+    if (activePlayerProvider === "soundcloud") {
+      send({
+        type: "playbackTick",
+        position: Math.max(0, Math.floor(scCurrentPosition || 0)),
+        duration: scDurationSec > 0 ? scDurationSec : undefined,
+        paused: true,
+        videoId: currentVideoId,
+      });
+    }
   });
   scWidget.bind(window.SC.Widget.Events.FINISH, () => {
     scIsPlaying = false;
@@ -1384,6 +1445,16 @@ function initTikTokPlayer() {
   tiktokAudio.addEventListener("pause", () => {
     tiktokIsPlaying = false;
     updatePlayPauseIcon();
+    if (activePlayerProvider === "tiktok") {
+      const dur = tiktokAudio.duration || 0;
+      send({
+        type: "playbackTick",
+        position: Math.max(0, Math.floor((tiktokAudio.currentTime || 0) * 1000)),
+        duration: dur > 0 ? Math.round(dur) : undefined,
+        paused: true,
+        videoId: currentVideoId,
+      });
+    }
   });
 
   tiktokAudio.addEventListener("timeupdate", () => {
@@ -1400,6 +1471,17 @@ function initTikTokPlayer() {
     if (fillEl && dur > 0) {
       const pct = Math.min(100, Math.max(0, (cur / dur) * 100));
       fillEl.style.width = `${pct.toFixed(1)}%`;
+    }
+
+    if (activePlayerProvider === "tiktok" && Date.now() - lastTikTokTickTime > 1000) {
+      lastTikTokTickTime = Date.now();
+      send({
+        type: "playbackTick",
+        position: Math.max(0, Math.floor(cur * 1000)),
+        duration: dur > 0 ? Math.round(dur) : undefined,
+        paused: Boolean(tiktokAudio.paused),
+        videoId: currentVideoId,
+      });
     }
 
     // Task 6.2.3: Tầng 1 — Ngắt theo musicDurationSec
@@ -1965,9 +2047,7 @@ function armPlaybackWatchdog(videoId, playbackToken) {
       }
     } else if (activePlayerProvider === "spotify") {
       const curTrack = spotifyPlayerState?.track_window?.current_track;
-      const curTrackId = curTrack?.id || null;
-      const linkedFromId = curTrack?.linked_from?.id || null;
-      const matchesTrack = curTrackId === videoId || (linkedFromId && linkedFromId === videoId);
+      const matchesTrack = matchesSpotifyTrack(curTrack, videoId);
       const isPlaying = Boolean(
         spotifyWasPlaying &&
         spotifyPlayerState &&
@@ -1975,7 +2055,7 @@ function armPlaybackWatchdog(videoId, playbackToken) {
         matchesTrack
       );
       if (isPlaying || isLyricsMode) return;
-      if ((!spotifyReady || !spotifyDeviceId || document.hidden) && watchdogHiddenExtendCount < 3) {
+      if ((!spotifyReady || !spotifyDeviceId || document.hidden || isSpotifyLoadingTrack) && watchdogHiddenExtendCount < 3) {
         watchdogHiddenExtendCount++;
         armPlaybackWatchdog(videoId, playbackToken);
         return;
@@ -2057,11 +2137,21 @@ function reconcilePlayback() {
       actual.videoId = player.getVideoData()?.video_id || null;
     }
   } else if (expected.provider === "spotify") {
+    // If Spotify is currently actively loading a new track, skip reconcile check
+    if (isSpotifyLoadingTrack) {
+      return;
+    }
     if (spotifyPlayerState?.track_window?.current_track) {
       const curTrack = spotifyPlayerState.track_window.current_track;
-      actual.videoId = curTrack.id || null;
+      actual.videoId = (curTrack.id || "").replace(/^spotify:track:/, "") || null;
+      if (curTrack.uri) {
+        actual.uri = curTrack.uri;
+      }
       if (curTrack.linked_from?.id) {
-        actual.linkedFromId = curTrack.linked_from.id;
+        actual.linkedFromId = (curTrack.linked_from.id || "").replace(/^spotify:track:/, "");
+      }
+      if (curTrack.linked_from?.uri) {
+        actual.linkedFromUri = curTrack.linked_from.uri;
       }
     }
   } else if (expected.provider === "tiktok") {

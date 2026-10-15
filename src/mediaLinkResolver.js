@@ -23,6 +23,7 @@ export async function resolveMediaLink(
   rawUrl,
   {
     fetchYouTube = fetchYouTubeMetadata,
+    fetchDetails = null,
     spotifyConfig = {},
     fetchImpl = globalThis.fetch,
   } = {}
@@ -38,10 +39,20 @@ export async function resolveMediaLink(
     if (!song) {
       return { ok: false, reason: "Không thể lấy thông tin video này. Vui lòng thử lại." };
     }
+    let duration = song.duration || "";
+    if (!duration && typeof fetchDetails === "function") {
+      try {
+        const details = await fetchDetails(videoId);
+        if (details?.duration) {
+          duration = details.duration;
+        }
+      } catch {}
+    }
     return {
       ok: true,
       song: {
         ...song,
+        duration,
         provider: "youtube",
       },
     };

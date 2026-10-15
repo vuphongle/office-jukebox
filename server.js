@@ -115,7 +115,7 @@ import { parsePagination } from "./src/pagination.js";
 import { getClientIp, parseTrustProxy, isPrivateIp } from "./src/clientIp.js";
 import { countUserQueuedSongs } from "./src/queueLimit.js";
 import { WebSocketRateLimiter } from "./src/websocketRateLimit.js";
-import { parseDurationSeconds } from "./src/duration.js";
+import { parseDurationSeconds, formatSecondsToDuration } from "./src/duration.js";
 import { generateRandomPassword } from "./src/password.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -1559,6 +1559,7 @@ app.post("/api/youtube/resolve", publicReadLimit, async (req, res) => {
 
   const result = await resolveMediaLink(rawUrl, {
     fetchYouTube: fetchYouTubeMetadata,
+    fetchDetails: fetchVideoDetails,
     spotifyConfig: {
       clientId: SPOTIFY_CLIENT_ID,
       clientSecret: SPOTIFY_CLIENT_SECRET,
@@ -1809,13 +1810,13 @@ app.post("/api/request", songRequestIpLimit, async (req, res) => {
   }
   const rawDuration = typeof duration === "string" ? duration.trim() : "";
   if (rawDuration.length > 20) {
-    return res.status(400).json({ ok: false, reason: "Thời lượng bài hát không hợp lệ hoặc vượt quá 10 phút." });
+    return res.status(400).json({ ok: false, reason: "Thời lượng bài hát không hợp lệ." });
   }
   const normalizedDuration = rawDuration;
   if (normalizedDuration) {
-    const durationLimit = durationSeconds(normalizedDuration);
+    const durationLimit = parseDurationSeconds(normalizedDuration, { maxSeconds: 24 * 3600 });
     if (!Number.isFinite(durationLimit)) {
-      return res.status(400).json({ ok: false, reason: "Thời lượng bài hát không hợp lệ hoặc vượt quá 10 phút." });
+      return res.status(400).json({ ok: false, reason: "Thời lượng bài hát không hợp lệ." });
     }
   }
   const requesterId = (clientId || "").toString().slice(0, 64);
@@ -3003,7 +3004,20 @@ function hasActiveHost() {
 
 function reconcileStalePlayback() {
   try {
-    const stale = state.retireStaleNowPlaying({ graceSeconds: 60 });
+    const isHostActive = hasActiveHost();
+    const isTickFresh = Boolean(
+      latestPlaybackTick &&
+      latestPlaybackTick.videoId === state.nowPlaying?.videoId &&
+      (Date.now() - (latestPlaybackTick.serverTime || 0)) < 30_000
+    );
+    // If an active host is connected and reporting recent ticks or is paused by the host, playback is actively being managed and is not stale
+    if (isHostActive && (isTickFresh || Boolean(latestPlaybackTick?.paused))) {
+      return false;
+    }
+    const stale = state.retireStaleNowPlaying({
+      graceSeconds: 60,
+      hasActiveTick: isHostActive && (isTickFresh || Boolean(latestPlaybackTick?.paused)),
+    });
     if (stale?.transition) {
       latestPlaybackTick = null;
       latestSpotifyPlaybackTick = null;
@@ -3020,7 +3034,7 @@ function reconcileStalePlayback() {
 function reconcileHostArrivalPlayback() {
   const retired = reconcileStalePlayback();
   if (!retired && state.nowPlaying && !latestPlaybackTick && !latestSpotifyPlaybackTick) {
-    const durSec = durationSeconds(state.nowPlaying.duration);
+    const durSec = parseDurationSeconds(state.nowPlaying.duration, { maxSeconds: 24 * 3600 }) || 210;
     const elapsedSec = (Date.now() - (state.nowPlaying.startedAt || 0)) / 1000;
     if (elapsedSec > durSec) {
       state.ensureFreshPlayback();
@@ -3249,8 +3263,22 @@ wss.on("connection", (ws, request) => {
           const paused = Boolean(msg.paused);
           const seek = Boolean(msg.seek);
           const videoId = typeof msg.videoId === "string" ? msg.videoId : "";
+          const reportedDurationSec = typeof msg.duration === "number" && msg.duration > 0
+            ? Math.round(msg.duration)
+            : (typeof msg.durationSec === "number" && msg.durationSec > 0 ? Math.round(msg.durationSec) : 0);
+
+          if (reportedDurationSec > 0 && state.nowPlaying && (!videoId || state.nowPlaying.videoId === videoId)) {
+            const currentDurSec = parseDurationSeconds(state.nowPlaying.duration, { maxSeconds: 24 * 3600 }) || 210;
+            if (state.nowPlaying.duration === "3:30" || Math.abs(currentDurSec - reportedDurationSec) > 5) {
+              const formatted = formatSecondsToDuration(reportedDurationSec);
+              state.updateDuration(state.nowPlaying.id, formatted);
+              broadcastState();
+            }
+          }
+
           latestPlaybackTick = {
             position,
+            duration: reportedDurationSec > 0 ? reportedDurationSec : undefined,
             paused,
             seek,
             videoId,

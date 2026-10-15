@@ -362,8 +362,20 @@ export class JukeboxState {
     };
   }
 
-  isNowPlayingStale({ now = Date.now(), graceSeconds = 60 } = {}) {
-    if (!this.nowPlaying) return false;
+  updateDuration(itemId, duration) {
+    if (!itemId || !duration) return false;
+    const item = (this.nowPlaying?.id === itemId) ? this.nowPlaying : this.queue.find((q) => q.id === itemId);
+    if (!item) return false;
+    item.duration = duration;
+    if (this.queueRepo) {
+      this.queueRepo.updateDuration(itemId, duration);
+    }
+    this._emit();
+    return true;
+  }
+
+  isNowPlayingStale({ now = Date.now(), graceSeconds = 60, hasActiveTick = false } = {}) {
+    if (!this.nowPlaying || hasActiveTick) return false;
     const startedAt = this.nowPlaying.startedAt;
     if (!startedAt || typeof startedAt !== "number") return false;
     const durSec = durationSeconds(this.nowPlaying.duration);
@@ -372,8 +384,8 @@ export class JukeboxState {
     return elapsedSec > (durSec + graceSeconds);
   }
 
-  retireStaleNowPlaying({ now = Date.now(), graceSeconds = 60 } = {}) {
-    if (!this.nowPlaying || !this.isNowPlayingStale({ now, graceSeconds })) {
+  retireStaleNowPlaying({ now = Date.now(), graceSeconds = 60, hasActiveTick = false } = {}) {
+    if (!this.nowPlaying || !this.isNowPlayingStale({ now, graceSeconds, hasActiveTick })) {
       return null;
     }
     const finishedItem = this.nowPlaying;
