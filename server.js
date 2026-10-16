@@ -1966,6 +1966,7 @@ app.post("/api/request", songRequestIpLimit, async (req, res) => {
       provider: cleanProvider,
       requesterIp,
       deviceId: req.deviceId || null,
+      userAgent: (req.headers["user-agent"] || "").slice(0, 255),
       hasCcLyrics,
     });
 
@@ -2009,6 +2010,20 @@ app.get("/api/admin/users", requireAdmin, (req, res) => {
       avatarUrl: avatarPublicUrl(avatarFile),
       rank: publicRank(user.id),
     })),
+  });
+});
+
+app.get("/api/admin/guest-orders", requireAdmin, (req, res) => {
+  const search = (req.query.search || "").toString().trim();
+  const status = (req.query.status || "").toString().trim();
+  const { page, limit, offset } = parsePagination(req.query);
+
+  const result = queueRepo.listGuestOrders({ search, status, limit, offset });
+  res.json({
+    ok: true,
+    page,
+    limit,
+    ...result,
   });
 });
 

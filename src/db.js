@@ -137,11 +137,13 @@ export function initDb({ dbPath = DEFAULT_DB_PATH, adminUser = process.env.ADMIN
       played_seconds INTEGER,
       provider TEXT NOT NULL DEFAULT 'youtube',
       requester_ip TEXT,
-      device_id TEXT
+      device_id TEXT,
+      user_agent TEXT
     );
     CREATE INDEX IF NOT EXISTS idx_queue_items_status ON queue_items(status, pinned, pinned_order, vote_score, queue_sequence);
     CREATE INDEX IF NOT EXISTS idx_queue_items_playback_history ON queue_items(event_id, status, finished_at DESC);
     CREATE INDEX IF NOT EXISTS idx_queue_items_added_user_history ON queue_items(added_by_user_id, status, finished_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_queue_items_guest_orders ON queue_items(event_id, added_at DESC);
     CREATE UNIQUE INDEX IF NOT EXISTS idx_queue_items_one_playing ON queue_items(event_id) WHERE status = 'playing';
 
     CREATE TABLE IF NOT EXISTS song_favorites (
@@ -353,6 +355,9 @@ export function initDb({ dbPath = DEFAULT_DB_PATH, adminUser = process.env.ADMIN
   if (!queueItemColumns.some((column) => column.name === "device_id")) {
     db.run("ALTER TABLE queue_items ADD COLUMN device_id TEXT");
   }
+  if (!queueItemColumns.some((column) => column.name === "user_agent")) {
+    db.run("ALTER TABLE queue_items ADD COLUMN user_agent TEXT");
+  }
 
   const songFavoriteColumns = db.query("PRAGMA table_info(song_favorites)").all();
   if (!songFavoriteColumns.some((column) => column.name === "provider")) {
@@ -460,6 +465,10 @@ export function initDb({ dbPath = DEFAULT_DB_PATH, adminUser = process.env.ADMIN
   db.run(
     `CREATE INDEX IF NOT EXISTS idx_queue_items_added_user_history
      ON queue_items(added_by_user_id, status, finished_at DESC)`
+  );
+  db.run(
+    `CREATE INDEX IF NOT EXISTS idx_queue_items_guest_orders
+     ON queue_items(event_id, added_at DESC)`
   );
 
   // Seed default admin if no admin exists

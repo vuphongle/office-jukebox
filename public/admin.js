@@ -12,6 +12,7 @@ let dashboardStarted = false;
 let usersPage = 1;
 let dropsPage = 1;
 let ledgerPage = 1;
+let guestOrdersPage = 1;
 let notificationsPage = 1;
 
 // --- Initialization and tab navigation ------------------------------------
@@ -37,6 +38,7 @@ function startDashboard() {
   initUsersTab();
   initDropsTab();
   initLedgerTab();
+  initGuestOrdersTab();
   initNotificationsTab();
   initFeedbackTab();
   initWebSocket();
@@ -44,6 +46,9 @@ function startDashboard() {
     "#feedback": "tab-feedback",
     "#operations": "tab-operations",
     "#notifications": "tab-notifications",
+    "#guest-orders": "tab-guest-orders",
+    "#ledger": "tab-ledger",
+    "#drops": "tab-drops",
   }[location.hash] || "tab-users";
   selectTab(requestedTab);
 }
@@ -137,6 +142,7 @@ function selectTab(tabId) {
   if (currentTab === "tab-users") loadUsers();
   else if (currentTab === "tab-drops") loadDrops();
   else if (currentTab === "tab-ledger") loadLedger();
+  else if (currentTab === "tab-guest-orders") loadGuestOrders();
   else if (currentTab === "tab-notifications") loadNotifications();
   else if (currentTab === "tab-operations") {
     loadSearchSettings();
@@ -767,6 +773,153 @@ async function loadLedger() {
     tbody.innerHTML = `<tr><td colspan="6" class="text-center">Lỗi: ${escapeHtml(err.message)}</td></tr>`;
   }
 }
+
+// --- TAB: GUEST ORDERS AUDIT -----------------------------------------------
+
+function initGuestOrdersTab() {
+  const searchInput = document.getElementById("guest-orders-search-input");
+  searchInput?.addEventListener("input", debounce(() => {
+    guestOrdersPage = 1;
+    loadGuestOrders();
+  }, 300));
+  searchInput?.addEventListener("search", () => {
+    guestOrdersPage = 1;
+    loadGuestOrders();
+  });
+
+  document.getElementById("guest-orders-status-filter")?.addEventListener("change", () => {
+    guestOrdersPage = 1;
+    loadGuestOrders();
+  });
+
+  document.getElementById("guest-orders-refresh-btn")?.addEventListener("click", () => {
+    loadGuestOrders();
+  });
+}
+
+function parseDeviceInfo(ua) {
+  if (!ua || typeof ua !== "string") return null;
+  const lower = ua.toLowerCase();
+  let os = "Thiết bị khác";
+  if (lower.includes("iphone")) os = "iPhone";
+  else if (lower.includes("ipad")) os = "iPad";
+  else if (lower.includes("android")) os = "Android";
+  else if (lower.includes("windows")) os = "Windows";
+  else if (lower.includes("macintosh") || lower.includes("mac os")) os = "macOS";
+  else if (lower.includes("linux")) os = "Linux";
+
+  let browser = "";
+  if (lower.includes("edg/")) browser = "Edge";
+  else if (lower.includes("chrome") && !lower.includes("edg/")) browser = "Chrome";
+  else if (lower.includes("safari") && !lower.includes("chrome")) browser = "Safari";
+  else if (lower.includes("firefox")) browser = "Firefox";
+  else if (lower.includes("crios")) browser = "Chrome";
+  else if (lower.includes("fxios")) browser = "Firefox";
+
+  return browser ? `${os} · ${browser}` : os;
+}
+
+function renderGuestDeviceIdentity(item) {
+  const ip = item.requester_ip || "";
+  const isLocal = ip === "127.0.0.1" || ip === "::1" || ip.toLowerCase() === "localhost";
+  const ipText = ip ? escapeHtml(ip) : "—";
+  const ipLabel = isLocal ? ' <span class="ip-local-tag" title="Truy cập từ chính máy chạy server">Host</span>' : "";
+
+  const devInfo = parseDeviceInfo(item.user_agent);
+  const devInfoHtml = devInfo
+    ? `<div class="device-ua-line" title="${escapeHtml(item.user_agent || '')}"><span class="device-icon">💻</span> ${escapeHtml(devInfo)}</div>`
+    : "";
+
+  const rawDeviceId = item.device_id || item.requester_id || "";
+  const shortId = rawDeviceId ? rawDeviceId.replace(/[^a-zA-Z0-9]/g, "").slice(0, 8) : "";
+  const idHtml = shortId
+    ? `<div class="device-id-line" title="Mã thiết bị: ${escapeHtml(rawDeviceId)}"><span class="device-id-tag">ID: ${escapeHtml(shortId)}</span></div>`
+    : "";
+
+  return `
+    <div class="guest-device-cell">
+      <div class="guest-ip-row">
+        <span class="ip-badge">${ipText}</span>${ipLabel}
+      </div>
+      ${devInfoHtml}
+      ${idHtml}
+    </div>
+  `;
+}
+
+function renderGuestOrderStatusBadge(status, reason) {
+  switch (status) {
+    case "queued":
+      return '<span class="badge badge-queued">Đang chờ</span>';
+    case "playing":
+      return '<span class="badge badge-playing">Đang phát</span>';
+    case "played":
+      return '<span class="badge badge-played">Đã phát</span>';
+    case "removed":
+      return `<span class="badge badge-removed" title="${escapeHtml(reason || "Đã xóa")}">Đã xóa</span>`;
+    case "error":
+      return `<span class="badge badge-error" title="${escapeHtml(reason || "Lỗi")}">Lỗi</span>`;
+    default:
+      return `<span class="badge badge-user">${escapeHtml(status || "—")}</span>`;
+  }
+}
+
+async function loadGuestOrders() {
+  const search = document.getElementById("guest-orders-search-input")?.value || "";
+  const status = document.getElementById("guest-orders-status-filter")?.value || "";
+  const tbody = document.getElementById("guest-orders-tbody");
+  if (!tbody) return;
+
+  try {
+    const res = await fetch(`/api/admin/guest-orders?search=${encodeURIComponent(search)}&status=${encodeURIComponent(status)}&page=${guestOrdersPage}&limit=20`);
+    const data = await res.json();
+    renderPagination("guest-orders-pagination", guestOrdersPage, data.total || 0, 20, (page) => {
+      guestOrdersPage = page;
+      loadGuestOrders();
+    });
+
+    if (!data.ok || !data.items || !data.items.length) {
+      tbody.innerHTML = `<tr><td colspan="7" class="text-center">Không có order nào từ khách</td></tr>`;
+      return;
+    }
+
+    tbody.innerHTML = data.items
+      .map((item) => {
+        const deviceIdentityHtml = renderGuestDeviceIdentity(item);
+        const thumbHtml = item.thumbnail
+          ? `<img class="guest-song-thumb" src="${escapeHtml(item.thumbnail)}" alt="" loading="lazy" />`
+          : '<div class="guest-song-thumb"></div>';
+        const provider = (item.provider || "youtube").toLowerCase();
+        const statusBadge = renderGuestOrderStatusBadge(item.status, item.finish_reason);
+
+        return `
+          <tr>
+            <td>${escapeHtml(formatTime(item.added_at))}</td>
+            <td><strong>${escapeHtml(item.added_by || "Guest")}</strong></td>
+            <td>${deviceIdentityHtml}</td>
+            <td>
+              <div class="guest-song-cell">
+                ${thumbHtml}
+                <div class="guest-song-meta">
+                  <div class="guest-song-title" title="${escapeHtml(item.title)}">${escapeHtml(item.title)}</div>
+                  <div class="guest-song-channel">${escapeHtml(item.channel || "—")}</div>
+                </div>
+              </div>
+            </td>
+            <td><span class="provider-tag provider-${escapeHtml(provider)}">${escapeHtml(provider)}</span></td>
+            <td>${escapeHtml(item.duration || "—")}</td>
+            <td>${statusBadge}</td>
+          </tr>
+        `;
+      })
+      .join("");
+  } catch (err) {
+    tbody.innerHTML = `<tr><td colspan="7" class="text-center">Lỗi: ${escapeHtml(err.message)}</td></tr>`;
+  }
+}
+
+window.initGuestOrdersTab = initGuestOrdersTab;
+window.loadGuestOrders = loadGuestOrders;
 
 // --- TAB 4: NOTIFICATIONS --------------------------------------------------
 
