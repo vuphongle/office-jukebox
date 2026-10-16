@@ -65,6 +65,9 @@
       <button id="tab-btn-ledger" class="tab-btn" role="tab" aria-selected="false" aria-controls="tab-ledger" data-tab="tab-ledger">
         Lịch sử Ledger
       </button>
+      <button id="tab-btn-guest-orders" class="tab-btn" role="tab" aria-selected="false" aria-controls="tab-guest-orders" data-tab="tab-guest-orders">
+        Lịch sử Guest Order
+      </button>
       <button id="tab-btn-notifications" class="tab-btn" role="tab" aria-selected="false" aria-controls="tab-notifications" data-tab="tab-notifications">
         Thông báo
       </button>
@@ -234,6 +237,55 @@
           </table>
         </div>
         <div class="pagination" id="ledger-pagination"></div>
+      </div>
+    </section>
+
+    <!-- TAB: GUEST ORDERS AUDIT -->
+    <section id="tab-guest-orders" class="tab-pane" role="tabpanel" aria-labelledby="tab-btn-guest-orders">
+      <div class="panel-card">
+        <div class="panel-header">
+          <div>
+            <h2>Lịch sử Order của Khách (Guest)</h2>
+            <p class="card-desc">Danh sách bài hát khách vãng lai đã order kèm địa chỉ IP máy khách và trạng thái phát.</p>
+          </div>
+          <div class="filter-group">
+            <div class="search-input-shell">
+              <svg class="search-icon" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                <circle cx="8.5" cy="8.5" r="5.5"></circle>
+                <path d="M13 13l4 4" stroke-linecap="round"></path>
+              </svg>
+              <input id="guest-orders-search-input" type="search" placeholder="Tìm theo IP, tên khách, bài hát…" aria-label="Tìm guest order" />
+            </div>
+            <select id="guest-orders-status-filter" aria-label="Lọc trạng thái guest order">
+              <option value="">Tất cả trạng thái</option>
+              <option value="queued">Đang chờ (queued)</option>
+              <option value="playing">Đang phát (playing)</option>
+              <option value="played">Đã phát (played)</option>
+              <option value="removed">Đã xóa (removed)</option>
+              <option value="error">Lỗi (error)</option>
+            </select>
+            <button id="guest-orders-refresh-btn" class="action-btn">Làm mới</button>
+          </div>
+        </div>
+        <div class="table-responsive">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>Thời gian</th>
+                <th>Khách (Guest)</th>
+                <th>IP máy khách</th>
+                <th>Bài hát & Nghệ sĩ</th>
+                <th>Nền tảng</th>
+                <th>Thời lượng</th>
+                <th>Trạng thái</th>
+              </tr>
+            </thead>
+            <tbody id="guest-orders-tbody">
+              <tr><td colspan="7" class="text-center">Đang tải danh sách…</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="pagination" id="guest-orders-pagination"></div>
       </div>
     </section>
 

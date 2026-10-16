@@ -14,6 +14,7 @@ function element(initial = {}) {
     value: "",
     disabled: false,
     focus() {},
+    querySelectorAll: () => [],
     classList: {
       add: (...names) => names.forEach((name) => classes.add(name)),
       remove: (...names) => names.forEach((name) => classes.delete(name)),
@@ -175,4 +176,90 @@ test("admin users table merges user details, isolates streak/points, and uses ac
   // Verify action trigger has no up/down caret
   assert.ok(!source.includes("action-caret"));
 });
+
+test("admin UI includes Guest Orders tab and renders guest order items with IP address", async () => {
+  const html = readFileSync(path.join(ROOT, "public/admin.html"), "utf8");
+  const source = readFileSync(path.join(ROOT, "public/admin.js"), "utf8");
+  const css = readFileSync(path.join(ROOT, "public/admin.css"), "utf8");
+
+  // 1. Verify HTML tab button and panel
+  assert.ok(html.includes('id="tab-btn-guest-orders"'), "Guest orders tab button must exist");
+  assert.ok(html.includes('data-tab="tab-guest-orders"'));
+  assert.ok(html.includes('id="tab-guest-orders"'), "Guest orders panel must exist");
+  assert.ok(html.includes('id="guest-orders-search-input"'));
+  assert.ok(html.includes('id="guest-orders-status-filter"'));
+  assert.ok(html.includes('id="guest-orders-refresh-btn"'));
+  assert.ok(html.includes('id="guest-orders-tbody"'));
+  assert.ok(html.includes('id="guest-orders-pagination"'));
+
+  // 2. Verify CSS styles for IP badge
+  assert.match(css, /\.ip-badge\s*\{[^}]*font-family/);
+
+  // 3. Verify JS rendering logic
+  const tbody = element();
+  tbody.innerHTML = "";
+  const pagination = element();
+  pagination.innerHTML = "";
+  const searchInput = element();
+  searchInput.value = "";
+  const statusFilter = element();
+  statusFilter.value = "";
+
+  const elements = {
+    "guest-orders-tbody": tbody,
+    "guest-orders-pagination": pagination,
+    "guest-orders-search-input": searchInput,
+    "guest-orders-status-filter": statusFilter,
+  };
+
+  const requests = [];
+  const context = {
+    window: {},
+    document: {
+      addEventListener() {},
+      getElementById: (id) => elements[id] || null,
+      querySelectorAll: () => [],
+    },
+    location: { hash: "" },
+    history: { replaceState() {} },
+    fetch: async (url, options) => {
+      requests.push({ url, options });
+      return {
+        json: async () => ({
+          ok: true,
+          total: 1,
+          items: [
+            {
+              id: "item-1",
+              title: "Guest Song Title",
+              channel: "Guest Singer",
+              duration: "3:45",
+              thumbnail: "https://example.com/thumb.jpg",
+              added_by: "Khách 123",
+              requester_ip: "192.168.1.88",
+              status: "played",
+              provider: "youtube",
+              added_at: 1776331200000,
+            },
+          ],
+        }),
+      };
+    },
+    setTimeout: () => 0,
+    clearTimeout() {},
+    console,
+  };
+
+  vm.runInNewContext(source, context);
+  await context.window.loadGuestOrders();
+
+  assert.equal(requests.length, 1);
+  assert.ok(requests[0].url.startsWith("/api/admin/guest-orders"));
+  assert.ok(tbody.innerHTML.includes("192.168.1.88"), "Rendered HTML must contain guest IP");
+  assert.ok(tbody.innerHTML.includes("Khách 123"), "Rendered HTML must contain guest name");
+  assert.ok(tbody.innerHTML.includes("Guest Song Title"), "Rendered HTML must contain song title");
+  assert.ok(tbody.innerHTML.includes("badge-played"), "Rendered HTML must contain played badge");
+  assert.ok(tbody.innerHTML.includes("ip-badge"), "Rendered HTML must format IP with ip-badge class");
+});
+
 

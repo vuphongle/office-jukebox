@@ -142,6 +142,7 @@ export function initDb({ dbPath = DEFAULT_DB_PATH, adminUser = process.env.ADMIN
     CREATE INDEX IF NOT EXISTS idx_queue_items_status ON queue_items(status, pinned, pinned_order, vote_score, queue_sequence);
     CREATE INDEX IF NOT EXISTS idx_queue_items_playback_history ON queue_items(event_id, status, finished_at DESC);
     CREATE INDEX IF NOT EXISTS idx_queue_items_added_user_history ON queue_items(added_by_user_id, status, finished_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_queue_items_guest_orders ON queue_items(event_id, added_at DESC);
     CREATE UNIQUE INDEX IF NOT EXISTS idx_queue_items_one_playing ON queue_items(event_id) WHERE status = 'playing';
 
     CREATE TABLE IF NOT EXISTS song_favorites (
@@ -460,6 +461,10 @@ export function initDb({ dbPath = DEFAULT_DB_PATH, adminUser = process.env.ADMIN
   db.run(
     `CREATE INDEX IF NOT EXISTS idx_queue_items_added_user_history
      ON queue_items(added_by_user_id, status, finished_at DESC)`
+  );
+  db.run(
+    `CREATE INDEX IF NOT EXISTS idx_queue_items_guest_orders
+     ON queue_items(event_id, added_at DESC)`
   );
 
   // Seed default admin if no admin exists

@@ -2012,6 +2012,20 @@ app.get("/api/admin/users", requireAdmin, (req, res) => {
   });
 });
 
+app.get("/api/admin/guest-orders", requireAdmin, (req, res) => {
+  const search = (req.query.search || "").toString().trim();
+  const status = (req.query.status || "").toString().trim();
+  const { page, limit, offset } = parsePagination(req.query);
+
+  const result = queueRepo.listGuestOrders({ search, status, limit, offset });
+  res.json({
+    ok: true,
+    page,
+    limit,
+    ...result,
+  });
+});
+
 app.get("/api/admin/search-settings", requireAdmin, (_req, res) => {
   res.json({ ok: true, searchMode });
 });

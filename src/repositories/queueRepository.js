@@ -128,6 +128,52 @@ export class QueueRepository {
     return { total, limit: boundedLimit, offset: boundedOffset, items };
   }
 
+  listGuestOrders({ eventId = "default_event", search = "", status = "", limit = 20, offset = 0 } = {}) {
+    const boundedLimit = Math.min(100, Math.max(1, Number(limit) || 20));
+    const boundedOffset = Math.max(0, Number(offset) || 0);
+
+    const conditions = [
+      "event_id = ?",
+      "(added_by_user_id IS NULL OR added_by_user_id = '')",
+    ];
+    const params = [eventId];
+
+    const cleanStatus = typeof status === "string" ? status.trim().toLowerCase() : "";
+    if (["queued", "playing", "played", "removed", "error"].includes(cleanStatus)) {
+      conditions.push("status = ?");
+      params.push(cleanStatus);
+    }
+
+    const cleanSearch = typeof search === "string" ? search.trim() : "";
+    if (cleanSearch) {
+      conditions.push("(requester_ip LIKE ? OR added_by LIKE ? OR title LIKE ? OR channel LIKE ?)");
+      const term = `%${cleanSearch}%`;
+      params.push(term, term, term, term);
+    }
+
+    const whereClause = conditions.join(" AND ");
+
+    const countRow = this.db
+      .query(`SELECT COUNT(*) AS total FROM queue_items WHERE ${whereClause}`)
+      .get(...params);
+    const total = countRow?.total || 0;
+
+    const items = this.db
+      .query(
+        `SELECT id, event_id, video_id, title, channel, duration, thumbnail,
+                added_by, requester_id, added_by_user_id, status,
+                added_at, started_at, finished_at, finish_reason, played_seconds,
+                provider, requester_ip, device_id, vote_score
+         FROM queue_items
+         WHERE ${whereClause}
+         ORDER BY added_at DESC, rowid DESC
+         LIMIT ? OFFSET ?`
+      )
+      .all(...params, boundedLimit, boundedOffset);
+
+    return { total, limit: boundedLimit, offset: boundedOffset, items };
+  }
+
   getTotalPlayedCount(eventId = "default_event") {
     const row = this.db
       .query("SELECT COUNT(*) AS total FROM queue_items WHERE event_id = ? AND status = 'played'")

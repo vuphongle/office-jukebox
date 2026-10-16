@@ -540,6 +540,96 @@ h1 {
   color: oklch(85% 0.01 85);
   border: 1px solid oklch(100% 0 0 / 0.12);
 }
+.badge-queued {
+  background: oklch(70% 0.14 240 / 0.15);
+  color: oklch(80% 0.14 240);
+  border: 1px solid oklch(70% 0.14 240 / 0.35);
+}
+.badge-playing {
+  background: oklch(75% 0.16 145 / 0.16);
+  color: oklch(82% 0.16 145);
+  border: 1px solid oklch(75% 0.16 145 / 0.4);
+}
+.badge-played {
+  background: oklch(100% 0 0 / 0.06);
+  color: var(--muted);
+  border: 1px solid oklch(100% 0 0 / 0.12);
+}
+.badge-removed {
+  background: oklch(65% 0.18 32 / 0.15);
+  color: oklch(75% 0.18 32);
+  border: 1px solid oklch(65% 0.18 32 / 0.35);
+}
+.badge-error {
+  background: oklch(65% 0.2 25 / 0.18);
+  color: oklch(78% 0.2 25);
+  border: 1px solid oklch(65% 0.2 25 / 0.4);
+}
+
+.ip-badge {
+  display: inline-block;
+  padding: 3px 8px;
+  border-radius: 6px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 11.5px;
+  font-weight: 600;
+  background: oklch(25% 0.04 85 / 0.6);
+  color: var(--gold);
+  border: 1px solid oklch(80% 0.14 85 / 0.25);
+  letter-spacing: 0.3px;
+}
+
+.guest-song-cell {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 220px;
+}
+.guest-song-thumb {
+  width: 44px;
+  height: 33px;
+  border-radius: 6px;
+  object-fit: cover;
+  background: var(--surface);
+  flex-shrink: 0;
+  border: 1px solid var(--line);
+}
+.guest-song-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.guest-song-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-hi);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 280px;
+}
+.guest-song-channel {
+  font-size: 11px;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 280px;
+}
+.provider-tag {
+  display: inline-block;
+  padding: 2px 7px;
+  border-radius: 5px;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+.provider-youtube { background: oklch(60% 0.2 25 / 0.15); color: #ff6b6b; border: 1px solid oklch(60% 0.2 25 / 0.3); }
+.provider-spotify { background: oklch(65% 0.18 145 / 0.15); color: #1ed760; border: 1px solid oklch(65% 0.18 145 / 0.3); }
+.provider-soundcloud { background: oklch(68% 0.2 55 / 0.15); color: #ff7700; border: 1px solid oklch(68% 0.2 55 / 0.3); }
+.provider-tiktok { background: oklch(60% 0.1 200 / 0.15); color: #00f2fe; border: 1px solid oklch(60% 0.1 200 / 0.3); }
 
 .delta-pos { color: var(--green); font-weight: 700; }
 .delta-neg { color: var(--red); font-weight: 700; }
