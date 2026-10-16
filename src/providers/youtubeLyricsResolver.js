@@ -187,6 +187,40 @@ export function filterCreatorTracks(captionTracks) {
   });
 }
 
+export function scoreScriptCharacters(text = "") {
+  let kana = 0;
+  let hangul = 0;
+  let thai = 0;
+  let hanzi = 0;
+  let viDiacritics = 0;
+
+  for (const ch of text) {
+    if (/[\u3040-\u309f\u30a0-\u30ff]/.test(ch)) kana++;
+    else if (/[\uac00-\ud7af\u1100-\u11ff]/.test(ch)) hangul++;
+    else if (/[\u0e00-\u0e7f]/.test(ch)) thai++;
+    else if (/[\u4e00-\u9fff]/.test(ch)) hanzi++;
+    else if (/[àáạảãâầấậẩẫăằắặẳẵèéẹẻẽêềếệểễìíịỉĩòóọỏõôồốộổỗơờớợởỡùúụủũưừứựửữỳýỵỷỹđ]/i.test(ch)) viDiacritics++;
+  }
+
+  return { kana, hangul, thai, hanzi, viDiacritics };
+}
+
+export function resolveDominantLanguage(counts, minThreshold = 1) {
+  const candidates = [
+    { lang: "ja", count: counts.kana > 0 ? counts.kana + counts.hanzi : 0 },
+    { lang: "ko", count: counts.hangul },
+    { lang: "vi", count: counts.viDiacritics },
+    { lang: "th", count: counts.thai },
+    { lang: "zh", count: counts.kana === 0 ? counts.hanzi : 0 },
+  ];
+
+  candidates.sort((a, b) => b.count - a.count);
+  if (candidates[0].count >= minThreshold) {
+    return candidates[0].lang;
+  }
+  return null;
+}
+
 /**
  * Detect the song's original language using metadata and heuristics.
  */
@@ -226,34 +260,21 @@ export function detectSongLanguage({
   const ytTitle = videoDetails?.title || "";
   const ytAuthor = videoDetails?.author || "";
 
-  const text = `${title} ${artist} ${ytTitle} ${ytAuthor} ${keywordsStr} ${descSnippet}`.trim();
-
-  // Vietnamese with diacritics
-  if (/[àáạảãâầấậẩẫăằắặẳẵèéẹẻẽêềếệểễìíịỉĩòóọỏõôồốộổỗơờớợởỡùúụủũưừứựửữỳýỵỷỹđ]/i.test(text)) {
-    return "vi";
+  // 2. Primary text: Title, Artist, Video Title, Channel Author
+  const primaryText = `${title} ${artist} ${ytTitle} ${ytAuthor}`.trim();
+  const primaryLang = resolveDominantLanguage(scoreScriptCharacters(primaryText), 1);
+  if (primaryLang) {
+    return primaryLang;
   }
 
-  // Korean Hangul
-  if (/[\uac00-\ud7af\u1100-\u11ff]/.test(text)) {
-    return "ko";
+  // 3. Secondary metadata: Keywords and Description snippet (dominant script count)
+  const secondaryText = `${keywordsStr} ${descSnippet}`.trim();
+  const secondaryLang = resolveDominantLanguage(scoreScriptCharacters(secondaryText), 3);
+  if (secondaryLang) {
+    return secondaryLang;
   }
 
-  // Japanese Hiragana & Katakana
-  if (/[\u3040-\u309f\u30a0-\u30ff]/.test(text)) {
-    return "ja";
-  }
-
-  // Thai script
-  if (/[\u0e00-\u0e7f]/.test(text)) {
-    return "th";
-  }
-
-  // Chinese Hanzi
-  if (/[\u4e00-\u9fff]/.test(text)) {
-    return "zh";
-  }
-
-  // Unaccented Vietnamese heuristic when context strongly suggests Vietnamese song
+  // 4. Unaccented Vietnamese heuristic when context strongly suggests Vietnamese song
   const vietnameseKeywords = /\b(anh|em|yeu|nguoi|khong|mot|minh|cho|ngay|chieu|dem|nang|mua|thuong|nho|ve|tim|con|duong)\b/i;
   const vietnameseContext = `${ytAuthor} ${descSnippet} ${keywordsStr}`.toLowerCase();
   const hasVietnameseContext =

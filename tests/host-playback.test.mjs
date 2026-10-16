@@ -53,9 +53,11 @@ function createHostContext({ hostToken = null } = {}) {
   const player = {
     loadCalls: [],
     playCalls: 0,
+    pauseCalls: 0,
     state: -1,
     loadVideoById(videoId) { this.loadCalls.push(videoId); },
     playVideo() { this.playCalls += 1; },
+    pauseVideo() { this.pauseCalls += 1; },
     stopVideo() {},
     getCurrentTime() { return 0; },
     getPlayerState() { return this.state; },
@@ -293,11 +295,34 @@ test("host offers a user-gesture recovery when YouTube blocks the first autoplay
 
   elements.get("resume-playback").onclick();
   expect(player.loadCalls).toEqual(["first-song", "first-song"]);
-  expect(player.playCalls).toBe(2);
+  expect(player.playCalls).toBe(1);
 
   player.state = context.YT.PlayerState.PLAYING;
   getPlayerEvents().onStateChange({ data: context.YT.PlayerState.PLAYING });
   expect(elements.get("playback-recovery").classList.contains("hidden")).toBe(true);
+});
+
+test("host pauses previous YouTube video and does not call playVideo prematurely when advancing to next YouTube song", () => {
+  const { context, elements, player, getPlayerEvents } = createHostContext();
+  const source = readFileSync(new URL("../public/host.js", import.meta.url), "utf8");
+  vm.runInContext(source, context);
+
+  context.window.onYouTubeIframeAPIReady();
+  getPlayerEvents().onReady();
+  elements.get("start-btn").onclick();
+
+  // First song loads
+  vm.runInContext('latestState = { nowPlaying: { videoId: "song-1", playbackToken: "t1" }, queue: [] }; syncPlayer();', context);
+  expect(player.loadCalls).toEqual(["song-1"]);
+  expect(player.playCalls).toBe(0);
+
+  // Transition to song-2
+  vm.runInContext('latestState = { nowPlaying: { videoId: "song-2", playbackToken: "t2" }, queue: [] }; syncPlayer();', context);
+  expect(player.loadCalls).toEqual(["song-1", "song-2"]);
+  // Previous video must be paused immediately to prevent replaying
+  expect(player.pauseCalls).toBeGreaterThanOrEqual(1);
+  // playVideo must NOT be called prematurely right after loadVideoById
+  expect(player.playCalls).toBe(0);
 });
 
 test("host binds playback callbacks to the server-issued generation token", () => {

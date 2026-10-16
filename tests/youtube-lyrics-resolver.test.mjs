@@ -83,6 +83,36 @@ describe("YouTube Lyrics Resolver", () => {
       ).toBe("vi");
     });
 
+    it("detects Japanese when title/artist has Kana even if keywords contain Korean tags", () => {
+      expect(
+        detectSongLanguage({
+          title: "ヒグチアイ / 悪魔の子 (アニメスペシャルVer.) | Ai Higuchi “Akuma no Ko” Anime Special Ver.",
+          artist: "ヒグチアイ",
+          videoDetails: {
+            title: "ヒグチアイ / 悪魔の子 (アニメスペシャルVer.)公開！",
+            author: "ヒグチアイ",
+            keywords: ["진격의거인", "악마의 아이", "進撃の巨人", "ヒグチアイ"],
+            shortDescription: "Ai Higuchi Akuma no Ko",
+          },
+        })
+      ).toBe("ja");
+    });
+
+    it("detects Japanese from keywords when title/artist are Latin but Japanese script dominates keywords/description", () => {
+      expect(
+        detectSongLanguage({
+          title: "Akuma no Ko",
+          artist: "Ai Higuchi",
+          videoDetails: {
+            title: "Akuma no Ko Anime Special Ver",
+            author: "Ai Higuchi",
+            keywords: ["進撃の巨人", "ヒグチアイ", "悪魔の子", "진격의거인"],
+            shortDescription: "ヒグチアイ / 悪魔の子 Official Video",
+          },
+        })
+      ).toBe("ja");
+    });
+
     it("returns null when language is ambiguous", () => {
       expect(detectSongLanguage({ title: "Hello World", artist: "Unknown" })).toBeNull();
     });
@@ -240,6 +270,69 @@ describe("YouTube Lyrics Resolver", () => {
       expect(result.ok).toBe(true);
       expect(result.language).toBe("ko");
       expect(result.lines.length).toBe(6);
+    });
+
+    it("selects ja track over ko translation track for Japanese song even when tags contain Korean", async () => {
+      const jaLines = [
+        { text: "鉄の弾が 正義の証明 貫けば 英雄に近づいた" },
+        { text: "その目を閉じて 触れてみれば 同じ形 同じ体温の悪魔" },
+        { text: "僕はダメで あいつはいいの？ そこに壁があっただけなのに" },
+        { text: "生まれてしまった 運命を嘆くな 僕らはみんな 自由なんだから" },
+        { text: "鳥のように 羽があれば どこへだって 行けるけど" },
+        { text: "帰る場所が なければ きっと どこへも 行けないよ" },
+      ];
+      const koLines = [
+        { text: "철의 탄환이 정의의 증명 꿰뚫었더니 영웅에 가까워졌어" },
+        { text: "그 눈을 감고 만져 보면 같은 형태 같은 체온의 악마" },
+        { text: "나는 안되고 그 녀석은 되는거야? 거기에 벽이 있었을 뿐인데" },
+        { text: "태어나 버린 운명을 한탄하지 마 우리들은 모두 자유로우니까" },
+        { text: "새처럼 날개가 있다면 어디로든 갈 수 있겠지만" },
+        { text: "돌아갈 장소가 없다면 분명 어디로도 갈 수 없을 거야" },
+      ];
+
+      const mockFetch = async (url) => {
+        if (url.includes("youtubei/v1/player")) {
+          return {
+            ok: true,
+            json: async () =>
+              createMockInnerTubeResponse({
+                title: "ヒグチアイ / 悪魔の子 (アニメスペシャルVer.)",
+                author: "ヒグチアイ",
+                keywords: ["진격의거인", "악마의 아이", "進撃の巨人", "ヒグチアイ"],
+                tracks: [
+                  {
+                    languageCode: "ko",
+                    name: { simpleText: "Korean" },
+                    baseUrl: "https://www.youtube.com/api/timedtext?lang=ko",
+                  },
+                  {
+                    languageCode: "ja",
+                    name: { simpleText: "Japanese" },
+                    baseUrl: "https://www.youtube.com/api/timedtext?lang=ja",
+                  },
+                ],
+              }),
+          };
+        }
+        if (url.includes("lang=ja")) {
+          return { ok: true, text: async () => makeTimedTextXml(jaLines) };
+        }
+        if (url.includes("lang=ko")) {
+          return { ok: true, text: async () => makeTimedTextXml(koLines) };
+        }
+        return { ok: false };
+      };
+
+      const result = await resolveYouTubeCreatorLyrics("mock_aot_ja", {
+        title: "ヒグチアイ / 悪魔の子 (アニメスペシャルVer.)",
+        artist: "ヒグチアイ",
+        fetchImpl: mockFetch,
+      });
+
+      expect(result.ok).toBe(true);
+      expect(result.language).toBe("ja");
+      expect(result.trackName).toBe("Japanese");
+      expect(result.lines[0].text).toContain("鉄の弾が 正義の証明");
     });
 
     it("rejects when only en translation is available for Hangul song", async () => {

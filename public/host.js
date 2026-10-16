@@ -1240,7 +1240,12 @@ async function playSpotify(trackId, positionMs = 0) {
 
     if (playRes.status === 204 || playRes.ok) {
       setTimeout(() => {
-        if (activePlayerProvider === "spotify" && started && latestState?.nowPlaying?.videoId === trackId) {
+        if (
+          activePlayerProvider === "spotify" &&
+          started &&
+          latestState?.nowPlaying?.videoId === trackId &&
+          spotifyCurrentlyPlayingTrackId === trackId
+        ) {
           spotifyPlayer?.resume?.().catch(() => {});
         }
       }, 150);
@@ -1250,8 +1255,11 @@ async function playSpotify(trackId, positionMs = 0) {
     spotifyAutoPlayTimer = setTimeout(() => {
       if (activePlayerProvider === "spotify" && started && latestState?.nowPlaying?.videoId === trackId) {
         if (spotifyPlayerState?.paused || !spotifyWasPlaying || spotifyPlayerState?.position === 0) {
-          console.log("[spotify] Ensuring playback is active (attempt 1 at 800ms)...");
-          spotifyPlayer?.resume?.().catch(() => {});
+          const curTrackId = spotifyPlayerState?.track_window?.current_track?.id;
+          if (!curTrackId || curTrackId === trackId) {
+            console.log("[spotify] Ensuring playback is active (attempt 1 at 800ms)...");
+            spotifyPlayer?.resume?.().catch(() => {});
+          }
         }
       }
       setTimeout(() => {
@@ -1769,6 +1777,11 @@ function syncPlayer() {
       playerSpotifyEl.classList.add("hidden");
       playerSoundCloudEl.classList.add("hidden");
       playerTikTokEl?.classList.add("hidden");
+      if (player?.pauseVideo) {
+        try { player.pauseVideo(); } catch {}
+      } else if (player?.stopVideo) {
+        try { player.stopVideo(); } catch {}
+      }
       if (spotifyPlayer?.pause) spotifyPlayer.pause();
       if (scWidget?.pause) { try { scWidget.pause(); } catch {} }
       if (tiktokAudio) { try { tiktokAudio.pause(); } catch {} }
@@ -1788,7 +1801,11 @@ function syncPlayer() {
                 actual: actualId,
                 expected: currentVideoId,
               });
-              player.stopVideo();
+              if (player?.pauseVideo) {
+                try { player.pauseVideo(); } catch {}
+              } else if (player?.stopVideo) {
+                try { player.stopVideo(); } catch {}
+              }
               player.loadVideoById(currentVideoId);
               return;
             }
@@ -1820,12 +1837,14 @@ function syncPlayer() {
       }
 
       player.loadVideoById(np.videoId);
-      player.playVideo();
       setTimeout(() => {
         if (activePlayerProvider === "youtube" && playerReady && latestState?.nowPlaying?.videoId === np.videoId) {
           const s = player.getPlayerState ? player.getPlayerState() : -1;
           if (s === YT.PlayerState.CUED || s === YT.PlayerState.UNSTARTED) {
-            player.playVideo?.();
+            const actualId = player.getVideoData ? player.getVideoData()?.video_id : null;
+            if (!actualId || actualId === np.videoId) {
+              player.playVideo?.();
+            }
           }
         }
       }, 1000);
@@ -1836,7 +1855,14 @@ function syncPlayer() {
       playerSpotifyEl.classList.remove("hidden");
       playerSoundCloudEl.classList.add("hidden");
       playerTikTokEl?.classList.add("hidden");
-      if (player?.stopVideo) player.stopVideo();
+      if (player?.pauseVideo) {
+        try { player.pauseVideo(); } catch {}
+      } else if (player?.stopVideo) {
+        try { player.stopVideo(); } catch {}
+      }
+      if (spotifyPlayer?.pause) {
+        try { spotifyPlayer.pause().catch(() => {}); } catch {}
+      }
       if (scWidget?.pause) { try { scWidget.pause(); } catch {} }
       if (tiktokAudio) { try { tiktokAudio.pause(); } catch {} }
       const scIframe = document.getElementById("sc-widget-iframe");
@@ -1894,8 +1920,13 @@ function syncPlayer() {
       playerSpotifyEl.classList.add("hidden");
       playerSoundCloudEl.classList.remove("hidden");
       playerTikTokEl?.classList.add("hidden");
-      if (player?.stopVideo) player.stopVideo();
+      if (player?.pauseVideo) {
+        try { player.pauseVideo(); } catch {}
+      } else if (player?.stopVideo) {
+        try { player.stopVideo(); } catch {}
+      }
       if (spotifyPlayer?.pause) spotifyPlayer.pause();
+      if (scWidget?.pause) { try { scWidget.pause(); } catch {} }
       if (tiktokAudio) { try { tiktokAudio.pause(); } catch {} }
 
       playSoundCloud(np.videoId);
@@ -1906,7 +1937,11 @@ function syncPlayer() {
       playerSpotifyEl.classList.add("hidden");
       playerSoundCloudEl.classList.add("hidden");
       playerTikTokEl?.classList.remove("hidden");
-      if (player?.stopVideo) player.stopVideo();
+      if (player?.pauseVideo) {
+        try { player.pauseVideo(); } catch {}
+      } else if (player?.stopVideo) {
+        try { player.stopVideo(); } catch {}
+      }
       if (spotifyPlayer?.pause) spotifyPlayer.pause();
       if (scWidget?.pause) { try { scWidget.pause(); } catch {} }
 

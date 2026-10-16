@@ -6,33 +6,14 @@ import {
   parseYouTubeTimedText as parseXmlTimedText,
   decodeHtmlEntities as decodeEntities,
   isAllowedCaptionUrl,
+  scoreScriptCharacters,
+  resolveDominantLanguage,
 } from "./youtubeLyricsResolver.js";
 
 export function detectOriginalLanguage(title = "", artist = "") {
-  const text = `${title} ${artist}`;
-
-  // Vietnamese with diacritics
-  if (/[àáạảãâầấậẩẫăằắặẳẵèéẹẻẽêềếệểễìíịỉĩòóọỏõôồốộổỗơờớợởỡùúụủũưừứựửữỳýỵỷỹđ]/i.test(text)) {
-    return "vi";
-  }
-
-  // Korean Hangul
-  if (/[\uac00-\ud7af\u1100-\u11ff]/.test(text)) {
-    return "ko";
-  }
-
-  // Japanese Hiragana & Katakana
-  if (/[\u3040-\u309f\u30a0-\u30ff]/.test(text)) {
-    return "ja";
-  }
-
-  // Chinese Hanzi
-  if (/[\u4e00-\u9fff]/.test(text)) {
-    return "zh";
-  }
-
-  // Default to English / Latin
-  return "en";
+  const text = `${title} ${artist}`.trim();
+  const dominant = resolveDominantLanguage(scoreScriptCharacters(text), 1);
+  return dominant || "en";
 }
 
 export function selectOriginalCreatorTrack(captionTracks, originalLang) {
