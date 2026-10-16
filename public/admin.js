@@ -797,6 +797,56 @@ function initGuestOrdersTab() {
   });
 }
 
+function parseDeviceInfo(ua) {
+  if (!ua || typeof ua !== "string") return null;
+  const lower = ua.toLowerCase();
+  let os = "Thiết bị khác";
+  if (lower.includes("iphone")) os = "iPhone";
+  else if (lower.includes("ipad")) os = "iPad";
+  else if (lower.includes("android")) os = "Android";
+  else if (lower.includes("windows")) os = "Windows";
+  else if (lower.includes("macintosh") || lower.includes("mac os")) os = "macOS";
+  else if (lower.includes("linux")) os = "Linux";
+
+  let browser = "";
+  if (lower.includes("edg/")) browser = "Edge";
+  else if (lower.includes("chrome") && !lower.includes("edg/")) browser = "Chrome";
+  else if (lower.includes("safari") && !lower.includes("chrome")) browser = "Safari";
+  else if (lower.includes("firefox")) browser = "Firefox";
+  else if (lower.includes("crios")) browser = "Chrome";
+  else if (lower.includes("fxios")) browser = "Firefox";
+
+  return browser ? `${os} · ${browser}` : os;
+}
+
+function renderGuestDeviceIdentity(item) {
+  const ip = item.requester_ip || "";
+  const isLocal = ip === "127.0.0.1" || ip === "::1" || ip.toLowerCase() === "localhost";
+  const ipText = ip ? escapeHtml(ip) : "—";
+  const ipLabel = isLocal ? ' <span class="ip-local-tag" title="Truy cập từ chính máy chạy server">Host</span>' : "";
+
+  const devInfo = parseDeviceInfo(item.user_agent);
+  const devInfoHtml = devInfo
+    ? `<div class="device-ua-line" title="${escapeHtml(item.user_agent || '')}"><span class="device-icon">💻</span> ${escapeHtml(devInfo)}</div>`
+    : "";
+
+  const rawDeviceId = item.device_id || item.requester_id || "";
+  const shortId = rawDeviceId ? rawDeviceId.replace(/[^a-zA-Z0-9]/g, "").slice(0, 8) : "";
+  const idHtml = shortId
+    ? `<div class="device-id-line" title="Mã thiết bị: ${escapeHtml(rawDeviceId)}"><span class="device-id-tag">ID: ${escapeHtml(shortId)}</span></div>`
+    : "";
+
+  return `
+    <div class="guest-device-cell">
+      <div class="guest-ip-row">
+        <span class="ip-badge">${ipText}</span>${ipLabel}
+      </div>
+      ${devInfoHtml}
+      ${idHtml}
+    </div>
+  `;
+}
+
 function renderGuestOrderStatusBadge(status, reason) {
   switch (status) {
     case "queued":
@@ -835,9 +885,7 @@ async function loadGuestOrders() {
 
     tbody.innerHTML = data.items
       .map((item) => {
-        const ipDisplay = item.requester_ip
-          ? `<span class="ip-badge">${escapeHtml(item.requester_ip)}</span>`
-          : '<span class="text-muted">—</span>';
+        const deviceIdentityHtml = renderGuestDeviceIdentity(item);
         const thumbHtml = item.thumbnail
           ? `<img class="guest-song-thumb" src="${escapeHtml(item.thumbnail)}" alt="" loading="lazy" />`
           : '<div class="guest-song-thumb"></div>';
@@ -848,7 +896,7 @@ async function loadGuestOrders() {
           <tr>
             <td>${escapeHtml(formatTime(item.added_at))}</td>
             <td><strong>${escapeHtml(item.added_by || "Guest")}</strong></td>
-            <td>${ipDisplay}</td>
+            <td>${deviceIdentityHtml}</td>
             <td>
               <div class="guest-song-cell">
                 ${thumbHtml}

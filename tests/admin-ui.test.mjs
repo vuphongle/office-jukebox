@@ -237,6 +237,8 @@ test("admin UI includes Guest Orders tab and renders guest order items with IP a
               thumbnail: "https://example.com/thumb.jpg",
               added_by: "Khách 123",
               requester_ip: "192.168.1.88",
+              device_id: "dev-cookie-12345",
+              user_agent: "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1",
               status: "played",
               provider: "youtube",
               added_at: 1776331200000,
@@ -256,6 +258,8 @@ test("admin UI includes Guest Orders tab and renders guest order items with IP a
   assert.equal(requests.length, 1);
   assert.ok(requests[0].url.startsWith("/api/admin/guest-orders"));
   assert.ok(tbody.innerHTML.includes("192.168.1.88"), "Rendered HTML must contain guest IP");
+  assert.ok(tbody.innerHTML.includes("iPhone · Safari"), "Rendered HTML must contain parsed device info");
+  assert.ok(tbody.innerHTML.includes("devcooki"), "Rendered HTML must contain short device ID");
   assert.ok(tbody.innerHTML.includes("Khách 123"), "Rendered HTML must contain guest name");
   assert.ok(tbody.innerHTML.includes("Guest Song Title"), "Rendered HTML must contain song title");
   assert.ok(tbody.innerHTML.includes("badge-played"), "Rendered HTML must contain played badge");

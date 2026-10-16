@@ -1966,6 +1966,7 @@ app.post("/api/request", songRequestIpLimit, async (req, res) => {
       provider: cleanProvider,
       requesterIp,
       deviceId: req.deviceId || null,
+      userAgent: (req.headers["user-agent"] || "").slice(0, 255),
       hasCcLyrics,
     });
 

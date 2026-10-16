@@ -20,7 +20,7 @@ export class QueueRepository {
     return (row?.maxSeq || 0) + 1;
   }
 
-  createItem({ videoId, title, channel, duration, thumbnail, addedBy, requesterId, addedByUserId = null, eventId = "default_event", provider = "youtube", requesterIp = null, deviceId = null }) {
+  createItem({ videoId, title, channel, duration, thumbnail, addedBy, requesterId, addedByUserId = null, eventId = "default_event", provider = "youtube", requesterIp = null, deviceId = null, userAgent = null }) {
     const tx = this.db.transaction(() => {
       const id = randomUUID();
       const now = Date.now();
@@ -31,9 +31,9 @@ export class QueueRepository {
           id, event_id, video_id, title, channel, duration, thumbnail,
           added_by, requester_id, added_by_user_id, queue_sequence,
           vote_score, pinned, pinned_order, status, added_at, provider,
-          requester_ip, device_id
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, 0, 'queued', ?, ?, ?, ?)`,
-        [id, eventId, videoId, title, channel || "", duration || "3:30", thumbnail || null, addedBy || "", requesterId || "", addedByUserId, seq, now, provider || "youtube", requesterIp || null, deviceId || null]
+          requester_ip, device_id, user_agent
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, 0, 'queued', ?, ?, ?, ?, ?)`,
+        [id, eventId, videoId, title, channel || "", duration || "3:30", thumbnail || null, addedBy || "", requesterId || "", addedByUserId, seq, now, provider || "youtube", requesterIp || null, deviceId || null, userAgent || null]
       );
 
       return this.findById(id);
@@ -163,7 +163,7 @@ export class QueueRepository {
         `SELECT id, event_id, video_id, title, channel, duration, thumbnail,
                 added_by, requester_id, added_by_user_id, status,
                 added_at, started_at, finished_at, finish_reason, played_seconds,
-                provider, requester_ip, device_id, vote_score
+                provider, requester_ip, device_id, user_agent, vote_score
          FROM queue_items
          WHERE ${whereClause}
          ORDER BY added_at DESC, rowid DESC

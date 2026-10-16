@@ -578,6 +578,43 @@ h1 {
   border: 1px solid oklch(80% 0.14 85 / 0.25);
   letter-spacing: 0.3px;
 }
+.ip-local-tag {
+  display: inline-block;
+  margin-left: 5px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  background: oklch(65% 0.18 145 / 0.16);
+  color: oklch(82% 0.16 145);
+  border: 1px solid oklch(65% 0.18 145 / 0.3);
+}
+.guest-device-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 140px;
+}
+.guest-ip-row {
+  display: flex;
+  align-items: center;
+}
+.device-ua-line {
+  font-size: 11px;
+  color: var(--text-hi);
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 1px;
+}
+.device-id-line {
+  font-size: 10.5px;
+}
+.device-id-tag {
+  color: var(--muted);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
 
 .guest-song-cell {
   display: flex;
