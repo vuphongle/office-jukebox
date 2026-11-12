@@ -54,6 +54,8 @@ let spotifyStatus = { connected: false, configured: false };
 let isSpotifyLoadingTrack = false;
 let isSpotifyAutoplayBlocked = false;
 let spotifyAutoPlayTimer = null;
+let spotifyUserPaused = false;
+let youtubeUserPaused = false;
 let silentAudioEl = null;
 let unattendedModeEnabled = false;
 let screenWakeLock = null;
@@ -875,11 +877,21 @@ async function reAnchorFromSdk() {
       spotifyAnchorPos = currentState.position || 0;
       spotifyAnchorTime = performance.now();
     }
-    if (!currentState.paused && isCurrentTrackInSdk) {
+    if (!currentState.paused && isCurrentTrackInSdk && (currentState.position > 0 || spotifyWasPlaying)) {
       broadcastSpotifyTick({ seek: false });
       if (!spotifyRafId) {
         startSpotifySync();
       }
+    } else if (
+      !spotifyUserPaused &&
+      !spotifyWasPlaying &&
+      isCurrentTrackInSdk &&
+      (currentState.paused || (currentState.position || 0) === 0)
+    ) {
+      if (spotifyPlayer?.activateElement) {
+        spotifyPlayer.activateElement().catch(() => {});
+      }
+      spotifyPlayer?.resume?.().catch(() => {});
     }
   } catch (err) {
     console.warn("[spotify] reAnchorFromSdk error:", err);
@@ -1029,12 +1041,17 @@ window.onSpotifyWebPlaybackSDKReady = function () {
         (!currentTrack || matchesSpotifyTrack(currentTrack, currentVideoId))
       );
 
-      // Verify whether current track has actually started audio playback
+      // Verify whether current track has actually started audio playback.
+      // Do not rely on !document.hidden because when the user switches to another app
+      // while the Chrome window remains open, document.hidden is still false even though
+      // Spotify emits an initial { paused: false, loading: false, position: 0 } state
+      // before local audio has actually started.
       const isAudioActuallyPlaying = Boolean(
         isCurrentTrackInSdk &&
         !state.paused &&
         !state.loading &&
-        (state.position > 0 || spotifyWasPlaying || !document.hidden)
+        !spotifyUserPaused &&
+        (state.position > 0 || spotifyWasPlaying)
       );
 
       if (isAudioActuallyPlaying) {
@@ -1127,14 +1144,24 @@ window.onSpotifyWebPlaybackSDKReady = function () {
         spotifyAutoPlayTimer = null;
         startSpotifySync();
       } else if (
+        !spotifyUserPaused &&
+        !spotifyWasPlaying &&
         (isSpotifyLoadingTrack || isSpotifyAutoplayBlocked || state.paused || state.loading || !isAudioActuallyPlaying) &&
         started &&
         latestState?.nowPlaying?.videoId === currentVideoId
       ) {
         if (!spotifyAutoPlayTimer) {
           spotifyAutoPlayTimer = setTimeout(() => {
-            if (activePlayerProvider === "spotify" && started && (spotifyPlayerState?.paused || isSpotifyLoadingTrack || !spotifyWasPlaying)) {
+            spotifyAutoPlayTimer = null;
+            if (
+              activePlayerProvider === "spotify" &&
+              started &&
+              !spotifyUserPaused &&
+              !spotifyWasPlaying &&
+              (spotifyPlayerState?.paused || isSpotifyLoadingTrack || (spotifyPlayerState?.position || 0) === 0)
+            ) {
               console.log("[spotify] Proactively resuming newly loaded track...");
+              spotifyPlayer?.activateElement?.().catch(() => {});
               spotifyPlayer?.resume?.().catch(() => {});
             }
           }, 400);
@@ -1188,6 +1215,9 @@ async function playSpotify(trackId, positionMs = 0) {
     console.warn("[spotify] Device ID is not ready yet");
     return;
   }
+  spotifyUserPaused = false;
+  spotifyWasPlaying = false;
+  spotifyCurrentlyPlayingTrackId = null;
   try {
     const tokenRes = await fetch("/api/spotify/token");
     const tokenData = await tokenRes.json();
@@ -1204,9 +1234,8 @@ async function playSpotify(trackId, positionMs = 0) {
       showPlaybackRecovery();
       return;
     }
+    if (spotifyUserPaused) return;
     const token = tokenData.access_token;
-    spotifyWasPlaying = false;
-    spotifyCurrentlyPlayingTrackId = null;
     let startPos = Math.max(0, Math.floor(positionMs || 0));
     if (spotifyPlayerState?.duration > 0 && startPos >= spotifyPlayerState.duration - 1000) {
       startPos = Math.max(0, spotifyPlayerState.duration - 1000);
@@ -1243,9 +1272,11 @@ async function playSpotify(trackId, positionMs = 0) {
         if (
           activePlayerProvider === "spotify" &&
           started &&
+          !spotifyUserPaused &&
           latestState?.nowPlaying?.videoId === trackId &&
-          spotifyCurrentlyPlayingTrackId === trackId
+          !spotifyWasPlaying
         ) {
+          spotifyPlayer?.activateElement?.().catch(() => {});
           spotifyPlayer?.resume?.().catch(() => {});
         }
       }, 150);
@@ -1253,24 +1284,38 @@ async function playSpotify(trackId, positionMs = 0) {
 
     clearTimeout(spotifyAutoPlayTimer);
     spotifyAutoPlayTimer = setTimeout(() => {
-      if (activePlayerProvider === "spotify" && started && latestState?.nowPlaying?.videoId === trackId) {
-        if (spotifyPlayerState?.paused || !spotifyWasPlaying || spotifyPlayerState?.position === 0) {
-          const curTrackId = spotifyPlayerState?.track_window?.current_track?.id;
-          if (!curTrackId || curTrackId === trackId) {
-            console.log("[spotify] Ensuring playback is active (attempt 1 at 800ms)...");
+      if (activePlayerProvider === "spotify" && started && !spotifyUserPaused && latestState?.nowPlaying?.videoId === trackId) {
+        if (spotifyPlayerState?.paused || !spotifyWasPlaying || (spotifyPlayerState?.position || 0) === 0) {
+          const curTrack = spotifyPlayerState?.track_window?.current_track;
+          if (!curTrack || matchesSpotifyTrack(curTrack, trackId)) {
+            console.log("[spotify] Ensuring playback is active (attempt 1 at 600ms)...");
+            spotifyPlayer?.activateElement?.().catch(() => {});
             spotifyPlayer?.resume?.().catch(() => {});
+            reAnchorFromSdk();
           }
         }
       }
       setTimeout(() => {
-        if (activePlayerProvider === "spotify" && started && latestState?.nowPlaying?.videoId === trackId) {
-          if (spotifyPlayerState?.paused || !spotifyWasPlaying || spotifyPlayerState?.position === 0) {
-            console.log("[spotify] Ensuring playback is active (attempt 2 at 1600ms)...");
+        if (activePlayerProvider === "spotify" && started && !spotifyUserPaused && latestState?.nowPlaying?.videoId === trackId) {
+          if (spotifyPlayerState?.paused || !spotifyWasPlaying || (spotifyPlayerState?.position || 0) === 0) {
+            console.log("[spotify] Ensuring playback is active (attempt 2 at 1400ms)...");
+            spotifyPlayer?.activateElement?.().catch(() => {});
             spotifyPlayer?.resume?.().catch(() => {});
+            reAnchorFromSdk();
           }
         }
+        setTimeout(() => {
+          if (activePlayerProvider === "spotify" && started && !spotifyUserPaused && latestState?.nowPlaying?.videoId === trackId) {
+            if (spotifyPlayerState?.paused || !spotifyWasPlaying || (spotifyPlayerState?.position || 0) === 0) {
+              console.log("[spotify] Ensuring playback is active (attempt 3 at 2500ms)...");
+              spotifyPlayer?.activateElement?.().catch(() => {});
+              spotifyPlayer?.resume?.().catch(() => {});
+              reAnchorFromSdk();
+            }
+          }
+        }, 1100);
       }, 800);
-    }, 800);
+    }, 600);
     if (!playRes.ok && playRes.status !== 204) {
       await fetch("https://api.spotify.com/v1/me/player", {
         method: "PUT",
@@ -1681,6 +1726,8 @@ function syncPlayer() {
     currentVideoId = null;
     currentPlaybackToken = null;
     terminalReportedForToken = null;
+    spotifyUserPaused = false;
+    youtubeUserPaused = false;
     spotifyWasPlaying = false;
     spotifyCurrentlyPlayingTrackId = null;
     spotifyPlayerState = null;
@@ -1743,6 +1790,8 @@ function syncPlayer() {
     currentPlaybackToken = np.playbackToken || null;
     currentProvider = provider;
     terminalReportedForToken = null;
+    spotifyUserPaused = false;
+    youtubeUserPaused = false;
     spotifyWasPlaying = false;
     spotifyCurrentlyPlayingTrackId = null;
     scIsPlaying = false;
@@ -1795,6 +1844,7 @@ function syncPlayer() {
       playbackEventHandlers = {
         onStateChange: (e) => {
           if (e.data === YT.PlayerState.PLAYING) {
+            youtubeUserPaused = false;
             const actualId = player.getVideoData ? player.getVideoData()?.video_id : null;
             if (actualId && currentVideoId && actualId !== currentVideoId) {
               console.warn("[reconcile] YouTube videoId mismatch in onStateChange PLAYING:", {
@@ -1837,17 +1887,30 @@ function syncPlayer() {
       }
 
       player.loadVideoById(np.videoId);
-      setTimeout(() => {
-        if (activePlayerProvider === "youtube" && playerReady && latestState?.nowPlaying?.videoId === np.videoId) {
+      const ensureYouTubeStarted = () => {
+        if (
+          activePlayerProvider === "youtube" &&
+          playerReady &&
+          !youtubeUserPaused &&
+          latestState?.nowPlaying?.videoId === np.videoId
+        ) {
           const s = player.getPlayerState ? player.getPlayerState() : -1;
-          if (s === YT.PlayerState.CUED || s === YT.PlayerState.UNSTARTED) {
+          const cur = Number(player.getCurrentTime ? player.getCurrentTime() : 0) || 0;
+          if (
+            s === YT.PlayerState.CUED ||
+            s === YT.PlayerState.UNSTARTED ||
+            s === -1 ||
+            (s === YT.PlayerState.PAUSED && cur < 1)
+          ) {
             const actualId = player.getVideoData ? player.getVideoData()?.video_id : null;
             if (!actualId || actualId === np.videoId) {
               player.playVideo?.();
             }
           }
         }
-      }, 1000);
+      };
+      setTimeout(ensureYouTubeStarted, 1000);
+      setTimeout(ensureYouTubeStarted, 2500);
       armPlaybackWatchdog(np.videoId, currentPlaybackToken);
     } else if (provider === "spotify") {
       stopYouTubeSync();
@@ -1859,9 +1922,6 @@ function syncPlayer() {
         try { player.pauseVideo(); } catch {}
       } else if (player?.stopVideo) {
         try { player.stopVideo(); } catch {}
-      }
-      if (spotifyPlayer?.pause) {
-        try { spotifyPlayer.pause().catch(() => {}); } catch {}
       }
       if (scWidget?.pause) { try { scWidget.pause(); } catch {} }
       if (tiktokAudio) { try { tiktokAudio.pause(); } catch {} }
@@ -2239,11 +2299,37 @@ function startPlaybackReconciler() {
   if (reconcileInterval) return;
   reconcileInterval = setInterval(reconcilePlayback, 3000);
 }
+function resumeStalledBackgroundTrack() {
+  if (!started || !latestState?.nowPlaying) return;
+  if (activePlayerProvider === "spotify" && !spotifyUserPaused) {
+    if (spotifyPlayer?.activateElement) {
+      spotifyPlayer.activateElement().catch(() => {});
+    }
+    if (latestState?.nowPlaying?.videoId === currentVideoId) {
+      if (!spotifyWasPlaying || spotifyPlayerState?.paused || isSpotifyAutoplayBlocked || isSpotifyLoadingTrack) {
+        isSpotifyAutoplayBlocked = false;
+        spotifyPlayer?.resume?.().catch(() => {});
+      }
+      reAnchorFromSdk();
+    }
+  } else if (activePlayerProvider === "youtube" && playerReady && !youtubeUserPaused) {
+    const s = player?.getPlayerState ? player.getPlayerState() : -1;
+    const cur = Number(player?.getCurrentTime ? player.getCurrentTime() : 0) || 0;
+    const ytPlaying = typeof YT !== "undefined" && YT?.PlayerState ? YT.PlayerState.PLAYING : 1;
+    if (s !== ytPlaying && cur < 1) {
+      player?.playVideo?.();
+    }
+  }
+}
+
 document.addEventListener("visibilitychange", () => {
   if (!document.hidden && started) reconcilePlayback();
 });
 window.addEventListener("focus", () => {
-  if (started) reconcilePlayback();
+  if (started) {
+    reconcilePlayback();
+    resumeStalledBackgroundTrack();
+  }
 });
 
 // ---- Silent Audio Keeper ---------------------------------------------------
@@ -2490,7 +2576,7 @@ function onBackgroundHeartbeat() {
     } catch {}
   }
 
-  // 4. Fallback check for YouTube end-of-track in background
+  // 4. Fallback check for YouTube end-of-track or newly-loaded background stall
   if (activePlayerProvider === "youtube" && playerReady && player?.getCurrentTime && player?.getDuration) {
     try {
       const dur = Number(player.getDuration()) || 0;
@@ -2499,6 +2585,8 @@ function onBackgroundHeartbeat() {
       const ytEndedState = typeof YT !== "undefined" && YT?.PlayerState ? YT.PlayerState.ENDED : 0;
       const ytPausedState = typeof YT !== "undefined" && YT?.PlayerState ? YT.PlayerState.PAUSED : 2;
       const ytBufferingState = typeof YT !== "undefined" && YT?.PlayerState ? YT.PlayerState.BUFFERING : 3;
+      const ytCuedState = typeof YT !== "undefined" && YT?.PlayerState ? YT.PlayerState.CUED : 5;
+      const ytUnstartedState = typeof YT !== "undefined" && YT?.PlayerState ? YT.PlayerState.UNSTARTED : -1;
       const nearEnd = dur > 0 && cur >= Math.max(1, dur - 0.5);
       if (nearEnd) {
         const isPausedOrEndedOrStuck =
@@ -2511,6 +2599,12 @@ function onBackgroundHeartbeat() {
           stopYouTubeSync();
           reportIfEnded();
         }
+      } else if (
+        !youtubeUserPaused &&
+        cur < 1 &&
+        (state === ytPausedState || state === ytCuedState || state === ytUnstartedState || state === -1)
+      ) {
+        player.playVideo?.();
       }
     } catch (e) {
       console.warn("[unattended] error checking YouTube state:", e);
@@ -2518,15 +2612,19 @@ function onBackgroundHeartbeat() {
   }
 
   // 5. Fallback check for Spotify loading or stalled in background
-  if (activePlayerProvider === "spotify" && latestState?.nowPlaying?.videoId === currentVideoId) {
-    if (spotifyPlayer && (isSpotifyLoadingTrack || isSpotifyAutoplayBlocked || (spotifyPlayerState?.paused && !spotifyWasPlaying))) {
+  if (activePlayerProvider === "spotify" && !spotifyUserPaused && latestState?.nowPlaying?.videoId === currentVideoId) {
+    if (
+      spotifyPlayer &&
+      (isSpotifyLoadingTrack || isSpotifyAutoplayBlocked || !spotifyWasPlaying || spotifyPlayerState?.paused)
+    ) {
       const elapsedSincePlay = performance.now() - spotifyAnchorTime;
-      if (elapsedSincePlay > 4000) {
+      if (elapsedSincePlay > 1800) {
         console.log(`[unattended] Spotify track pending in background for ${Math.round(elapsedSincePlay)}ms — attempting resume`);
         if (spotifyPlayer.activateElement) {
           spotifyPlayer.activateElement().catch(() => {});
         }
-        spotifyPlayer.resume().catch(() => {});
+        spotifyPlayer.resume?.().catch(() => {});
+        reAnchorFromSdk();
       }
     }
   }
@@ -2596,11 +2694,20 @@ function checkUnattendedProgress() {
     return;
   }
 
+  if (
+    (activePlayerProvider === "spotify" && spotifyUserPaused) ||
+    (activePlayerProvider === "youtube" && youtubeUserPaused)
+  ) {
+    lastUnattendedProgressTimestamp = Date.now();
+    unattendedStallRecoveryCount = 0;
+    return;
+  }
+
   const stallDuration = Date.now() - lastUnattendedProgressTimestamp;
-  if (stallDuration > 25000 && unattendedStallRecoveryCount < 3) {
+  if (stallDuration > 5000 && unattendedStallRecoveryCount < 3) {
     unattendedStallRecoveryCount++;
     lastUnattendedProgressTimestamp = Date.now();
-    console.warn(`[unattended] Playback stalled for 25s on ${np.videoId} (${activePlayerProvider}) — triggering recovery attempt ${unattendedStallRecoveryCount}`);
+    console.warn(`[unattended] Playback stalled for 5s on ${np.videoId} (${activePlayerProvider}) — triggering recovery attempt ${unattendedStallRecoveryCount}`);
     if (activePlayerProvider === "youtube") {
       player?.playVideo?.();
     } else if (activePlayerProvider === "spotify") {
@@ -3061,6 +3168,50 @@ async function updateSpotifyStatus() {
   }
 }
 
+function toggleSpotifyPlayPause() {
+  if (!latestState?.nowPlaying || !spotifyPlayer) return;
+  const currentlyPaused = Boolean(spotifyUserPaused || !spotifyPlayerState || spotifyPlayerState.paused);
+  if (!currentlyPaused) {
+    spotifyUserPaused = true;
+    isSpotifyLoadingTrack = false;
+    clearTimeout(spotifyAutoPlayTimer);
+    spotifyAutoPlayTimer = null;
+    if (spotifyPlayerState) {
+      spotifyAnchorPos = getInterpolatedSpotifyPosition();
+      spotifyAnchorTime = performance.now();
+      spotifyPlayerState.paused = true;
+    }
+    stopSpotifySync();
+    updateSpotifyPlayPauseUI(true);
+    updatePlayPauseIcon();
+    broadcastSpotifyTick({ seek: true });
+    if (spotifyPlayer.pause) {
+      spotifyPlayer.pause()?.catch?.(() => {});
+    } else if (spotifyPlayer.togglePlay) {
+      spotifyPlayer.togglePlay()?.catch?.(() => {});
+    }
+  } else {
+    spotifyUserPaused = false;
+    isSpotifyAutoplayBlocked = false;
+    if (spotifyPlayer.activateElement) {
+      spotifyPlayer.activateElement()?.catch?.(() => {});
+    }
+    if (spotifyPlayerState) {
+      spotifyPlayerState.paused = false;
+      spotifyAnchorTime = performance.now();
+    }
+    updateSpotifyPlayPauseUI(false);
+    updatePlayPauseIcon();
+    startSpotifySync();
+    broadcastSpotifyTick({ seek: true });
+    if (spotifyPlayer.resume) {
+      spotifyPlayer.resume()?.catch?.(() => {});
+    } else if (spotifyPlayer.togglePlay) {
+      spotifyPlayer.togglePlay()?.catch?.(() => {});
+    }
+  }
+}
+
 function wireSpotifyConnect() {
   const btn = document.getElementById("spotify-connect-btn");
   if (!btn) return;
@@ -3123,15 +3274,17 @@ function wireControls() {
       if (!playerReady) return;
       const s = player.getPlayerState();
       if (s === YT.PlayerState.PLAYING) {
+        youtubeUserPaused = true;
         player.pauseVideo();
         stopYouTubeSync();
         broadcastYouTubeTick({ seek: false });
       } else {
+        youtubeUserPaused = false;
         player.playVideo();
         startYouTubeSync();
       }
     } else if (activePlayerProvider === "spotify") {
-      if (spotifyPlayer?.togglePlay) spotifyPlayer.togglePlay();
+      toggleSpotifyPlayPause();
     } else if (activePlayerProvider === "soundcloud") {
       if (scWidget?.toggle) scWidget.toggle();
     } else if (activePlayerProvider === "tiktok") {
@@ -3446,23 +3599,7 @@ function wireSpotifyInteractiveControls() {
   if (btnPlayPause) {
     btnPlayPause.onclick = (e) => {
       e.stopPropagation();
-      if (!latestState?.nowPlaying) return;
-      if (spotifyPlayer?.togglePlay) {
-        spotifyPlayer.togglePlay();
-        if (spotifyPlayerState) {
-          spotifyPlayerState.paused = !spotifyPlayerState.paused;
-          updateSpotifyPlayPauseUI(spotifyPlayerState.paused);
-          if (spotifyPlayerState.paused) {
-            spotifyAnchorPos = getInterpolatedSpotifyPosition();
-            spotifyAnchorTime = performance.now();
-            stopSpotifySync();
-          } else {
-            spotifyAnchorTime = performance.now();
-            startSpotifySync();
-          }
-          broadcastSpotifyTick({ seek: true });
-        }
-      }
+      toggleSpotifyPlayPause();
     };
   }
 
@@ -3470,23 +3607,7 @@ function wireSpotifyInteractiveControls() {
   const artCenter = document.getElementById("spotify-art-center");
   if (artCenter) {
     artCenter.onclick = () => {
-      if (!latestState?.nowPlaying) return;
-      if (spotifyPlayer?.togglePlay) {
-        spotifyPlayer.togglePlay();
-        if (spotifyPlayerState) {
-          spotifyPlayerState.paused = !spotifyPlayerState.paused;
-          updateSpotifyPlayPauseUI(spotifyPlayerState.paused);
-          if (spotifyPlayerState.paused) {
-            spotifyAnchorPos = getInterpolatedSpotifyPosition();
-            spotifyAnchorTime = performance.now();
-            stopSpotifySync();
-          } else {
-            spotifyAnchorTime = performance.now();
-            startSpotifySync();
-          }
-          broadcastSpotifyTick({ seek: true });
-        }
-      }
+      toggleSpotifyPlayPause();
     };
   }
 
@@ -3681,7 +3802,7 @@ document.addEventListener("visibilitychange", () => {
       silentAudioEl.play().catch(() => {});
     }
     if (started) reconcilePlayback();
-    if (activePlayerProvider === "spotify") {
+    if (activePlayerProvider === "spotify" && !spotifyUserPaused) {
       if (spotifyPlayer?.activateElement) {
         spotifyPlayer.activateElement().catch(() => {});
       }
@@ -3694,6 +3815,8 @@ document.addEventListener("visibilitychange", () => {
       }
       reAnchorFromSdk();
       broadcastSpotifyTick({ seek: true });
+    } else if (activePlayerProvider === "youtube" && playerReady && !youtubeUserPaused) {
+      resumeStalledBackgroundTrack();
     }
   }
 });

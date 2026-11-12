@@ -280,11 +280,11 @@ export function performCheckin(
       const milestoneBody = `Bạn nhận thưởng mốc +${bonusPoints} điểm cho streak ${streakAfter} ngày.`;
       legacyMilestoneNotification = { title: milestoneTitle, body: milestoneBody };
       announcements.push({
-        awardId: `checkin_milestone:${checkinId}:${milestoneDay}`,
+        awardId: `checkin_milestone:${checkinId}:${streakAfter}`,
         userId,
         displayName: user.display_name,
         category: "streak",
-        milestoneKey: String(milestoneDay),
+        milestoneKey: String(streakAfter),
         place: null,
         points: bonusPoints,
         title: milestoneTitle,
@@ -313,7 +313,7 @@ export function performCheckin(
         title: legacyMilestoneNotification.title,
         body: `${legacyMilestoneNotification.body} Số dư mới: ${finalBalance} điểm.`,
         sourceType: "streak_milestone",
-        sourceKey: `checkin_milestone:${checkinId}:${milestoneDay}`,
+        sourceKey: `checkin_milestone:${checkinId}:${streakAfter}`,
       });
       if (notification) notifications.push(notification);
     }

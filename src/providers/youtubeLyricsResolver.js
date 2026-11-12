@@ -414,9 +414,10 @@ export async function resolveYouTubeCreatorLyrics(
     }
 
     let rawTracks = playerData?.captions?.playerCaptionsTracklistRenderer?.captionTracks;
+    let usedWebClient = false;
 
-    // Fallback to WEB client if ANDROID returned 200 but had no caption tracks
-    if ((!Array.isArray(rawTracks) || rawTracks.length === 0) && playerRes.ok) {
+    // Fallback to WEB client if ANDROID returned no caption tracks or failed
+    if (!Array.isArray(rawTracks) || rawTracks.length === 0) {
       try {
         const webRes = await fetchImpl(INNERTUBE_API_URL, {
           method: "POST",
@@ -429,7 +430,7 @@ export async function resolveYouTubeCreatorLyrics(
             context: {
               client: {
                 clientName: "WEB",
-                clientVersion: "2.20240101.00.00",
+                clientVersion: "2.20250101.00.00",
               },
             },
           }),
@@ -441,6 +442,7 @@ export async function resolveYouTubeCreatorLyrics(
           if (Array.isArray(webTracks) && webTracks.length > 0) {
             playerData = webData;
             rawTracks = webTracks;
+            usedWebClient = true;
           }
         }
       } catch {}
@@ -485,7 +487,7 @@ export async function resolveYouTubeCreatorLyrics(
       let captionRes;
       try {
         captionRes = await fetchImpl(track.baseUrl, {
-          headers: { "User-Agent": INNERTUBE_USER_AGENT },
+          headers: { "User-Agent": usedWebClient ? WEB_USER_AGENT : INNERTUBE_USER_AGENT },
           signal: controller.signal,
         });
       } catch {

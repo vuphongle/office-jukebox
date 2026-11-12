@@ -89,28 +89,38 @@ async function loadEngagementRules() {
 function renderEngagementMilestones() {
   const container = $("#milestone-list");
   if (!container || !engagementRules) return;
-  const streak = engagementRules.streak || {};
-  const legacy = (streak.legacyMilestones || []).map((item) => ({
-    days: item.day,
-    label: `${item.day} ngày`,
-    reward: `+${item.points} điểm mốc`,
-    type: "legacy",
-  }));
-  const tiers = (streak.tiers || []).filter((tier) => tier.minStreak > 0).map((tier) => ({
+  const streakCfg = engagementRules.streak || {};
+  const streakView = currentUser?.streakView;
+  const currentStreak = Number(streakView?.displayStreak ?? (currentUser?.currentStreak || 0));
+  const cycleBase = currentStreak > 30 ? Math.floor((currentStreak - 1) / 30) * 30 : 0;
+  const cycleDay = currentStreak > 0 ? ((currentStreak - 1) % 30) + 1 : 0;
+  const legacy = (streakCfg.legacyMilestones || []).map((item) => {
+    const baseDay = Number(item.day) || 0;
+    const targetDay = cycleBase + baseDay;
+    return {
+      days: baseDay,
+      label: `${targetDay} ngày`,
+      reward: `+${item.points} điểm mốc`,
+      type: "legacy",
+      achieved: cycleDay >= baseDay,
+    };
+  });
+  const tiers = (streakCfg.tiers || []).filter((tier) => tier.minStreak > 0).map((tier) => ({
     days: tier.minStreak,
     label: `${tier.minStreak}+ ngày`,
     reward: `+${tier.bonusPoints}/lần điểm danh`,
     type: "tier",
+    achieved: currentStreak >= tier.minStreak,
   }));
-  const personal = (streak.personalRewards || []).map((item) => ({
+  const personal = (streakCfg.personalRewards || []).map((item) => ({
     days: item.day,
     label: `${item.day} ngày`,
     reward: `+${item.points} điểm một lần`,
     type: "personal",
+    achieved: currentStreak >= item.day,
   }));
-  const currentStreak = Number(currentUser?.currentStreak || 0);
   container.innerHTML = [...legacy, ...tiers, ...personal].map((item) => `
-    <div class="milestone${currentStreak >= item.days ? " achieved" : ""}" data-days="${item.days}" data-milestone-type="${item.type}">
+    <div class="milestone${item.achieved ? " achieved" : ""}" data-days="${item.days}" data-milestone-type="${item.type}">
       <strong>${escapeHtml(item.label)}</strong><span>${escapeHtml(item.reward)}</span>
     </div>
   `).join("");
@@ -350,11 +360,16 @@ function renderAccount() {
         : "Điểm danh mỗi ngày để nhận điểm vote và mở khóa mốc thưởng.");
 
   const streak = displayStreak;
-  const cycle = streak % 30;
+  const cycleBase = streak > 30 ? Math.floor((streak - 1) / 30) * 30 : 0;
+  const cycleDay = streak > 0 ? ((streak - 1) % 30) + 1 : 0;
   renderEngagementMilestones();
   $$(".milestone[data-milestone-type=legacy]").forEach((milestone) => {
     const days = Number(milestone.dataset.days);
-    const achieved = days === 30 ? cycle === 0 && streak > 0 : cycle >= days;
+    const achieved = cycleDay >= days;
+    const strongEl = milestone.querySelector("strong");
+    if (strongEl && Number.isFinite(days) && days > 0) {
+      strongEl.textContent = `${cycleBase + days} ngày`;
+    }
     milestone.classList.toggle("achieved", achieved);
   });
 

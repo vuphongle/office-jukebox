@@ -144,5 +144,42 @@ describe("performStreakRestore", () => {
     expect(statusAfter.restoreAvailable).toBe(false);
     expect(statusAfter.restoresLeftThisMonth).toBe(0);
   });
+
+  it("reports milestoneKey 33 (not 3) at day 33 and credits milestone + tier bonus in Case B", () => {
+    const now = new Date("2026-10-15T03:00:00.000Z");
+    // Case A -> checkin today reaches 33
+    createUser("u33a", "user33a", { streak: 31, lastCheckin: "2026-10-13" });
+    const restoreA = performStreakRestore(db, "u33a", { now, timezone: tz });
+    expect(restoreA.streak).toBe(32);
+
+    let announcedMilestones = [];
+    const checkin33 = performCheckin(db, "u33a", {
+      timezone: tz,
+      now,
+      createAnnouncementInTransaction: (awards) => {
+        announcedMilestones = awards.map((a) => a.milestoneKey);
+        return [];
+      },
+    });
+    expect(checkin33.streak).toBe(33);
+    expect(checkin33.isMilestone).toBe(true);
+    expect(checkin33.bonusPoints).toBe(2);
+    expect(announcedMilestones).toContain("33");
+    expect(announcedMilestones).not.toContain("3");
+
+    // Case B -> checked in today (reset to 1), then restores to 33
+    createUser("u33b", "user33b", { streak: 31, lastCheckin: "2026-10-13" });
+    const checkinReset = performCheckin(db, "u33b", { timezone: tz, now });
+    expect(checkinReset.streak).toBe(1);
+    const balanceAfterResetCheckin = db.query("SELECT points_balance FROM users WHERE id = 'u33b'").get().points_balance;
+
+    const restoreB = performStreakRestore(db, "u33b", { now, timezone: tz });
+    expect(restoreB.streak).toBe(33);
+
+    const userAfterB = db.query("SELECT points_balance, current_streak FROM users WHERE id = 'u33b'").get();
+    expect(userAfterB.current_streak).toBe(33);
+    // Day 33 has +2 milestone bonus (cycle day 3) and +3 tier bonus (30+ days) = +5 delta
+    expect(userAfterB.points_balance).toBe(balanceAfterResetCheckin + 5);
+  });
 });
 

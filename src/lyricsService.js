@@ -31,7 +31,7 @@ function setNegativeCache(key, entry) {
 
 export function cleanLyricsQuery(rawTitle, rawArtist) {
   let title = (rawTitle || "").trim();
-  let artist = (rawArtist || "").trim();
+  let artist = (rawArtist || "").replace(/\s*-\s*Topic$/i, "").replace(/\s+official$/i, "").trim();
 
   // Handle pipe '|' separated YouTube video titles (e.g. "PHƯƠNG MỸ CHI x DTAP | 'THIÊN ĐƯỜNG VỚI NGƯỜI THƯƠNG' | OFFICIAL MUSIC")
   if (title.includes("|")) {
@@ -50,7 +50,11 @@ export function cleanLyricsQuery(rawTitle, rawArtist) {
         }
       } else {
         // 2. If first segment matches artist name, remaining is title
-        if (artist && cleanSegments[0].toLowerCase().includes(artist.toLowerCase())) {
+        if (
+          artist &&
+          (cleanSegments[0].toLowerCase().includes(artist.toLowerCase()) ||
+            artist.toLowerCase().includes(cleanSegments[0].toLowerCase()))
+        ) {
           title = cleanSegments.slice(1).join(" ");
         } else {
           title = cleanSegments[0];

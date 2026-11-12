@@ -79,9 +79,11 @@ export async function fetchYouTubeCreatorCaptions(
 
 export async function probeYouTubeCcLyrics(
   videoId,
-  { fetchImpl = globalThis.fetch, timeoutMs = 2500 } = {}
+  { title = "", artist = "", fetchImpl = globalThis.fetch, timeoutMs = 2500 } = {}
 ) {
   const result = await resolveYouTubeCreatorLyrics(videoId, {
+    title,
+    artist,
     fetchImpl,
     timeoutMs,
     mode: "probe",

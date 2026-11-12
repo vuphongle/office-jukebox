@@ -5,7 +5,9 @@ import {
   getYesterdayLocalDate,
   computeStreakView,
   getTzOffsetMs,
+  calculateMilestoneBonus,
 } from "./checkin.js";
+import { streakTierFor } from "./engagement.js";
 
 function resolveTimezone(timezone) {
   return timezone || process.env.APP_TIMEZONE || DEFAULT_TIMEZONE;
@@ -163,20 +165,53 @@ export function performStreakRestore(
         [checkinId, userId, yesterday, restoredYesterdayStreak, nowIso]
       );
 
-      // Update today's checkin row streak_after
+      // Update today's checkin row streak_after and reconcile any milestone/tier bonus
+      const todayCheckin = db
+        .query("SELECT id, bonus_points, tier_bonus_points FROM checkins WHERE user_id = ? AND local_date = ?")
+        .get(userId, today);
+      const { bonus: targetBonus } = calculateMilestoneBonus(streakAfter);
+      const targetTier = streakTierFor(streakAfter);
+      const targetTierBonus = Number(targetTier.bonusPoints) || 0;
+      const bonusDelta = Math.max(0, targetBonus - Number(todayCheckin?.bonus_points || 0));
+      const tierDelta = Math.max(0, targetTierBonus - Number(todayCheckin?.tier_bonus_points || 0));
+      const totalDelta = bonusDelta + tierDelta;
+      const todayCheckinId = todayCheckin?.id || checkinId;
+
       db.run(
         `UPDATE checkins
-         SET streak_after = ?
+         SET streak_after = ?, bonus_points = ?, tier_bonus_points = ?
          WHERE user_id = ? AND local_date = ?`,
-        [streakAfter, userId, today]
+        [
+          streakAfter,
+          Math.max(Number(todayCheckin?.bonus_points || 0), targetBonus),
+          Math.max(Number(todayCheckin?.tier_bonus_points || 0), targetTierBonus),
+          userId,
+          today,
+        ]
       );
 
-      // Update user: current_streak = streakAfter, clear broken_*
+      if (bonusDelta > 0) {
+        db.run(
+          `INSERT INTO point_ledger (id, user_id, delta, type, reference_id, actor_user_id, reason, created_at)
+           VALUES (?, ?, ?, 'streak_bonus', ?, NULL, ?, ?)`,
+          [randomUUID(), userId, bonusDelta, todayCheckinId, `Thưởng chuỗi streak ngày ${streakAfter} (+${bonusDelta}đ)`, nowIso]
+        );
+      }
+
+      if (tierDelta > 0) {
+        db.run(
+          `INSERT INTO point_ledger (id, user_id, delta, type, reference_id, actor_user_id, reason, created_at)
+           VALUES (?, ?, ?, 'streak_bonus', ?, NULL, ?, ?)`,
+          [randomUUID(), userId, tierDelta, todayCheckinId, `Thưởng tier streak ${targetTier.minStreak}+ ngày (+${tierDelta}đ)`, nowIso]
+        );
+      }
+
+      // Update user: current_streak = streakAfter, clear broken_*, credit any missing bonus points
       db.run(
         `UPDATE users
-         SET current_streak = ?, broken_streak = 0, broken_missed_date = NULL, updated_at = ?
+         SET points_balance = points_balance + ?, current_streak = ?, broken_streak = 0, broken_missed_date = NULL, updated_at = ?
          WHERE id = ?`,
-        [streakAfter, nowIso, userId]
+        [totalDelta, streakAfter, nowIso, userId]
       );
     }
 
@@ -190,14 +225,25 @@ export function performStreakRestore(
     );
 
     // Create in-app notification if notificationRepo provided
-    if (notificationRepo && typeof notificationRepo.createNotification === "function") {
+    if (notificationRepo) {
       try {
-        notificationRepo.createNotification({
-          userId,
-          title: "Khôi phục chuỗi thành công",
-          message: `Đã khôi phục chuỗi ${streakAfter} ngày 🔥`,
-          type: "streak_restore",
-        });
+        if (typeof notificationRepo.createNotification === "function") {
+          notificationRepo.createNotification({
+            userId,
+            title: "Khôi phục chuỗi thành công",
+            message: `Đã khôi phục chuỗi ${streakAfter} ngày 🔥`,
+            type: "streak_restore",
+          });
+        } else if (typeof notificationRepo.createForUserInTransaction === "function") {
+          notificationRepo.createForUserInTransaction({
+            userId,
+            createdByUserId: userId,
+            title: "Khôi phục chuỗi thành công",
+            body: `Đã khôi phục chuỗi ${streakAfter} ngày 🔥`,
+            sourceType: "streak_restore",
+            sourceKey: `streak_restore:${restoreId}`,
+          });
+        }
       } catch (err) {
         console.warn("[streakRestore] Failed to create notification:", err.message);
       }
