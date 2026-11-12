@@ -1,7 +1,35 @@
 (function attachJukeboxLyrics(global) {
   function cleanLyricsQuery(rawTitle, rawArtist) {
     let title = (rawTitle || "").trim();
-    let artist = (rawArtist || "").trim();
+    let artist = (rawArtist || "").replace(/\s*-\s*Topic$/i, "").replace(/\s+official$/i, "").trim();
+
+    if (title.includes("|")) {
+      const segments = title.split("|").map((s) => s.trim()).filter(Boolean);
+      const noiseRegex = /^(?:official\s*(?:music\s*)?video|official\s*mv|official\s*audio|mv|audio|lyric\s*video|video\s*lyric|live\s*session|official\s*music|music\s*video|official)$/i;
+      const cleanSegments = segments.filter((s) => !noiseRegex.test(s));
+
+      if (cleanSegments.length >= 2) {
+        const quoted = cleanSegments.find((s) => /^['"“‘].*['"”’]$/.test(s.trim()));
+        if (quoted) {
+          title = quoted.replace(/^['"“‘]\s*|\s*['"”’]$/g, "").trim();
+          const other = cleanSegments.find((s) => s !== quoted);
+          if (other && !artist) {
+            artist = other;
+          }
+        } else if (
+          artist &&
+          (cleanSegments[0].toLowerCase().includes(artist.toLowerCase()) ||
+            artist.toLowerCase().includes(cleanSegments[0].toLowerCase()))
+        ) {
+          title = cleanSegments.slice(1).join(" ");
+        } else {
+          title = cleanSegments[0];
+        }
+      } else if (cleanSegments.length === 1) {
+        title = cleanSegments[0];
+      }
+    }
+
     if (title.includes(" - ")) {
       const parts = title.split(" - ");
       if (!artist) {
@@ -12,12 +40,16 @@
       }
     }
     title = title
+      .replace(/^['"“‘]\s*|\s*['"”’]$/g, "")
       .replace(/\[[^\]]*\]/g, "")
       .replace(/\([^)]*(?:official|video|audio|mv|prod\.|feat\.|ft\.)[^)]*\)/gi, "")
       .replace(/\s*[\-–—|/l•]\s*(?:official|music\s*video|mv|audio|lyric\s*video|video\s*lyric|live\s*session).*$/gi, "")
-      .replace(/\|.*$/g, "")
       .replace(/\s*(?:-\s*)?(?:feat\.|ft\.).*$/gi, "")
+      .replace(/^['"“‘]\s*|\s*['"”’]$/g, "")
       .trim();
+    if (!title && rawTitle) {
+      title = String(rawTitle).trim();
+    }
     artist = artist.replace(/\s*-\s*Topic$/i, "").trim();
     return { title, artist };
   }

@@ -48,6 +48,13 @@ describe("JukeboxLyrics Client Module", () => {
     );
     expect(r5.title).toBe("Người Im Lặng Gặp Người Hay Nói");
     expect(r5.artist).toBe("HIEUTHUHAI");
+
+    const r6 = JukeboxLyrics.cleanLyricsQuery(
+      "SƠN TÙNG M-TP | ĐỪNG LÀM TRÁI TIM ANH ĐAU | OFFICIAL MUSIC VIDEO",
+      "Sơn Tùng M-TP Official"
+    );
+    expect(r6.title).toBe("ĐỪNG LÀM TRÁI TIM ANH ĐAU");
+    expect(r6.artist).toBe("Sơn Tùng M-TP");
   });
 
   test("parseLrc parses timestamps and sorts chronologically", () => {

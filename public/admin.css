@@ -26,6 +26,19 @@ html { color-scheme: dark; }
   outline: 3px solid var(--gold);
   outline-offset: 3px;
 }
+
+/* Global select styling across the entire Admin page */
+select {
+  color-scheme: dark;
+  background-color: var(--card-elevated);
+  color: var(--text-hi);
+}
+select option,
+select optgroup {
+  background-color: var(--card-elevated);
+  color: var(--text-hi);
+  padding: 8px 12px;
+}
 body {
   min-height: 100vh;
   margin: 0;
@@ -220,9 +233,10 @@ h1 {
   padding: 0 12px;
   border: 1px solid var(--line);
   border-radius: 10px;
-  background: var(--fill);
-  color: var(--text);
+  background: var(--card-elevated);
+  color: var(--text-hi);
   font-size: 13px;
+  color-scheme: dark;
 }
 .filter-group input:focus, .filter-group select:focus {
   border-color: var(--gold);
@@ -732,7 +746,18 @@ h1 {
   font: 400 14px/1.45 var(--sans);
 }
 .admin-form textarea { min-height: 132px; resize: vertical; }
-.admin-form select { height: 42px; padding-block: 0; }
+.admin-form select {
+  height: 42px;
+  padding-block: 0;
+  background-color: var(--card-elevated);
+  color: var(--text-hi);
+  color-scheme: dark;
+}
+.admin-form select option {
+  background-color: var(--card-elevated);
+  color: var(--text-hi);
+  padding: 8px 12px;
+}
 .admin-form textarea:focus, .admin-form select:focus { border-color: var(--gold); outline: 2px solid var(--gold); outline-offset: 2px; }
 .form-hint { display: block; margin-top: 5px; color: var(--muted); font-size: 11px; }
 
@@ -904,12 +929,24 @@ h1 {
   padding: 10px 14px;
   border: 1px solid var(--line);
   border-radius: 10px;
-  background: var(--fill);
-  color: var(--text);
+  background: var(--card-elevated);
+  color: var(--text-hi);
   font: 400 14px/1.45 var(--sans);
+  color-scheme: dark;
 }
 .ai-settings-form textarea { min-height: 92px; resize: vertical; }
-.ai-settings-form select { height: 42px; padding-block: 0; }
+.ai-settings-form select {
+  height: 42px;
+  padding-block: 0;
+  background-color: var(--card-elevated);
+  color: var(--text-hi);
+  color-scheme: dark;
+}
+.ai-settings-form select option {
+  background-color: var(--card-elevated);
+  color: var(--text-hi);
+  padding: 8px 12px;
+}
 .ai-settings-form textarea:focus,
 .ai-settings-form select:focus { border-color: var(--gold); outline: 2px solid var(--gold); outline-offset: 2px; }
 .check-row {

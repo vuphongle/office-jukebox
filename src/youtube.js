@@ -125,7 +125,14 @@ export function parseSearchResults(data, { limit = 12, offset = 0, webLike = fal
     const byline = cols[1] || [];
     if (webLike && !isWebMusicResult(renderer, byline)) return;
 
-    const duration = byline.map((run) => run.text).filter((text) => /^\d+:\d\d/.test(text)).pop();
+    const fixedDuration =
+      renderer.fixedColumns?.[0]?.musicResponsiveListItemFixedColumnRenderer?.text?.runs
+        ?.map((run) => run.text)
+        .find((text) => /^\d+:\d\d/.test(text || ""));
+    const duration =
+      byline.map((run) => run.text).filter((text) => /^\d+:\d\d/.test(text)).pop() ||
+      fixedDuration ||
+      "";
     const artistRun = byline.find((run) => run.navigationEndpoint?.browseEndpoint);
     const title = cols[0]?.map((run) => run.text).join("") || "(không có tiêu đề)";
     const channel = artistRun?.text || accessibilityArtist(renderer, title) || byline[0]?.text;
@@ -196,27 +203,138 @@ export function parseYouTubeWebResults(data, { limit = 12, offset = 0 } = {}) {
   let skipped = 0;
   const skipCount = Math.max(0, parseInt(offset, 10) || 0);
 
+  const pushRenderer = (renderer) => {
+    if (!renderer || results.length >= limit) return;
+    const videoId = renderer?.videoId;
+    if (!isValidYouTubeVideoId(videoId) || seen.has(videoId)) return;
+    seen.add(videoId);
+    if (skipped < skipCount) {
+      skipped++;
+      return;
+    }
+    results.push({
+      videoId,
+      title: textValue(renderer.title) || "(không có tiêu đề)",
+      channel: textValue(renderer.ownerText) || textValue(renderer.longBylineText) || textValue(renderer.shortBylineText) || "Không rõ",
+      duration: textValue(renderer.lengthText),
+      thumbnail: sanitizeThumbnail(renderer.thumbnail?.thumbnails?.at(-1)?.url) || `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`,
+    });
+  };
+
   for (const section of sections) {
     for (const item of section?.itemSectionRenderer?.contents || []) {
       const renderer = item?.videoRenderer || item?.richItemRenderer?.content?.videoRenderer;
-      const videoId = renderer?.videoId;
-      if (!isValidYouTubeVideoId(videoId) || seen.has(videoId)) continue;
-      seen.add(videoId);
-      if (skipped < skipCount) {
-        skipped++;
-        continue;
-      }
-      results.push({
-        videoId,
-        title: textValue(renderer.title) || "(không có tiêu đề)",
-        channel: textValue(renderer.ownerText) || textValue(renderer.longBylineText) || "Không rõ",
-        duration: textValue(renderer.lengthText),
-        thumbnail: sanitizeThumbnail(renderer.thumbnail?.thumbnails?.at(-1)?.url),
-      });
+      pushRenderer(renderer);
       if (results.length >= limit) return results;
     }
   }
+
+  if (results.length === 0 && data && typeof data === "object") {
+    const walkVideos = (node) => {
+      if (!node || typeof node !== "object" || results.length >= limit) return;
+      if (Array.isArray(node)) {
+        for (const item of node) walkVideos(item);
+        return;
+      }
+      if (node.videoRenderer) pushRenderer(node.videoRenderer);
+      for (const child of Object.values(node)) walkVideos(child);
+    };
+    walkVideos(data);
+  }
+
   return results;
+}
+
+export async function searchYouTubeInnerTubeWeb(
+  query,
+  { limit = 12, offset = 0, timeoutMs = 8000, fetchImpl = globalThis.fetch } = {}
+) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const res = await fetchImpl("https://www.youtube.com/youtubei/v1/search?prettyPrint=false", {
+      method: "POST",
+      headers: {
+        ...COMMON_HEADERS,
+        "Accept-Language": "vi-VN,vi;q=0.9,en-US;q=0.8,en;q=0.7",
+        "Content-Type": "application/json",
+        Origin: "https://www.youtube.com",
+        Referer: "https://www.youtube.com/",
+      },
+      body: JSON.stringify({
+        context: {
+          client: {
+            clientName: "WEB",
+            clientVersion: "2.20250101.00.00",
+            hl: "vi",
+            gl: "VN",
+          },
+        },
+        query,
+      }),
+      signal: controller.signal,
+    });
+    if (!res.ok) throw new Error(`YouTube InnerTube Web phản hồi ${res.status}`);
+    const data = await res.json();
+    return parseYouTubeWebResults(data, { limit, offset });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+const PIPED_SEARCH_ENDPOINTS = [
+  "https://pipedapi.kavin.rocks/search",
+  "https://api.piped.private.coffee/search",
+];
+
+export async function searchYouTubePipedFallback(
+  query,
+  { limit = 12, offset = 0, timeoutMs = 5000, fetchImpl = globalThis.fetch } = {}
+) {
+  const skipCount = Math.max(0, parseInt(offset, 10) || 0);
+  for (const endpoint of PIPED_SEARCH_ENDPOINTS) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      const params = new URLSearchParams({ q: query, filter: "music_songs" });
+      const res = await fetchImpl(`${endpoint}?${params}`, {
+        headers: { "User-Agent": UA, Accept: "application/json" },
+        signal: controller.signal,
+      });
+      if (!res.ok) continue;
+      const data = await res.json();
+      const items = Array.isArray(data?.items) ? data.items : [];
+      const results = [];
+      const seen = new Set();
+      let skipped = 0;
+      for (const item of items) {
+        const rawUrl = String(item?.url || "");
+        const idMatch = rawUrl.match(/[?&]v=([A-Za-z0-9_-]{11})/) || rawUrl.match(/\/([A-Za-z0-9_-]{11})$/);
+        const videoId = idMatch?.[1] || "";
+        if (!isValidYouTubeVideoId(videoId) || seen.has(videoId)) continue;
+        seen.add(videoId);
+        if (skipped < skipCount) {
+          skipped++;
+          continue;
+        }
+        const durSec = Number(item?.duration);
+        results.push({
+          videoId,
+          title: String(item?.title || "").trim() || "(không có tiêu đề)",
+          channel: String(item?.uploaderName || "").trim() || "Không rõ",
+          duration: Number.isFinite(durSec) && durSec > 0 ? formatSecondsToDuration(durSec) : "",
+          thumbnail: sanitizeThumbnail(item?.thumbnail) || `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`,
+        });
+        if (results.length >= limit) break;
+      }
+      if (results.length > 0) return results;
+    } catch {
+      // try next endpoint
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+  return [];
 }
 
 export async function searchYouTubeWeb(
@@ -235,10 +353,35 @@ export async function searchYouTubeWeb(
       signal: controller.signal,
     });
     if (!res.ok) throw new Error(`YouTube Web phản hồi ${res.status}`);
-    return parseYouTubeWebResults(parseInitialData(await res.text()), { limit, offset });
+    const parsed = parseYouTubeWebResults(parseInitialData(await res.text()), { limit, offset });
+    if (parsed.length > 0 || fetchImpl !== globalThis.fetch) return parsed;
+  } catch (err) {
+    if (fetchImpl !== globalThis.fetch) throw err;
   } finally {
     clearTimeout(timer);
   }
+
+  try {
+    const innerTubeResults = await searchYouTubeInnerTubeWeb(query, {
+      limit,
+      offset,
+      timeoutMs: Math.min(timeoutMs, 4000),
+      fetchImpl,
+    });
+    if (innerTubeResults.length > 0) return innerTubeResults;
+  } catch {}
+
+  try {
+    const pipedResults = await searchYouTubePipedFallback(query, {
+      limit,
+      offset,
+      timeoutMs: Math.min(timeoutMs, 3000),
+      fetchImpl,
+    });
+    if (pipedResults.length > 0) return pipedResults;
+  } catch {}
+
+  return [];
 }
 
 export async function searchYouTubeByMode(
@@ -381,8 +524,20 @@ export async function searchYouTube(
   { limit = 12, offset = 0, timeoutMs = 8000, mode = "web", fetchImpl = globalThis.fetch } = {}
 ) {
   if (mode === "songs") {
-    const data = await fetchSearchData(query, { mode, timeoutMs, fetchImpl });
-    return parseSearchResults(data, { limit, offset });
+    try {
+      const data = await fetchSearchData(query, { mode, timeoutMs, fetchImpl });
+      const songsResults = parseSearchResults(data, { limit, offset });
+      if (songsResults.length > 0 || fetchImpl !== globalThis.fetch) return songsResults;
+      const webLikeResults = parseSearchResults(data, { limit, offset, webLike: true });
+      if (webLikeResults.length > 0) return webLikeResults;
+    } catch (err) {
+      if (fetchImpl !== globalThis.fetch) throw err;
+    }
+    try {
+      const webResults = await searchYouTubeWeb(query, { limit, offset, timeoutMs, fetchImpl });
+      if (webResults.length > 0) return webResults;
+    } catch {}
+    return [];
   }
 
   let primaryResults = [];
@@ -399,11 +554,23 @@ export async function searchYouTube(
   try {
     const fallbackData = await fetchSearchData(query, { mode: "songs", timeoutMs, fetchImpl });
     const fallbackResults = parseSearchResults(fallbackData, { limit, offset });
-    return mergeSearchResults(primaryResults, fallbackResults, limit);
+    const merged = mergeSearchResults(primaryResults, fallbackResults, limit);
+    if (merged.length > 0 || fetchImpl !== globalThis.fetch) return merged;
   } catch {
-    if (primaryError && primaryResults.length === 0) throw primaryError;
-    return primaryResults;
+    if (fetchImpl !== globalThis.fetch) {
+      if (primaryError && primaryResults.length === 0) throw primaryError;
+      return primaryResults;
+    }
   }
+
+  if (primaryResults.length === 0 && fetchImpl === globalThis.fetch) {
+    try {
+      const webFallback = await searchYouTubeWeb(query, { limit, offset, timeoutMs, fetchImpl });
+      if (webFallback.length > 0) return webFallback;
+    } catch {}
+    if (primaryError) throw primaryError;
+  }
+  return primaryResults;
 }
 
 // YouTube Music exposes the country chart page through this browse contract.
@@ -462,63 +629,76 @@ async function browseYouTubeMusic(body, timeoutMs) {
 // same shape as searchYouTube(). The chart page is queried first so its
 // rotating playlist ID does not need to be hard-coded in the application.
 export async function fetchVietnamChartHits({ limit = 40, timeoutMs = 8000 } = {}) {
-  const chartData = await browseYouTubeMusic(
-    {
-      context: {
-        client: {
-          clientName: "WEB_REMIX",
-          clientVersion: "1.20250101.01.00",
-          hl: "en",
-          gl: VIETNAM_CHART_COUNTRY,
+  try {
+    const chartData = await browseYouTubeMusic(
+      {
+        context: {
+          client: {
+            clientName: "WEB_REMIX",
+            clientVersion: "1.20250101.01.00",
+            hl: "en",
+            gl: VIETNAM_CHART_COUNTRY,
+          },
         },
+        browseId: VIETNAM_CHART_BROWSE_ID,
+        formData: { selectedValues: [VIETNAM_CHART_COUNTRY] },
       },
-      browseId: VIETNAM_CHART_BROWSE_ID,
-      formData: { selectedValues: [VIETNAM_CHART_COUNTRY] },
-    },
-    timeoutMs
-  );
-  const playlistBrowseId = chartPlaylistBrowseId(chartData);
-  if (!playlistBrowseId) return [];
-
-  const data = await browseYouTubeMusic(
-    {
-      context: {
-        client: {
-          clientName: "WEB_REMIX",
-          clientVersion: "1.20250101.01.00",
-          hl: "en",
-          gl: VIETNAM_CHART_COUNTRY,
+      timeoutMs
+    );
+    const playlistBrowseId = chartPlaylistBrowseId(chartData);
+    if (playlistBrowseId) {
+      const data = await browseYouTubeMusic(
+        {
+          context: {
+            client: {
+              clientName: "WEB_REMIX",
+              clientVersion: "1.20250101.01.00",
+              hl: "en",
+              gl: VIETNAM_CHART_COUNTRY,
+            },
+          },
+          browseId: playlistBrowseId,
         },
-      },
-      browseId: playlistBrowseId,
-    },
-    timeoutMs
-  );
-
-  const sections = browseSections(data);
-
-  const results = [];
-  for (const section of sections) {
-    for (const item of section?.musicPlaylistShelfRenderer?.contents || []) {
-      const r = item.musicResponsiveListItemRenderer;
-      const videoId = r?.playlistItemData?.videoId;
-      if (!videoId) continue;
-      const cols = (r.flexColumns || []).map(
-        (c) => c.musicResponsiveListItemFlexColumnRenderer?.text?.runs || []
+        timeoutMs
       );
-      results.push({
-        videoId,
-        title: cols[0]?.map((run) => run.text).join("") || "(không có tiêu đề)",
-        channel: cols[1]?.[0]?.text || "Không rõ",
-        duration:
-          r.fixedColumns?.[0]?.musicResponsiveListItemFixedColumnRenderer?.text?.runs?.[0]
-            ?.text || "",
-        thumbnail: pickThumbnail(r.thumbnail?.musicThumbnailRenderer?.thumbnail?.thumbnails),
-      });
-      if (results.length >= limit) return results;
+
+      const sections = browseSections(data);
+
+      const results = [];
+      for (const section of sections) {
+        for (const item of section?.musicPlaylistShelfRenderer?.contents || []) {
+          const r = item.musicResponsiveListItemRenderer;
+          const videoId = r?.playlistItemData?.videoId;
+          if (!videoId) continue;
+          const cols = (r.flexColumns || []).map(
+            (c) => c.musicResponsiveListItemFlexColumnRenderer?.text?.runs || []
+          );
+          results.push({
+            videoId,
+            title: cols[0]?.map((run) => run.text).join("") || "(không có tiêu đề)",
+            channel: cols[1]?.[0]?.text || "Không rõ",
+            duration:
+              r.fixedColumns?.[0]?.musicResponsiveListItemFixedColumnRenderer?.text?.runs?.[0]
+                ?.text || "",
+            thumbnail: pickThumbnail(r.thumbnail?.musicThumbnailRenderer?.thumbnail?.thumbnails),
+          });
+          if (results.length >= limit) return results;
+        }
+      }
+      if (results.length > 0) return results;
     }
-  }
-  return results;
+  } catch {}
+
+  try {
+    const fallbackSongs = await searchYouTube("nhạc trẻ thịnh hành việt nam", {
+      limit,
+      timeoutMs,
+      mode: "songs",
+    });
+    if (fallbackSongs.length > 0) return fallbackSongs;
+  } catch {}
+
+  return [];
 }
 
 // Return { ok: true } when the video exists and is public, or

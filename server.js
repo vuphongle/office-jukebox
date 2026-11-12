@@ -678,7 +678,13 @@ const hostAuthLimit = createFixedWindowRateLimiter({
 });
 const publicReadLimit = createFixedWindowRateLimiter({
   windowMs: 60 * 1000,
-  max: 120,
+  max: 600,
+  key: (req) => getClientIp(req, TRUST_PROXY),
+  reason: "Có quá nhiều yêu cầu truy cập dữ liệu. Vui lòng thử lại sau.",
+});
+const searchBrowseLimit = createFixedWindowRateLimiter({
+  windowMs: 60 * 1000,
+  max: 240,
   key: (req) => getClientIp(req, TRUST_PROXY),
   reason: "Có quá nhiều yêu cầu tìm kiếm. Vui lòng thử lại sau.",
 });
@@ -1253,10 +1259,39 @@ const browseCache = new Map();
 const BROWSE_TTL_MS = 30 * 60 * 1000;
 const MAX_SINGLE_SECONDS = 10 * 60;
 function durationSeconds(d) {
+  if (typeof d !== "string" || !d.trim()) return 0;
   return parseDurationSeconds(d, { maxSeconds: MAX_SINGLE_SECONDS }) ?? Infinity;
 }
 
-app.get("/api/browse", publicReadLimit, async (req, res) => {
+const FALLBACK_YOUTUBE_SONGS = [
+  { videoId: "abPmZCZZrFA", title: "SƠN TÙNG M-TP | ĐỪNG LÀM TRÁI TIM ANH ĐAU | OFFICIAL MUSIC VIDEO", channel: "Sơn Tùng M-TP Official", duration: "4:39", thumbnail: "https://i.ytimg.com/vi/abPmZCZZrFA/hqdefault.jpg" },
+  { videoId: "30KI5SuECuc", title: "SƠN TÙNG M-TP | CHÚNG TA CỦA TƯƠNG LAI | OFFICIAL MUSIC VIDEO", channel: "Sơn Tùng M-TP Official", duration: "4:09", thumbnail: "https://i.ytimg.com/vi/30KI5SuECuc/hqdefault.jpg" },
+  { videoId: "FN7ALfpGxiI", title: "NƠI NÀY CÓ ANH | OFFICIAL MUSIC VIDEO | SƠN TÙNG M-TP", channel: "Sơn Tùng M-TP Official", duration: "4:21", thumbnail: "https://i.ytimg.com/vi/FN7ALfpGxiI/hqdefault.jpg" },
+  { videoId: "knW7-x7Y7RE", title: "SƠN TÙNG M-TP | HÃY TRAO CHO ANH ft. Snoop Dogg | Official MV", channel: "Sơn Tùng M-TP Official", duration: "4:06", thumbnail: "https://i.ytimg.com/vi/knW7-x7Y7RE/hqdefault.jpg" },
+  { videoId: "xypzmu5mMPY", title: "SƠN TÙNG M-TP | MUỘN RỒI MÀ SAO CÒN | OFFICIAL MUSIC VIDEO", channel: "Sơn Tùng M-TP Official", duration: "4:36", thumbnail: "https://i.ytimg.com/vi/xypzmu5mMPY/hqdefault.jpg" },
+  { videoId: "U0Vr1zotKIo", title: "MONO - 'Waiting For You' (Official Music Video)", channel: "MONO", duration: "4:26", thumbnail: "https://i.ytimg.com/vi/U0Vr1zotKIo/hqdefault.jpg" },
+  { videoId: "l4tM1s-t82c", title: "HIEUTHUHAI - Ngủ Một Mình (tình rất tình) ft. negav (prod. by kewtiie)", channel: "HIEUTHUHAI", duration: "3:28", thumbnail: "https://i.ytimg.com/vi/l4tM1s-t82c/hqdefault.jpg" },
+  { videoId: "e2Xx7WcvEns", title: "Tăng Duy Tân - Bên Trên Tầng Lầu (Official Lyric Video)", channel: "Tăng Duy Tân", duration: "3:04", thumbnail: "https://i.ytimg.com/vi/e2Xx7WcvEns/hqdefault.jpg" },
+  { videoId: "2v-qR-09uPQ", title: "Tăng Duy Tân - Cắt Đôi Nỗi Sầu (Official MV)", channel: "Tăng Duy Tân", duration: "3:02", thumbnail: "https://i.ytimg.com/vi/2v-qR-09uPQ/hqdefault.jpg" },
+  { videoId: "RkB7t0c2NGE", title: "SOOBIN - GIÁ NHƯ (Official Music Video)", channel: "SOOBIN Official", duration: "3:51", thumbnail: "https://i.ytimg.com/vi/RkB7t0c2NGE/hqdefault.jpg" },
+  { videoId: "ebXbLfLACGM", title: "Wren Evans - Thích Em Hơi Nhiều (Official Music Video)", channel: "Wren Evans", duration: "2:52", thumbnail: "https://i.ytimg.com/vi/ebXbLfLACGM/hqdefault.jpg" },
+  { videoId: "kTJczUoc26U", title: "The Kid LAROI, Justin Bieber - STAY (Official Video)", channel: "The Kid LAROI.", duration: "2:38", thumbnail: "https://i.ytimg.com/vi/kTJczUoc26U/hqdefault.jpg" },
+  { videoId: "4NRXx6U8ABQ", title: "The Weeknd - Blinding Lights (Official Video)", channel: "TheWeekndVEVO", duration: "4:23", thumbnail: "https://i.ytimg.com/vi/4NRXx6U8ABQ/hqdefault.jpg" },
+  { videoId: "JGwWNGJdvx8", title: "Ed Sheeran - Shape of You (Official Music Video)", channel: "Ed Sheeran", duration: "4:24", thumbnail: "https://i.ytimg.com/vi/JGwWNGJdvx8/hqdefault.jpg" },
+];
+
+function pickFallbackYouTubeSongs(queryText = "") {
+  const norm = String(queryText || "").toLowerCase().trim();
+  if (norm) {
+    const matched = FALLBACK_YOUTUBE_SONGS.filter(
+      (item) => item.title.toLowerCase().includes(norm) || item.channel.toLowerCase().includes(norm)
+    );
+    if (matched.length > 0) return matched.map((r) => ({ ...r, hasCcLyrics: false }));
+  }
+  return FALLBACK_YOUTUBE_SONGS.map((r) => ({ ...r, hasCcLyrics: false }));
+}
+
+app.get("/api/browse", searchBrowseLimit, async (req, res) => {
   const q = (req.query.q || "").toString().trim().slice(0, 100);
   const artistParam = (req.query.artist || "").toString().trim().slice(0, 100);
   if (!q && !artistParam) return res.json({ results: [] });
@@ -1319,28 +1354,44 @@ app.get("/api/browse", publicReadLimit, async (req, res) => {
       }
     } else {
       const ytQuery = targetArtist ? (targetSq || targetArtist) : q;
-      const fetched =
-        ytQuery === "__vn_hits"
-          ? await fetchVietnamChartHits({ limit: 40 })
-          : await searchYouTube(ytQuery, { limit: 40, mode: "songs" });
-      results = fetched
+      let fetched = [];
+      try {
+        fetched =
+          ytQuery === "__vn_hits"
+            ? await fetchVietnamChartHits({ limit: 40 })
+            : await searchYouTube(ytQuery, { limit: 40, mode: "songs" });
+      } catch (ytErr) {
+        console.warn("[browse] Primary YouTube fetch failed:", ytErr?.message || ytErr);
+      }
+      results = (fetched || [])
         .filter((r) => durationSeconds(r.duration) <= MAX_SINGLE_SECONDS)
         .slice(0, 20);
+
+      if (results.length === 0) {
+        try {
+          const fallbackQuery = ytQuery === "__vn_hits" ? "nhạc trẻ thịnh hành việt nam" : ytQuery;
+          const webFetched = await searchYouTubeByMode(fallbackQuery, { mode: "youtube-web", limit: 25, offset });
+          results = (webFetched || [])
+            .filter((r) => durationSeconds(r.duration) <= MAX_SINGLE_SECONDS)
+            .slice(0, 20);
+        } catch (webErr) {
+          console.warn("[browse] YouTube web fallback failed:", webErr?.message || webErr);
+        }
+      }
+
+      if (results.length === 0) {
+        if (hit && hit.results && hit.results.length > 0) {
+          results = hit.results;
+        } else {
+          results = pickFallbackYouTubeSongs(targetArtist || ytQuery);
+        }
+      }
     }
 
-    // Probe CC Lyrics for YouTube results (non-blocking, cached 30 min)
     if (platform !== "spotify" && results.length > 0) {
-      await Promise.all(
-        results.map(async (r) => {
-          if (!r.videoId) return;
-          try {
-            const probe = await probeYouTubeCcLyrics(r.videoId, { timeoutMs: 2500 });
-            r.hasCcLyrics = probe.hasCcLyrics;
-          } catch {
-            r.hasCcLyrics = false;
-          }
-        })
-      );
+      for (const r of results) {
+        if (typeof r.hasCcLyrics !== "boolean") r.hasCcLyrics = false;
+      }
     }
 
     if (results.length > 0) {
@@ -1463,7 +1514,7 @@ const searchCache = new Map();
 const SEARCH_CACHE_TTL_MS = 15 * 60 * 1000;
 const MAX_QUEUE_LENGTH = 50;
 
-app.get("/api/search", publicReadLimit, async (req, res) => {
+app.get("/api/search", searchBrowseLimit, async (req, res) => {
   const q = (req.query.q || "").toString().trim().slice(0, 100);
   if (!q) return res.json({ results: [] });
   const platform = (req.query.platform || "youtube").toString().toLowerCase().trim();
@@ -1514,15 +1565,27 @@ app.get("/api/search", publicReadLimit, async (req, res) => {
       }
     }
 
-    const results = await searchYouTubeByMode(q, { mode: searchMode, limit: 10, offset });
+    let results = await searchYouTubeByMode(q, { mode: searchMode, limit: 10, offset });
+    if (!Array.isArray(results) || results.length === 0) {
+      const altMode = searchMode === "youtube-music" ? "youtube-web" : "youtube-music";
+      try {
+        results = await searchYouTubeByMode(q, { mode: altMode, limit: 10, offset });
+      } catch {}
+    }
 
-    // Enrich YouTube results with CC Lyrics badge in parallel (non-blocking, capped at 2.5s).
-    // Each result gets hasCcLyrics:true/false; failures silently default to false.
+    // Enrich top YouTube results with CC Lyrics badge (capped at top 3 to avoid YouTube IP rate-limiting).
     await Promise.all(
-      results.map(async (r) => {
-        if (!r.videoId) return;
+      results.map(async (r, idx) => {
+        if (!r.videoId || idx >= 3) {
+          r.hasCcLyrics = false;
+          return;
+        }
         try {
-          const probe = await probeYouTubeCcLyrics(r.videoId, { timeoutMs: 2500 });
+          const probe = await probeYouTubeCcLyrics(r.videoId, {
+            title: r.title || "",
+            artist: r.channel || "",
+            timeoutMs: 2000,
+          });
           r.hasCcLyrics = probe.hasCcLyrics;
         } catch {
           r.hasCcLyrics = false;
@@ -2517,7 +2580,7 @@ function versionedPage(name) {
     version = Math.floor(statSync(filePath).mtimeMs).toString(36);
   } catch {}
   return readFileSync(filePath, "utf8").replace(
-    /(href|src)="\/((?:guest|host|admin|account|leaderboard|rules|auth-utils|avatar|avatar-crop|history-controller|favorites-controller)\.(?:css|js))"/g,
+    /(href|src)="\/((?:guest|host|admin|account|leaderboard|rules|auth-utils|avatar|avatar-crop|history-controller|favorites-controller|lyrics-client|playback-reconciler|notifications)\.(?:css|js))"/g,
     `$1="/$2?v=${version}"`
   );
 }

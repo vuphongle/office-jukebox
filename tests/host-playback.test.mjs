@@ -1346,6 +1346,113 @@ test("host unattended mode handles devicechange by re-activating audio sinks", (
   assert.ok(spotifyPlayer.activateElementCalls > prevActivateCalls, "Audio device change should re-activate Spotify element");
 });
 
+test("host Spotify pause button pauses playback and does not auto-resume after player_state_changed", async () => {
+  const { context, getElementById, spotifyListeners, spotifyPlayer } = createHostContext();
+  let fakeNow = 20000;
+  context.performance = { now: () => fakeNow };
+
+  const source = readFileSync(new URL("../public/host.js", import.meta.url), "utf8");
+  vm.runInContext(source, context);
+
+  context.connectWs();
+  context.window.onSpotifyWebPlaybackSDKReady();
+  const onReady = spotifyListeners.get("ready")?.[0];
+  const onPlayerState = spotifyListeners.get("player_state_changed")?.[0];
+
+  onReady({ device_id: "spotify-dev-pause-1" });
+  getElementById("start-btn").onclick();
+
+  vm.runInContext(
+    'latestState = { nowPlaying: { videoId: "sp-pause-1", provider: "spotify", playbackToken: "tok-p1", duration: "3:30" }, queue: [] }; syncPlayer();',
+    context
+  );
+
+  // Track starts playing at 5000ms
+  onPlayerState({
+    paused: false,
+    loading: false,
+    position: 5000,
+    duration: 210000,
+    track_window: { current_track: { id: "sp-pause-1" } },
+  });
+
+  const resumeCallsBeforePause = spotifyPlayer.resumeCalls;
+
+  // User clicks Pause on Spotify controls
+  getElementById("spotify-btn-playpause").onclick({ stopPropagation() {} });
+
+  // SDK emits player_state_changed with paused: true
+  onPlayerState({
+    paused: true,
+    loading: false,
+    position: 5200,
+    duration: 210000,
+    track_window: { current_track: { id: "sp-pause-1" } },
+  });
+
+  // Wait 550ms (past the 400ms auto-play timer window)
+  await new Promise((r) => setTimeout(r, 550));
+
+  assert.equal(
+    spotifyPlayer.resumeCalls,
+    resumeCallsBeforePause,
+    "Spotify must remain paused when user explicitly clicked pause"
+  );
+
+  // Clicking play/pause again resumes playback
+  getElementById("spotify-btn-playpause").onclick({ stopPropagation() {} });
+  assert.equal(
+    spotifyPlayer.resumeCalls,
+    resumeCallsBeforePause + 1,
+    "Clicking play/pause again should resume Spotify playback"
+  );
+});
+
+test("host does not phantom-advance Spotify timer when document.hidden is false (working in another app) and position is still 0", () => {
+  const { context, sent, spotifyListeners, document: doc } = createHostContext();
+  let fakeNow = 30000;
+  context.performance = { now: () => fakeNow };
+
+  const source = readFileSync(new URL("../public/host.js", import.meta.url), "utf8");
+  vm.runInContext(source, context);
+
+  context.connectWs();
+  context.window.onSpotifyWebPlaybackSDKReady();
+  const onReady = spotifyListeners.get("ready")?.[0];
+  const onPlayerState = spotifyListeners.get("player_state_changed")?.[0];
+
+  onReady({ device_id: "spotify-dev-app-bg" });
+
+  // User is in another app, but Chrome window is still visible on screen so document.hidden is false
+  doc.hidden = false;
+
+  vm.runInContext(
+    'started = true; latestState = { nowPlaying: { videoId: "sp-app-bg-1", provider: "spotify", playbackToken: "tok-app-bg", duration: "3:30" }, queue: [] }; syncPlayer();',
+    context
+  );
+
+  // Initial SDK state arrives with paused: false, loading: false, position: 0 before audio actually starts
+  onPlayerState({
+    paused: false,
+    loading: false,
+    position: 0,
+    duration: 210000,
+    track_window: { current_track: { id: "sp-app-bg-1" } },
+  });
+
+  // 15 seconds pass while audio is still stuck at 0
+  fakeNow += 15000;
+  const curPos = vm.runInContext("getInterpolatedSpotifyPosition();", context);
+  assert.equal(curPos, 0, "Spotify timer must not count up while SDK position is still 0");
+
+  sent.length = 0;
+  vm.runInContext("broadcastSpotifyTick({ seek: false });", context);
+  const tick = sent.find((m) => m.type === "playbackTick");
+  assert.ok(tick);
+  assert.equal(tick.position, 0);
+  assert.equal(tick.paused, true);
+});
+
 
 
 

@@ -508,11 +508,18 @@ function openCheckinModal() {
   if (!rankBenefits.length) loadRankBenefits().then(updateRankBenefitModal);
 
   const streak = displayStreak;
-  const cycle = streak % 30;
-  document.getElementById("ms-3")?.classList.toggle("achieved", cycle >= 3);
-  document.getElementById("ms-7")?.classList.toggle("achieved", cycle >= 7);
-  document.getElementById("ms-14")?.classList.toggle("achieved", cycle >= 14);
-  document.getElementById("ms-30")?.classList.toggle("achieved", cycle === 0 && streak > 0);
+  const cycleBase = streak > 30 ? Math.floor((streak - 1) / 30) * 30 : 0;
+  const cycleDay = streak > 0 ? ((streak - 1) % 30) + 1 : 0;
+  for (const baseDay of [3, 7, 14, 30]) {
+    const el = document.getElementById(`ms-${baseDay}`);
+    if (!el) continue;
+    const targetDay = cycleBase + baseDay;
+    const circleEl = el.querySelector(".ms-circle");
+    const titleEl = el.querySelector(".ms-info strong");
+    if (circleEl) circleEl.textContent = `${targetDay}d`;
+    if (titleEl) titleEl.textContent = `Mốc ${targetDay} ngày`;
+    el.classList.toggle("achieved", cycleDay >= baseDay);
+  }
   document.getElementById("ms-100")?.classList.toggle("achieved", streak >= 100);
   document.getElementById("ms-200")?.classList.toggle("achieved", streak >= 200);
   document.getElementById("ms-365")?.classList.toggle("achieved", streak >= 365);
@@ -2138,24 +2145,35 @@ async function loadMoreSongs() {
     const isSpotify = currentSearchPlatform === "spotify";
     const isSingerBrowse = typeof activeKey === "string" && activeKey.startsWith("singer:");
     const maxPages = isSpotify && !isSingerBrowse ? 5 : 1;
+    let attempts = 0;
+    const maxAttemptsPerLoad = 3;
+    let lastError = null;
 
-    while (browse.idx < browse.queries.length || (browse.page || 0) + 1 < maxPages) {
+    while (
+      (browse.idx < browse.queries.length || (browse.page || 0) + 1 < maxPages) &&
+      attempts < maxAttemptsPerLoad
+    ) {
       if (browse.idx >= browse.queries.length) {
         if ((browse.page || 0) + 1 >= maxPages) break;
         browse.page = (browse.page || 0) + 1;
         browse.idx = 0;
       }
+      attempts++;
       const q = browse.queries[browse.idx++];
       const pageOffset = (browse.page || 0) * 10;
       const platformParam = isSpotify ? "&platform=spotify" : "";
       const offsetParam = (isSpotify && pageOffset > 0 && !q.startsWith("artist:::")) ? `&offset=${pageOffset}` : "";
       const res = await fetch("/api/browse?q=" + encodeURIComponent(q) + platformParam + offsetParam);
       if (browse.gen !== gen) return; // stale; a newer tab/search/random action replaced it
-      const data = await res.json();
+      const data = await res.json().catch(() => ({}));
       if (browse.gen !== gen) return;
-      if (!res.ok) throw new Error(data.error || "Không thể tải bài hát.");
+      if (!res.ok) {
+        lastError = new Error(data.error || data.reason || "Không thể tải bài hát.");
+        if (res.status === 429) throw lastError;
+        continue;
+      }
       let fresh = (data.results || []).filter((r) => r.videoId && !browse.seen.has(r.videoId));
-      if (fresh.length === 0) continue; // all results duplicate; try the next variant
+      if (fresh.length === 0) continue; // all results duplicate or empty; try the next variant
       for (const r of fresh) browse.seen.add(r.videoId);
       if (!isSingerBrowse) {
         fresh = shuffleArray(fresh); // avoid showing the same order every time for generic genre tabs (A4)
@@ -2167,7 +2185,11 @@ async function loadMoreSongs() {
         setStatus("");
       }
       appendResults(fresh);
+      lastError = null;
       break;
+    }
+    if (lastError && browse.seen.size === 0) {
+      throw lastError;
     }
     if (browse.gen === gen) {
       setLoading(false);
@@ -2190,10 +2212,11 @@ async function loadMoreSongs() {
       setLoading(false);
       if (browse.seen.size === 0) {
         removeLoadMoreCard();
-        if (err.message && (err.message.includes("giới hạn") || err.message.includes("429"))) {
+        const isSpotify = currentSearchPlatform === "spotify";
+        if (isSpotify && err.message && (err.message.includes("giới hạn") || err.message.includes("429"))) {
           setStatus(`⚠️ ${err.message} <button class="status-switch-btn" style="margin-left:8px;padding:3px 10px;background:#2563eb;color:#fff;border:none;border-radius:6px;cursor:pointer;font-size:12px;display:inline-block;vertical-align:middle;" onclick="window.switchToYouTubePlatform && window.switchToYouTubePlatform()">Chuyển sang YouTube</button>`, { allowHtml: true });
         } else {
-          setStatus("😕 " + err.message);
+          setStatus("😕 " + (err.message || "Không thể tải danh sách bài hát."));
         }
       } else {
         toast("bad", "!", err.message || "Không thể tải thêm bài hát.");
@@ -2472,10 +2495,10 @@ async function loadMoreSearchResults(gen = browse.gen) {
       setLoading(false);
       if (searchState.offset === 0) {
         removeLoadMoreCard();
-        if (err.message && (err.message.includes("giới hạn") || err.message.includes("429"))) {
+        if (searchState.platform === "spotify" && err.message && (err.message.includes("giới hạn") || err.message.includes("429"))) {
           setStatus(`⚠️ ${err.message} <button class="status-switch-btn" style="margin-left:8px;padding:3px 10px;background:#2563eb;color:#fff;border:none;border-radius:6px;cursor:pointer;font-size:12px;display:inline-block;vertical-align:middle;" onclick="window.switchToYouTubePlatform && window.switchToYouTubePlatform()">Chuyển sang YouTube</button>`, { allowHtml: true });
         } else {
-          setStatus("😕 " + err.message);
+          setStatus("😕 " + (err.message || "Tìm kiếm thất bại."));
         }
       } else {
         toast("bad", "!", err.message || "Không thể tải thêm kết quả.");
@@ -2848,6 +2871,7 @@ function cooldownToast(seconds) {
 
 // ---- Real-time Synced Lyrics (Guest Inline) --------------------------------
 let guestLyricsActive = false;
+let guestLyricsManualOpen = false;
 let currentGuestLyrics = null;
 let currentGuestLyricsActiveIndex = -1;
 let currentGuestLyricsTrackId = "";
@@ -2860,15 +2884,42 @@ let lastGuestTickReceivedTime = 0;
 let lastHandledSpotifyTrackId = "";
 let userCollapsedTrackId = "";
 
+function getGuestLyricsTrackKey(np) {
+  if (!np || typeof np !== "object") return "";
+  const rawTitle = np.title || "";
+  const rawArtist = np.channel || "";
+  const isYtTrack = np.platform === "youtube" || np.platform === "yt" || np.provider === "youtube" || np.provider === "yt";
+  const rawId = np.videoId || np.id || "";
+  if (isYtTrack && rawId) return `yt:${rawId}`;
+  return String(rawId || `${rawArtist.toLowerCase()}:::${rawTitle.toLowerCase()}`);
+}
+
+function renderGuestLyricsEmptyState(isYtTrack) {
+  const currentContentEl = document.getElementById("np-lyrics-content");
+  const currentScrollerEl = document.getElementById("np-lyrics-scroller");
+  const sourceTagEl = document.querySelector(".np-lyrics-source-tag");
+  if (sourceTagEl) sourceTagEl.style.display = "none";
+  if (currentContentEl) {
+    currentContentEl.classList.remove("is-loading");
+    currentContentEl.classList.add("is-empty");
+    const emptyMsg = isYtTrack
+      ? "Video này chưa có lời bài hát chính chủ (phụ đề do kênh đăng tải)."
+      : "Chưa có lời bài hát đồng bộ cho bài hát này.";
+    currentContentEl.innerHTML = `<div class="np-lyrics-empty"><span>🎵</span><span>${emptyMsg}</span></div>`;
+  }
+  if (currentScrollerEl) {
+    currentScrollerEl.classList.remove("is-loading");
+    currentScrollerEl.classList.add("is-empty");
+  }
+}
+
 async function loadGuestLyrics(np, { autoOpen = false } = {}) {
   if (!np || typeof np !== "object") return;
   const rawTitle = np.title || "";
   const rawArtist = np.channel || "";
   const duration = np.duration;
   const isYtTrack = np.platform === "youtube" || np.platform === "yt" || np.provider === "youtube" || np.provider === "yt";
-  const trackId = isYtTrack && (np.videoId || np.id)
-    ? `yt:${np.videoId || np.id}`
-    : (np.videoId || np.id || `${rawArtist.toLowerCase()}:::${rawTitle.toLowerCase()}`);
+  const trackId = getGuestLyricsTrackKey(np);
 
   if (trackId === currentGuestLyricsTrackId && currentGuestLyrics?.lines && currentGuestLyrics.lines.length > 0) {
     if (autoOpen && !guestLyricsActive) {
@@ -2886,7 +2937,22 @@ async function loadGuestLyrics(np, { autoOpen = false } = {}) {
       }
       return;
     }
+    const sourceTagEl = document.querySelector(".np-lyrics-source-tag");
+    if (sourceTagEl) {
+      if (currentGuestLyrics.source === "youtube_captions") {
+        sourceTagEl.textContent = `Phụ đề chính chủ · ${(currentGuestLyrics.language || "VI").toUpperCase()}`;
+        sourceTagEl.style.display = "inline-block";
+      } else {
+        sourceTagEl.style.display = "none";
+      }
+    }
     renderGuestLyricsLines(currentGuestLyrics.lines);
+    return;
+  }
+  if (trackId === currentGuestLyricsTrackId && currentGuestLyrics?.empty) {
+    if (!autoOpen || guestLyricsManualOpen) {
+      renderGuestLyricsEmptyState(isYtTrack);
+    }
     return;
   }
   if (trackId === currentGuestLyricsTrackId && isGuestLyricsLoading) {
@@ -2943,7 +3009,7 @@ async function loadGuestLyrics(np, { autoOpen = false } = {}) {
 
   if (!data || !data.lines || data.lines.length === 0) {
     currentGuestLyrics = { empty: true, lines: [] };
-    if (autoOpen && guestLyricsActive) {
+    if (autoOpen && !guestLyricsManualOpen && guestLyricsActive) {
       guestLyricsActive = false;
       if (guestLyricsRafId) {
         cancelAnimationFrame(guestLyricsRafId);
@@ -2952,30 +3018,18 @@ async function loadGuestLyrics(np, { autoOpen = false } = {}) {
       if (lastQueueState) renderQueue(lastQueueState);
       return;
     }
-    const currentContentEl = document.getElementById("np-lyrics-content");
-    const currentScrollerEl = document.getElementById("np-lyrics-scroller");
-    if (currentContentEl) {
-      currentContentEl.classList.remove("is-loading");
-      currentContentEl.classList.add("is-empty");
-      const emptyMsg = isYtTrack
-        ? "Video này chưa có lời bài hát chính chủ (phụ đề do kênh đăng tải)."
-        : "Chưa có lời bài hát đồng bộ cho bài hát này.";
-      currentContentEl.innerHTML = `<div class="np-lyrics-empty"><span>🎵</span><span>${emptyMsg}</span></div>`;
-    }
-    if (currentScrollerEl) {
-      currentScrollerEl.classList.remove("is-loading");
-      currentScrollerEl.classList.add("is-empty");
-    }
+    renderGuestLyricsEmptyState(isYtTrack);
     return;
   }
 
   currentGuestLyrics = data;
-  if (sourceTagEl) {
+  const activeSourceTagEl = document.querySelector(".np-lyrics-source-tag");
+  if (activeSourceTagEl) {
     if (data.source === "youtube_captions") {
-      sourceTagEl.textContent = `Phụ đề chính chủ · ${(data.language || "VI").toUpperCase()}`;
-      sourceTagEl.style.display = "inline-block";
+      activeSourceTagEl.textContent = `Phụ đề chính chủ · ${(data.language || "VI").toUpperCase()}`;
+      activeSourceTagEl.style.display = "inline-block";
     } else {
-      sourceTagEl.style.display = "none";
+      activeSourceTagEl.style.display = "none";
     }
   }
   if (autoOpen && !guestLyricsActive) {
@@ -2983,8 +3037,6 @@ async function loadGuestLyrics(np, { autoOpen = false } = {}) {
       return;
     }
     guestLyricsActive = true;
-    const curNp = lastQueueState?.nowPlaying;
-    const isYt = curNp && (curNp.provider === "youtube" || curNp.provider === "yt");
     guestLyricsAnchorPosition = 0;
     guestLyricsAnchorTime = performance.now();
     guestLyricsPaused = true;
@@ -3177,9 +3229,10 @@ function toggleGuestLyrics(active) {
   } else {
     guestLyricsActive = !guestLyricsActive;
   }
+  guestLyricsManualOpen = Boolean(guestLyricsActive);
 
   const np = lastQueueState?.nowPlaying;
-  const currentTrackId = np ? (np.videoId || np.id || `${(np.channel || "").toLowerCase()}:::${(np.title || "").toLowerCase()}`) : "";
+  const currentTrackId = np ? getGuestLyricsTrackKey(np) : "";
 
   if (!guestLyricsActive) {
     if (currentTrackId) {
@@ -3192,6 +3245,7 @@ function toggleGuestLyrics(active) {
   const isSupportedProvider = np && (np.provider === "spotify" || np.provider === "youtube" || np.provider === "yt");
   if (guestLyricsActive && !isSupportedProvider) {
     guestLyricsActive = false;
+    guestLyricsManualOpen = false;
     return;
   }
 
@@ -3305,16 +3359,14 @@ function connectWs() {
       const isLyricsSupported = Boolean(
         curNp && (curNp.provider === "spotify" || curNp.provider === "youtube" || curNp.provider === "yt")
       );
-      const trackId = isLyricsSupported
-        ? (curNp.videoId || curNp.id || `${(curNp.channel || "").toLowerCase()}:::${(curNp.title || "").toLowerCase()}`)
-        : "";
+      const trackId = isLyricsSupported ? getGuestLyricsTrackKey(curNp) : "";
 
       if (isLyricsSupported && trackId) {
         const isNewSong = String(trackId) !== String(lastHandledSpotifyTrackId);
-        const isYt = curNp && (curNp.provider === "youtube" || curNp.provider === "yt");
         if (isNewSong) {
           lastHandledSpotifyTrackId = trackId;
           userCollapsedTrackId = "";
+          guestLyricsManualOpen = false;
           guestLyricsAnchorPosition = 0;
           guestLyricsAnchorTime = performance.now();
           guestLyricsPaused = true;
@@ -3326,7 +3378,7 @@ function connectWs() {
           guestLyricsAnchorPosition = 0;
           guestLyricsAnchorTime = performance.now();
           guestLyricsPaused = true;
-          loadGuestLyrics(curNp, { autoOpen: true });
+          loadGuestLyrics(curNp, { autoOpen: !guestLyricsManualOpen });
           if (queueWs && queueWs.readyState === WebSocket.OPEN) {
             queueWs.send(JSON.stringify({ type: "requestPlaybackTick" }));
           }
@@ -3334,6 +3386,7 @@ function connectWs() {
       } else {
         lastHandledSpotifyTrackId = "";
         userCollapsedTrackId = "";
+        guestLyricsManualOpen = false;
         if (guestLyricsActive) {
           toggleGuestLyrics(false);
         }
@@ -3516,7 +3569,7 @@ function renderQueue(state) {
     }
 
     if (guestLyricsActive && isSupportedLyrics) {
-      const trackId = np.videoId || np.id || `${(np.channel || "").toLowerCase()}:::${(np.title || "").toLowerCase()}`;
+      const trackId = getGuestLyricsTrackKey(np);
       const isSameTrack = npEl.classList.contains("lyrics-mode") && String(npEl.dataset.lyricsTrackId) === String(trackId);
 
       if (isSameTrack) {
@@ -3579,10 +3632,21 @@ function renderQueue(state) {
         }
 
         currentGuestLyricsActiveIndex = -1;
-        if (String(trackId) === String(currentGuestLyricsTrackId) && currentGuestLyrics?.lines) {
+        if (String(trackId) === String(currentGuestLyricsTrackId) && currentGuestLyrics?.lines && currentGuestLyrics.lines.length > 0) {
+          const sourceTagEl = npEl.querySelector(".np-lyrics-source-tag");
+          if (sourceTagEl) {
+            if (currentGuestLyrics.source === "youtube_captions") {
+              sourceTagEl.textContent = `Phụ đề chính chủ · ${(currentGuestLyrics.language || "VI").toUpperCase()}`;
+              sourceTagEl.style.display = "inline-block";
+            } else {
+              sourceTagEl.style.display = "none";
+            }
+          }
           renderGuestLyricsLines(currentGuestLyrics.lines);
+        } else if (String(trackId) === String(currentGuestLyricsTrackId) && currentGuestLyrics?.empty) {
+          renderGuestLyricsEmptyState(isYouTube);
         } else {
-          loadGuestLyrics(np, { autoOpen: true });
+          loadGuestLyrics(np, { autoOpen: !guestLyricsManualOpen });
         }
       }
     } else {
